@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Universal clipboard: one modifier for copy/paste everywhere.
+#
+# Reproduces Omarchy quattro's SUPER+C/V/X. Bound in the Umbriel config; see
+# docs/migration/06-post-install-audit.md §7 for the original implementation
+# and why this one differs.
+#
+#   terminal        -> Ctrl+Insert  / Shift+Insert
+#   everything else -> Ctrl+C       / Ctrl+V
+#
+# Cut is always Ctrl+X, matching the original — terminals do not cut.
+#
+# This is one leg of three. The others are the keybinds in
+# hosts/<host>/umbriel/config.toml, and a terminal configured to map those
+# Insert chords to the CLIPBOARD (see common/kitty/kitty.conf). Stock terminal
+# defaults point Shift+Insert at the PRIMARY selection, so a terminal without
+# that config pastes the wrong buffer silently.
+#
+# Omarchy injected the chord from inside the compositor because a virtual
+# keyboard merged the physically-held SUPER into it. Umbriel does not merge
+# it — verified — so plain wtype is sufficient here.
+
+set -u
+
+TERMINALS='^(kitty|Alacritty|com\.mitchellh\.ghostty|foot|org\.codeberg\.dnkl\.foot|org\.wezfurlong\.wezterm)$'
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+command -v wtype   >/dev/null || die "wtype is not installed"
+command -v umbriel >/dev/null || die "umbriel is not on PATH"
+
+app="$(umbriel windows --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    for w in json.load(sys.stdin):
+        if w.get("active"):
+            print(w.get("app_id", "")); break
+except Exception:
+    pass
+' 2>/dev/null)"
+
+# An unknown app_id falls through to the non-terminal branch, which is the safe
+# default: Ctrl+C/Ctrl+V are correct far more often than the Insert chords.
+term=0
+[[ "$app" =~ $TERMINALS ]] && term=1
+
+case "${1:-}" in
+  copy)  ((term)) && wtype -M ctrl  -k Insert -m ctrl  || wtype -M ctrl -k c -m ctrl ;;
+  paste) ((term)) && wtype -M shift -k Insert -m shift || wtype -M ctrl -k v -m ctrl ;;
+  cut)   wtype -M ctrl -k x -m ctrl ;;
+  *)     die "usage: ${0##*/} <copy|paste|cut>" ;;
+esac

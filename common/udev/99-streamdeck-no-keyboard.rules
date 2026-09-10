@@ -1,0 +1,30 @@
+# Elgato Stream Deck (0fd9:006d) — hide from libinput.
+#
+# The Stream Deck is exposed by hid-generic as an evdev keyboard that emits a
+# continuous stream of KEY_UNKNOWN. Two consequences in a Wayland session:
+#
+#   - idle never settles, so screensaver and lock timers never fire
+#   - a physically held SUPER fires workspace switches in bursts
+#
+# Omarchy solved this inside the compositor:
+#
+#     hl.device({ name = "elgato-stream-deck", enabled = false })   -- hypr/input.lua
+#
+# Umbriel has no per-device disable. [[input.device]] accepts layout, variant,
+# options, repeat_rate, repeat_delay, tap, disable_while_typing, click_method,
+# natural_scroll, scroll_button, scroll_button_lock, accel_profile and
+# sensitivity — but no `enabled`, which exists only under [input.tablet].
+# Confirmed against the shipped config and the 106-action `umbriel msg` list.
+#
+# So the fix moves here, which is arguably where it always belonged: this is a
+# kernel/evdev quirk, not a compositor concern, and a udev rule survives
+# whatever compositor comes next.
+#
+# Only SUBSYSTEM=="input" is masked. The Stream Deck's control software speaks
+# hidraw, a different subsystem, so nothing is lost.
+#
+# IDs verified on caesar via `udevadm info -a -n /dev/input/event2`:
+#   ATTRS{idVendor}=="0fd9"  ATTRS{idProduct}=="006d"  ATTRS{product}=="Stream Deck"
+# Re-verify before assuming these carry to another unit or a different model.
+
+SUBSYSTEM=="input", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="006d", ENV{LIBINPUT_IGNORE_DEVICE}="1"
