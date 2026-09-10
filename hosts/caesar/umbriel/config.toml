@@ -35,7 +35,7 @@ files = []                                      # Example: ["~/.config/umbriel/n
 # ────────────────────────────────────────────────────────────────────────────
 
 [general]
-autostart = []                                  # Commands run once when the session starts
+autostart = ["noctalia"]                                  # Commands run once when the session starts
 # mod_key = "Super"                             # Force Super instead of nested-session Alt
 xwayland = true                                 # Requires xwayland-satellite; restart to change
 show_cheatsheet = true                          # Show the keybind overlay on startup
@@ -271,12 +271,12 @@ enabled = true                                  # False disables tablet tools an
 theme = ""                                      # Empty uses environment or default Xcursor theme
 size = 24                                       # Logical size, 1-512
 hardware_cursor = true                          # False forces cursor composition
-follows_focus = false                           # Warp to windows selected by focus, output, move, or other activations
+follows_focus = true                           # Warp to windows selected by focus, output, move, or other activations
 hide_when_typing = false                        # Keep visible while typing
 hide_timeout_ms = 0                             # Idle hide timeout, 0 disables; maximum is 3600000
 
 [input.focus]
-follows_mouse = false                           # Focus the pointer target after pointer motion
+follows_mouse = true                           # Focus the pointer target after pointer motion
 # Refuse hover focus when revealing a window would scroll farther than this
 # many viewport widths. Omit the key for no limit.
 # follows_mouse_max_scroll = 0.5
@@ -334,11 +334,13 @@ follows_mouse = false                           # Focus the pointer target after
 # ────────────────────────────────────────────────────────────────────────────
 
 [keybinds]
+# Screenshot behavior with printscreen key
+"Print" = "spawn:/home/peter/Projects/nomarchy/common/scripts/screenshot-region"
 
 # Applications and session
 "Mod+Return" = "spawn:kitty"
 "Mod" = "spawn:noctalia msg panel-toggle launcher"
-"Mod+Q" = "window-close"
+"Mod+W" = "window-close"
 
 # Focus navigation. In overview, Mod+Up/Down retain normal layout focus, so they
 # traverse stacks in the default horizontal layout. Bare Up/Down move between
@@ -485,7 +487,7 @@ follows_mouse = false                           # Focus the pointer target after
 # ────────────────────────────────────────────────────────────────────────────
 
 [layout]
-mode = "scrolling"                              # scrolling, dwindle, or master
+mode = "dwindle"                              # scrolling, dwindle, or master
 gap = 8                                         # Logical pixels between tiles, 0-500
 width_presets = [0.333, 0.5, 0.667]             # Width and height cycling fractions
 
