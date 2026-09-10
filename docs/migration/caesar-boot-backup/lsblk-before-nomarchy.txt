@@ -1,0 +1,23 @@
+NAME        PATH               SIZE MODEL                    SERIAL          FSTYPE      LABEL     UUID                                 PARTUUID                             MOUNTPOINTS
+sda         /dev/sda           1.8T Samsung SSD 870 EVO 2TB  S753NS0W941845F                                                                                                 
+├─sda1      /dev/sda1          512M                                          vfat                  E2B6-8F42                            dfbc0b2b-346a-4e1a-b20c-48a932638f60 
+├─sda2      /dev/sda2        232.4G                                          ext4                  0686cb60-3ab8-4cb4-8ac2-456410307078 349782e1-45d6-4b14-b525-e465f04327c3 
+└─sda3      /dev/sda3          1.6T                                          ext4        FreeSpace 1953f264-eed7-4b82-acc9-7e0f23ac8b34 82828fe6-edea-4585-af02-378a12aae395 
+sdb         /dev/sdb         931.5G WDC WDS100T2B0A-00SM50   183276803113                                                                                                    
+├─sdb1      /dev/sdb1           16M                                                                                                     3d217921-672c-4d32-916f-1046548a92a0 
+└─sdb2      /dev/sdb2        931.5G                                          ntfs        Pleiades  36E41D57E41D1AA7                     3086a5fe-819d-4a07-896f-3c50eb3ac0fc 
+zram0       /dev/zram0          62G                                          swap        zram0     684713c0-6ef2-4d51-b0ad-26b513d1d33d                                      [SWAP]
+nvme0n1     /dev/nvme0n1       3.6T Samsung SSD 9100 PRO 4TB S7YANJ0Y502567T                                                                                                 
+├─nvme0n1p1 /dev/nvme0n1p1      16M                                                                                                     fe1d8c37-f73c-4530-8ba1-2df420bf235c 
+└─nvme0n1p2 /dev/nvme0n1p2     3.6T                                          ntfs        Aldebaran F20CC64B0CC60A95                     22d22c3f-7c5f-4d89-9b50-585057056c7a 
+nvme1n1     /dev/nvme1n1       3.6T WD_BLACK SN850X 4000GB   240243800744                                                                                                    
+├─nvme1n1p1 /dev/nvme1n1p1      16M                                                                                                     ac82ddfb-f1ec-41c0-bdf1-9a70a16d3d3d 
+├─nvme1n1p2 /dev/nvme1n1p2     3.6T                                          ntfs                  6C16C28916C2542C                     da1fec63-1f02-4abd-8262-360170fd4868 
+└─nvme1n1p3 /dev/nvme1n1p3     510M                                          ntfs                  FCD61844D617FE18                     f5f51454-c75e-47f0-9283-62d259d8ff87 
+nvme2n1     /dev/nvme2n1     953.9G XPG SPECTRIX S40G        2K0420036195                                                                                                    
+├─nvme2n1p1 /dev/nvme2n1p1       2G                                          vfat                  A4B7-6F05                            414bac54-20cf-4904-9909-c28cb0b7f916 /boot
+└─nvme2n1p2 /dev/nvme2n1p2   951.9G                                          crypto_LUKS           cd84de61-5f81-4968-91e3-434381780328 8bd201c0-a456-4de2-851f-7bfa788c028e 
+  └─root    /dev/mapper/root 951.9G                                          btrfs                 f7c0db13-843d-4aee-bb4f-0faa663bec04                                      /var/cache/pacman/pkg
+                                                                                                                                                                             /home
+                                                                                                                                                                             /var/log
+                                                                                                                                                                             /

@@ -1,0 +1,6 @@
+glibc-debug
+nuclei
+omnote-git
+opendeck-bin
+openssl-1.1
+paru

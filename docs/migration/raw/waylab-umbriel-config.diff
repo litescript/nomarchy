@@ -1,0 +1,30 @@
+96a97,101
+> [output.HDMI-A-1]
+> name = "Acer Technologies VG270K V4 65420066A8106"
+> mode = "2560x1440@59.951"
+> scale = 1.0
+> 
+219,221c224,226
+< options = ""                                    # Example: "grp:alt_shift_toggle"
+< repeat_rate = 25                                # Key repeats per second, 0-1000
+< repeat_delay = 600                              # Delay before repeating, 0-10000 ms
+---
+> options = "caps:swapescape"                                    # Example: "grp:alt_shift_toggle"
+> repeat_rate = 50                                # Key repeats per second, 0-1000
+> repeat_delay = 200                              # Delay before repeating, 0-10000 ms
+238c243
+< sensitivity = 0.0                               # Pointer speed, -1.0 to 1.0
+---
+> sensitivity = 0.5                               # Pointer speed, -1.0 to 1.0
+260c265
+< follows_mouse = false                           # Focus the pointer target after pointer motion
+---
+> follows_mouse = true                           # Focus the pointer target after pointer motion
+318c323
+< "Mod+Q" = "window-close"
+---
+> "Mod+W" = "window-close"
+463c468
+< mode = "scrolling"                              # scrolling, dwindle, or master
+---
+> mode = "dwindle"                              # scrolling, dwindle, or master

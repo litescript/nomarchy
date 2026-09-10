@@ -1,0 +1,59 @@
+# Enabled systemd user units
+UNIT FILE                                STATE   PRESET
+bt-agent.service                         enabled enabled
+omarchy-crash-watch.service              enabled enabled
+omarchy-fcitx5.service                   enabled enabled
+omarchy-migrate-notify.service           enabled enabled
+omarchy-recover-internal-monitor.service enabled enabled
+omarchy-sleep-lock.service               enabled enabled
+pipewire-pulse.service                   enabled enabled
+pipewire.service                         enabled enabled
+ssh-agent.service                        enabled enabled
+wireplumber.service                      enabled enabled
+xdg-user-dirs.service                    enabled enabled
+gcr-ssh-agent.socket                     enabled enabled
+gnome-keyring-daemon.socket              enabled enabled
+p11-kit-server.socket                    enabled enabled
+pipewire-pulse.socket                    enabled enabled
+pipewire.socket                          enabled enabled
+backup-daily.timer                       enabled enabled
+backup-legal-to-nas.timer                enabled enabled
+subget-sync.timer                        enabled enabled
+
+19 unit files listed.
+
+# Enabled system units
+UNIT FILE                         STATE   PRESET
+cups.path                         enabled disabled
+avahi-daemon.service              enabled disabled
+bluetooth.service                 enabled disabled
+cups.service                      enabled disabled
+getty@.service                    enabled enabled
+limine-snapper-sync.service       enabled disabled
+linux-modules-cleanup.service     enabled disabled
+netconsole-listener.service       enabled disabled
+NetworkManager-dispatcher.service enabled disabled
+NetworkManager.service            enabled disabled
+nut-monitor.service               enabled disabled
+power-profiles-daemon.service     enabled disabled
+sddm.service                      enabled disabled
+sshd.service                      enabled disabled
+systemd-oomd.service              enabled disabled
+systemd-resolved.service          enabled enabled
+systemd-timesyncd.service         enabled enabled
+ufw.service                       enabled disabled
+avahi-daemon.socket               enabled disabled
+cups.socket                       enabled disabled
+docker.socket                     enabled disabled
+systemd-oomd.socket               enabled disabled
+systemd-resolved-monitor.socket   enabled disabled
+systemd-resolved-varlink.socket   enabled disabled
+systemd-userdbd.socket            enabled enabled
+nfs-client.target                 enabled disabled
+remote-fs.target                  enabled enabled
+btrfs-scrub-home.timer            enabled disabled
+gentoo-builder-eclean.timer       enabled disabled
+logrotate.timer                   enabled disabled
+snapper-cleanup.timer             enabled disabled
+
+31 unit files listed.

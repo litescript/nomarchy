@@ -1,0 +1,29 @@
+# user-installed themes in ~/.config/omarchy/themes
+# format: <name> <colors.toml?> <file count>
+aether                       omarchy3-stale 18
+aetheria                     omarchy3-stale 52
+all-hallows-eve              omarchy3-stale 47
+amberbyte                    omarchy3-stale 48
+arc-blueberry                omarchy3-stale 48
+archriot                     omarchy3-stale 42
+archwave                     omarchy3-stale 51
+ash                          omarchy3-stale 45
+aura                         omarchy3-stale 46
+base16-tarot                 omarchy4       60
+batou                        omarchy3-stale 53
+bauhaus                      omarchy3-stale 53
+beta                         omarchy4       61
+blade-runner                 omarchy3-stale 19
+bmw-gt3-omarchy              omarchy4       62
+deep-solar                   omarchy4       65
+dreamwave                    omarchy3-stale 58
+emberstone                   omarchy3-stale 49
+ethereal.OLD.2026-01-20      omarchy4       8
+fireside                     omarchy3-stale 51
+futurism                     omarchy3-stale 46
+grudark                      omarchy3-stale 52
+lilly                        omarchy4       59
+lowlight                     omarchy3-stale 52
+mars                         omarchy3-stale 48
+monokai                      omarchy3-stale 47
+moon-orbit                   omarchy4       63

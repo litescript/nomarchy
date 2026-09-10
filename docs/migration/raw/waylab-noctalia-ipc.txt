@@ -1,0 +1,118 @@
+Usage: noctalia msg <command>
+
+Commands:
+  bar-auto-hide-set <state> [bar-name] [monitor-selector]             Set auto-hide state for a bar
+  bar-hide [bar-name] [monitor-selector]                              Hide one or all bars and release their layout gaps
+  bar-layer-set <layer> [bar-name] [monitor-selector]                 Set one or all bar layers
+  bar-reserve-toggle [bar-name] [monitor-selector]                    Toggle reserve space for one or all bars
+  bar-show [bar-name] [monitor-selector]                              Show one or all bars
+  bar-toggle [bar-name] [monitor-selector]                            Toggle visibility for one or all bars
+  bluetooth-disable                                                   Disable Bluetooth
+  bluetooth-enable                                                    Enable Bluetooth
+  bluetooth-status                                                    Print Bluetooth state
+  bluetooth-toggle                                                    Toggle Bluetooth
+  brightness-down [target] [step]                                     Decrease brightness (defaults to current monitor)
+  brightness-list-backlight-devices                                   List available sysfs backlight device names
+  brightness-osd <value>                                              Show brightness OSD without changing brightness
+  brightness-set [target] <value>                                     Set brightness (defaults to current monitor)
+  brightness-up [target] [step]                                       Increase brightness (defaults to current monitor)
+  caffeine-disable                                                    Disable caffeine (idle inhibitor)
+  caffeine-enable                                                     Enable caffeine (idle inhibitor)
+  caffeine-toggle                                                     Toggle caffeine (idle inhibitor)
+  clipboard-clear                                                     Clear clipboard history
+  clipboard-copy <text>                                               Copy text to the clipboard
+  clipboard-text                                                      Print the most recent clipboard text (empty when the selection holds no text)
+  color-scheme-get                                                    Print active color scheme: <source> <name> (source is builtin, wallpaper, community, or custom)
+  color-scheme-set <{builtin|wallpaper|community|custom}> ...         Set palette source and selection in settings.toml (builtin name, wallpaper generator scheme, community id, or custom scheme folder name)
+  config-reload                                                       Reload the config file
+  desktop-widgets-edit                                                Open the desktop widgets editor
+  desktop-widgets-exit                                                Close the desktop widgets editor
+  desktop-widgets-hide                                                Hide desktop widgets now (runtime only; does not change the saved setting)
+  desktop-widgets-show                                                Show desktop widgets now (runtime only; does not change the saved setting)
+  desktop-widgets-toggle                                              Toggle desktop widgets visibility (runtime only; does not change the saved setting)
+  desktop-widgets-toggle-edit                                         Toggle desktop widgets edit mode
+  dock-hide                                                           Hide the dock (persists override)
+  dock-reload                                                         Reload dock configuration
+  dock-show                                                           Show the dock (persists override)
+  dock-toggle                                                         Toggle dock visibility (persists override)
+  dpms-off                                                            Turn monitors off
+  dpms-on                                                             Turn monitors on
+  effects-profile-set <kind> <profile>                                Set the EasyEffects output or input profile
+  greeter-sync                                                        Sync wallpaper, colors, and monitor layout to Noctalia Greeter
+  keyboard-backlight-down                                             Decrease all keyboard backlights by one level
+  keyboard-backlight-osd <value>                                      Show keyboard backlight OSD without changing brightness
+  keyboard-backlight-set <value>                                      Set all keyboard backlights (0-100 percentage)
+  keyboard-backlight-toggle                                           Toggle all keyboard backlights on/off
+  keyboard-backlight-up                                               Increase all keyboard backlights by one level
+  keyboard-layout-cycle                                               Switch to the next keyboard layout
+  lockscreen-widgets-edit                                             Open the lockscreen widgets editor
+  lockscreen-widgets-exit                                             Close the lockscreen widgets editor
+  lockscreen-widgets-toggle-edit                                      Toggle lockscreen widgets edit mode
+  log-level-set <level>                                               Set the console log level
+  log-level-status                                                    Print the current console log level
+  media <action>                                                      Control active media playback
+  mic-mute                                                            Toggle microphone mute
+  mic-volume-down [step]                                              Decrease microphone volume
+  mic-volume-osd [value]                                              Show the microphone volume OSD without changing volume (defaults to the current volume)
+  mic-volume-set <value>                                              Set microphone volume
+  mic-volume-up [step]                                                Increase microphone volume
+  network-toggle                                                      Disconnect the active network, or reconnect when nothing is connected
+  nightlight-disable                                                  Disable night light schedule
+  nightlight-enable                                                   Enable night light schedule
+  nightlight-force-toggle                                             Toggle forced night light mode
+  nightlight-toggle                                                   Toggle night light schedule
+  notification-clear-active                                           Dismiss all currently active notifications
+  notification-clear-history                                          Clear notification history
+  notification-dnd-set <state>                                        Set notification Do Not Disturb state
+  notification-dnd-status                                             Print notification Do Not Disturb state
+  notification-dnd-toggle                                             Toggle notification Do Not Disturb state
+  notification-invoke-latest                                          Invoke the default action of the most recent active notification
+  notification-show <summary> <body...>                               Show an internal Noctalia notification
+  osd-disable                                                         Disable OSD popups
+  osd-enable                                                          Enable OSD popups
+  osd-toggle                                                          Toggle OSD popups
+  panel-close [id]                                                    Close the active panel, or close the named panel if it is active
+  panel-open <id> [context]                                           Open a panel by id, optionally with context (e.g. launcher /emo, control-center audio)
+  panel-toggle <id> [context]                                         Toggle a panel by id, optionally with context (e.g. launcher /emo, control-center audio)
+  plugin <author/plugin:entry> <target[:bar-name]> <event> [payload]  Dispatch an event to a plugin entry
+  plugins <{list|enable|disable|update|source}> ...                   Manage plugins and sources (list/enable/disable/update, source list/add/remove)
+  power-cycle [direction]                                             Step through UPower's ordered profile list, forward by default (wraps)
+  power-set <profile>                                                 Set the UPower power profile (e.g. performance, balanced, power-saver)
+  screenshot-fullscreen [mode]                                        Capture the focused monitor by default, pick interactively with pick, or all outputs with all
+  screenshot-region                                                   Start an interactive region screenshot
+  session <action>                                                    Run a built-in session action
+  settings-close                                                      Close the settings window
+  settings-open [context]                                             Open the settings window, or focus it if already open, optionally at a specific section
+  settings-open-plugin <plugin-id>                                    Open the settings window at a plugin's settings (e.g. noctalia/notes)
+  settings-open-widget [bar-name] [widget-name]                       Open the settings window at a bar widget; from a widget gesture, targets that widget
+  settings-toggle [context]                                           Toggle the settings window, optionally at a specific section
+  status                                                              Print current state as JSON
+  taskbar-cycle <direction>                                           Step to the adjacent task or workspace group in the invoking taskbar
+  templates-apply                                                     Apply configured theme templates for the current palette
+  theme-mode-get                                                      Print the current resolved theme mode
+  theme-mode-set <mode>                                               Set theme mode and persist to settings.toml
+  theme-mode-toggle                                                   Toggle theme mode between dark and light
+  volume-down [step]                                                  Decrease speaker volume
+  volume-mute                                                         Toggle speaker mute
+  volume-osd [value]                                                  Show the volume OSD without changing volume (defaults to the current volume)
+  volume-set <value>                                                  Set speaker volume
+  volume-up [step]                                                    Increase speaker volume
+  wallpaper-get [connector]                                           Print default wallpaper path, or effective path for an output
+  wallpaper-next [connector]                                          Switch to the next wallpaper immediately
+  wallpaper-previous [connector]                                      Switch to the previous wallpaper immediately
+  wallpaper-random [connector]                                        Switch to a random wallpaper immediately
+  wallpaper-set [connector] <path>                                    Set wallpaper for all or a specific output (persisted)
+  wifi-disable                                                        Disable Wi-Fi
+  wifi-enable                                                         Enable Wi-Fi
+  wifi-status                                                         Print Wi-Fi state
+  wifi-toggle                                                         Toggle Wi-Fi
+  window-switcher [action]                                            Open or close the window switcher overlay
+  workspace-alert-add <workspace>                                     Add a workspace alert (by number, name, or id)
+  workspace-alert-add-window <window-id>                              Add a workspace alert for a window
+  workspace-alert-clear <workspace>                                   Clear a workspace alert
+  workspace-alert-clear-all                                           Clear all workspace alerts
+  workspace-alert-status                                              Print workspace alerts
+  workspace-switch <direction>                                        Switch to the adjacent workspace on the target monitor (stops at both ends)
+
+Options:
+  -h, --help  Show this help message

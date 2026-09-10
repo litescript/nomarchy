@@ -1,0 +1,145 @@
+=== PCI ===
+01:00.0 VGA compatible controller: NVIDIA Corporation GB203 [GeForce RTX 5070 Ti] (rev a1)
+	Subsystem: ASUSTeK Computer Inc. Device 89f7
+	Kernel driver in use: nvidia
+	Kernel modules: nouveau, nvidia_drm, nvidia
+--
+0d:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Raphael (rev cb)
+	Subsystem: ASUSTeK Computer Inc. Device 8877
+	Kernel driver in use: amdgpu
+	Kernel modules: amdgpu
+
+=== NVIDIA ===
+Wed Sep  9 18:53:01 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5070 Ti     Off |   00000000:01:00.0  On |                  N/A |
+|  0%   51C    P0             48W /  300W |    1450MiB /  16303MiB |      1%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            1362      G   Hyprland                                254MiB |
+|    0   N/A  N/A            1422      G   quickshell                              437MiB |
+|    0   N/A  N/A            1618      G   Xwayland                                  4MiB |
+|    0   N/A  N/A            2145      G   ...rack-uuid=3190708988185955192          6MiB |
+|    0   N/A  N/A            4136      G   /usr/lib/firefox/firefox                284MiB |
+|    0   N/A  N/A            4232      G   /home/peter/.local/bin/kitty            102MiB |
++-----------------------------------------------------------------------------------------+
+
+=== MONITORS ===
+Monitor HDMI-A-1 (ID 0):
+	1920x1080@60.00000 at 320x0
+	description: BNQ ZOWIE RL LCD EBTBJ02778SL0
+	make: BNQ
+	model: ZOWIE RL LCD
+	physical size (mm): 530x300
+	serial: EBTBJ02778SL0
+	active workspace: 1 (1)
+	special workspace: 0 ()
+	reserved: 0 26 0 0
+	scale: 1
+	transform: 0
+	focused: no
+	dpmsStatus: 1
+	vrr: false
+	solitary: 0
+	solitaryBlockedBy: windowed mode,missing candidate
+	activelyTearing: false
+	tearingBlockedBy: next frame is not torn,user settings,missing candidate
+	directScanoutTo: 0
+	directScanoutBlockedBy: user settings,software renders/cursors,missing candidate
+	disabled: false
+	currentFormat: XRGB8888
+	mirrorOf: none
+	availableModes: 1920x1080@60.00Hz 1920x1080@59.94Hz 1920x1080@50.00Hz 1680x1050@59.95Hz 1600x900@60.00Hz 1280x1024@75.03Hz 1280x1024@60.02Hz 1280x800@59.81Hz 1280x720@60.00Hz 1280x720@59.94Hz 1280x720@50.00Hz 1024x768@75.03Hz 1024x768@60.00Hz 800x600@75.00Hz 800x600@60.32Hz 720x576@50.00Hz 720x480@59.94Hz 640x480@75.00Hz 640x480@59.94Hz 640x480@59.93Hz 
+	colorManagementPreset: srgb
+	sdrBrightness: 1
+	sdrSaturation: 1
+	sdrMinLuminance: 0.2
+	sdrMaxLuminance: 80
+	hardwareCursorsInUse: false
+
+Monitor DP-1 (ID 1):
+	3840x2160@160.00000 at 0x1080
+	description: Acer Technologies VG270K V4 65420066A8106
+	make: Acer Technologies
+	model: VG270K V4
+	physical size (mm): 600x340
+	serial: 65420066A8106
+	active workspace: 2 (2)
+	special workspace: 0 ()
+	reserved: 0 26 0 0
+	scale: 1.5
+	transform: 0
+	focused: yes
+	dpmsStatus: 1
+	vrr: false
+	solitary: 0
+	solitaryBlockedBy: windowed mode,missing candidate
+	activelyTearing: false
+	tearingBlockedBy: next frame is not torn,user settings,missing candidate
+	directScanoutTo: 0
+	directScanoutBlockedBy: user settings,software renders/cursors,missing candidate
+	disabled: false
+	currentFormat: XRGB8888
+	mirrorOf: none
+	availableModes: 3840x2160@60.00Hz 3840x2160@160.00Hz 3840x2160@144.00Hz 3840x2160@119.88Hz 3840x2160@120.00Hz 3840x2160@59.94Hz 2560x1440@160.00Hz 2560x1440@144.00Hz 2560x1440@120.00Hz 2560x1440@59.95Hz 1920x1080@119.88Hz 1920x1080@60.00Hz 1920x1080@59.94Hz 1920x1080@50.00Hz 1680x1050@59.95Hz 1280x1024@75.03Hz 1280x1024@60.02Hz 1440x900@59.89Hz 1280x960@60.00Hz 1152x864@75.00Hz 1280x720@60.00Hz 1280x720@59.94Hz 1280x720@50.00Hz 1024x768@119.99Hz 1024x768@75.03Hz 1024x768@70.07Hz 1024x768@60.00Hz 800x600@75.00Hz 800x600@72.19Hz 800x600@60.32Hz 800x600@56.25Hz 720x576@50.00Hz 720x480@59.94Hz 640x480@75.00Hz 640x480@72.81Hz 640x480@59.94Hz 640x480@59.93Hz 
+	colorManagementPreset: srgb
+	sdrBrightness: 1
+	sdrSaturation: 1
+	sdrMinLuminance: 0.2
+	sdrMaxLuminance: 80
+	hardwareCursorsInUse: false
+
+Monitor DP-2 (ID 2):
+	1920x1080@60.00000 at -1920x1080
+	description: Acer Technologies ED273 A 0x01010101
+	make: Acer Technologies
+	model: ED273 A
+	physical size (mm): 600x340
+	serial: 0x01010101
+	active workspace: 3 (3)
+	special workspace: 0 ()
+	reserved: 0 26 0 0
+	scale: 1
+	transform: 0
+	focused: no
+	dpmsStatus: 1
+	vrr: false
+	solitary: 0
+	solitaryBlockedBy: windowed mode,missing candidate
+	activelyTearing: false
+	tearingBlockedBy: next frame is not torn,user settings,missing candidate
+	directScanoutTo: 0
+	directScanoutBlockedBy: user settings,software renders/cursors,missing candidate
+	disabled: false
+	currentFormat: XRGB8888
+	mirrorOf: none
+	availableModes: 1920x1080@144.00Hz 1920x1080@119.88Hz 1920x1080@119.98Hz 1920x1080@100.00Hz 1920x1080@99.93Hz 1920x1080@60.00Hz 1920x1080@59.94Hz 1920x1080@50.00Hz 1920x1080@29.97Hz 1920x1080@25.00Hz 1920x1080@23.98Hz 1600x1200@60.00Hz 1680x1050@59.95Hz 1400x1050@59.98Hz 1600x900@60.00Hz 1280x1024@75.03Hz 1280x1024@60.02Hz 1440x900@59.89Hz 1280x960@60.00Hz 1280x720@60.00Hz 1280x720@59.94Hz 1280x720@50.00Hz 1024x768@75.03Hz 1024x768@70.07Hz 1024x768@60.00Hz 800x600@75.00Hz 800x600@72.19Hz 800x600@60.32Hz 800x600@56.25Hz 720x576@50.00Hz 720x480@59.94Hz 640x480@75.00Hz 640x480@72.81Hz 640x480@59.94Hz 640x480@59.93Hz 
+	colorManagementPreset: srgb
+	sdrBrightness: 1
+	sdrSaturation: 1
+	sdrMinLuminance: 0.2
+	sdrMaxLuminance: 80
+	hardwareCursorsInUse: false
+
+
+
+=== NVIDIA PACKAGES ===
+egl-wayland 4:1.1.22-1
+egl-wayland2 1.0.2-1
+lib32-nvidia-utils 610.57.04-1
+libva-nvidia-driver 0.0.18-1
+linux 7.2.3.arch1-3
+nvidia-open-dkms 610.57.04-1
+nvidia-utils 610.57.04-1

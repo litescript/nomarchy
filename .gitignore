@@ -1,0 +1,8 @@
+
+# Migration archives
+/docs/migration/*.tar.gz
+
+# Migration backup archives / binary boot snapshots
+docs/migration/*.tar.gz
+docs/migration/caesar-boot-backup/grub-generated/
+docs/migration/caesar-boot-backup/sda1-esp/

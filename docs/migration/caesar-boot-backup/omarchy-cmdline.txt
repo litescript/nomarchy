@@ -1,0 +1,1 @@
+quiet splash cryptdevice=PARTUUID=8bd201c0-a456-4de2-851f-7bfa788c028e:root root=/dev/mapper/root zswap.enabled=0 rootflags=subvol=@ rw rootfstype=btrfs  initramfs_async=0 loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0
