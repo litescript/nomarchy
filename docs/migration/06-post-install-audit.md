@@ -154,18 +154,16 @@ rule survives whatever compositor comes next.
 These are places where the new machine does something different from documented old
 behaviour, rather than simply not doing it yet.
 
-1. **The NVIDIA environment variables are gone.** `[environment]` in the Umbriel config
-   is empty, and `NVD_BACKEND`, `LIBVA_DRIVER_NAME` and `__GLX_VENDOR_LIBRARY_NAME` are
-   all unset in the live session. `02-gap-analysis.md` specifically said to move these
-   out of the compositor config and into the session environment; instead they were
-   dropped. `libva-nvidia-driver` is installed, so hardware video decode is most likely
-   falling back silently.
+1. ~~**The NVIDIA environment variables are gone.**~~ **Investigated and closed — see
+   §10.** All three were tested and are measurably no-ops on this machine; dropping them
+   was correct. The concern that hardware decode was "falling back silently" turned out
+   to be true, but for an unrelated reason (Firefox's RDD sandbox) that Omarchy also had.
 
 2. **NVIDIA modules are not in the initramfs.** Old: `MODULES=(nvidia nvidia_modeset
    nvidia_uvm nvidia_drm btrfs)`. New: `MODULES=()`, with only
    `options nvidia_drm modeset=1` from `/etc/modprobe.d/nvidia.conf`. That is late KMS —
-   expect a mode-set flicker during boot. Not dangerous, but it is a regression from a
-   deliberately-configured state.
+   a measured two-stage console switch at boot. **Cosmetic only; deliberately not
+   changed — see §10.**
 
 3. **Mouse sensitivity is `0.0`.** Both old caesar and waylab used `0.5`.
 
@@ -430,8 +428,9 @@ the Stream Deck issue if a udev rule proves insufficient.
 1. ~~**Stream Deck udev rule.**~~ Done — see §3.
 2. ~~**Finish the clipboard work.**~~ Done — `common/scripts/universal-clipboard` plus
    `common/kitty/kitty.conf`, verified in the live session. See §7.
-3. **NVIDIA environment variables** into `[environment]`, and decide on early KMS in
-   `mkinitcpio.conf`.
+3. ~~**NVIDIA environment variables.**~~ Investigated — see §10. Nothing carried over;
+   all three old variables are no-ops here. Early KMS and `MOZ_DISABLE_RDD_SANDBOX=1`
+   recorded there as deferred decisions.
 4. **Restore the shell.** `~/.bashrc` from the old disk, plus `eza`/`bat`/`zoxide`/
    `tmux`/`btop`/`mise`. This is the largest quality-of-life gap and it is pure copying.
 5. **Application launchers and launch-or-focus.** Five old bindings need it, and the
@@ -506,6 +505,145 @@ These were found by launching kitty and reading its warnings, not by inspection:
   Omarchy's cwd lookup. That purpose is gone. It still buys fast window spawn, at the
   cost of every terminal sharing one process — including whatever is running an agent.
   Off by default; the trade is documented in the config.
+
+---
+
+## 10. NVIDIA — investigated, nothing carried over
+
+Omarchy's `hyprland.lua` hard-coded three NVIDIA environment variables. All three were
+tested on this machine and **all three are measurably no-ops.** None of them should be
+carried into Nomarchy. This section records the evidence so they do not get re-added
+from the Hyprland wiki in a year.
+
+### Topology — caesar is dual-GPU, dual-vendor
+
+| PCI | Device | DRM | Displays |
+|---|---|---|---|
+| `0000:01:00.0` | NVIDIA `0x2c05` (RTX 5070 Ti, Blackwell) | `card2` / `renderD129` | **all three** |
+| `0000:0d:00.0` | AMD `0x164e` (Raphael iGPU in the 7800X3D) | `card1` / `renderD128` | none |
+
+Both VA-API drivers (`radeonsi`, `nvidia`) and both GLX vendors (`libGLX_mesa`,
+`libGLX_nvidia`) are installed, so there is a genuine ambiguity for libva and libglvnd to
+resolve. That is what made the variables worth testing rather than dismissing.
+
+### Results
+
+| Variable | Test | Observed | Verdict |
+|---|---|---|---|
+| `LIBVA_DRIVER_NAME=nvidia` | T1a vs T1d | both `VA-API NVDEC driver [direct backend]` — identical | **redundant** |
+| `NVD_BACKEND=direct` | T2 vs T2b | both `Selecting Direct backend` — identical | **redundant** |
+| `__GLX_VENDOR_LIBRARY_NAME=nvidia` | T4b vs T4c | both `NVIDIA Corporation` / `RTX 5070 Ti`, `direct rendering: Yes` — identical | **redundant** |
+
+### Why they are redundant: the compositor already decides
+
+The Wayland compositor advertises the NVIDIA render node through dmabuf feedback, and
+both libva and libglvnd follow it. `vainfo` reports `Trying display: wayland` — it never
+takes the raw-DRM path where the default device would be `renderD128`. The same
+mechanism is why Firefox already holds `renderD129` and `/dev/nvidia0` with a completely
+clean environment (verified by reading `/proc/893/environ`).
+
+**A hypothesis that testing overturned, worth recording.** Before running anything, the
+prediction was that libva would default to `renderD128` — the AMD iGPU — making
+`LIBVA_DRIVER_NAME=nvidia` genuinely load-bearing on this dual-GPU box. That was wrong,
+but only about which code path applies. Forced onto raw DRM, `renderD128` really does
+give radeonsi with H264-only support (T1c) while `renderD129` gives the full NVIDIA
+profile set. The hardware reasoning held; the Wayland path simply pre-empts it. The
+variable is redundant *because of the compositor*, not because the GPUs are equivalent —
+which matters, because a future headless or non-Wayland context would not have that
+protection.
+
+### The old values were correctly derived, and still should not be copied
+
+The GPU is `0x2c05`, well above the `0x1e00` Turing line, so Omarchy's GSP branch in
+`default/hypr/nvidia.lua` was the right one and those were exactly the values it would
+have set. The user's own comment in `hyprland.lua` recorded that they were a workaround
+for a quattro bug where `o.shell_succeeds()` always returned false inside Hyprland.
+
+So the provenance is sound. It is still not a reason to carry them: correctly derived in
+2026 under Hyprland says nothing about necessary in 2026 under Umbriel. **Decision: do
+not set any of the three. Revisit only if new evidence appears** — a non-Wayland session,
+a headless/raw-DRM context, or a driver regression that changes the defaults.
+
+### T3 — the one real gap, and it is none of the above
+
+Firefox was decoding video **in software**:
+
+```
+FFMPEG: Initialising VA-API FFmpeg decoder
+FFMPEG:   vaInitialize failed.
+FFMPEG:   Failed to create VA-API device context
+FFMPEG: FFmpegVideoDecoder, init, IsHardwareAccelerated=false
+```
+
+The capability is fully present and unrelated to any env var —
+`ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/renderD129` drove **NVDEC to 94%** with a
+clean environment, and the NVIDIA VA-API driver exposes AV1, VP9, HEVC Main/Main10/
+Main12/444, H264, MPEG2, VC1 and JPEG.
+
+The blocker is Firefox's **RDD sandbox** denying the driver access to `/dev/nvidia*`.
+With `MOZ_DISABLE_RDD_SANDBOX=1` the same clip decodes in hardware:
+
+```
+FFMPEG: FFmpegVideoDecoder, init, IsHardwareAccelerated=true
+FFMPEG: VA-API frame pts=0 dts=0 duration=33333 color space BT709 …
+```
+
+`NVD_BACKEND=egl` was tested with the sandbox left enabled, looking for a fix that did
+not weaken it. **It fails too** — the sandbox blocks both backends, so `NVD_BACKEND` is
+irrelevant in either direction.
+
+**This is not a migration regression.** `MOZ_DISABLE_RDD_SANDBOX` was never set on the
+old box either (checked across `/usr/share/omarchy`, `~/.config` and `/etc` on the
+mounted Omarchy root). Caesar was decoding video in software under Omarchy too. The
+migration did not lose this; measuring it for the first time found it.
+
+Note also that NVDEC utilisation is a poor signal on its own: 1080p30 H264 registers ~1%
+on a 5070 Ti, indistinguishable from noise. An early A/B on utilisation alone read as
+inconclusive and was nearly misread as a failure. `MOZ_LOG=FFmpegVideo:5` is the reliable
+instrument — it states the decision outright.
+
+### Deferred decisions
+
+**Early KMS — optional, cosmetic, not adopted.** The boot journal shows two console mode
+switches:
+
+```
+20:21:28  Initialized simpledrm ... console -> simple-framebuffer 128x48
+20:21:31  [nvidia-drm] Loading driver
+20:21:33  Initialized nvidia-drm ... console -> dummy -> nvidia framebuffer 240x67
+```
+
+Early KMS would collapse that to one. With no Plymouth installed, removing the flicker is
+the **entire** benefit; no functionality is gated on it. If adopted later, the correct set
+is `MODULES=(nvidia nvidia_modeset nvidia_drm)` — explicitly **not** `nvidia_uvm`, which
+is CUDA compute and irrelevant to modesetting, and **not** `btrfs`, which is obsolete now
+that root is ext4. Omarchy's five-module list should not be copied.
+
+**`MOZ_DISABLE_RDD_SANDBOX=1` — rejected for now.** It is the only tested change that
+produces a functional difference, and it is a real security trade rather than a free win:
+the RDD process exists specifically to parse untrusted media in a confined process, and
+this disables that confinement. Traded against lower CPU and power during video playback.
+On a 7800X3D, software decode of 1080p and most 4K is comfortable; sustained 4K AV1 is
+where it would bite.
+
+If it is ever adopted, scope it to Firefox — a `.desktop` override or wrapper — rather
+than a global `environment.d` drop-in, so it reads as a Firefox security decision and not
+as system boilerplate someone later assumes is required.
+
+### Already correct, no action
+
+- `nouveau` is blacklisted and `nvidia` is bound to the card.
+- `NVreg_UseKernelSuspendNotifiers=1` is set by packaging — the modern replacement for
+  the `nvidia-suspend`/`nvidia-resume`/`nvidia-hibernate` services, which are correctly
+  `disabled`. Do not enable them.
+- `nvidia_drm` modesetting is active, proven by three displays working under a wlroots
+  compositor.
+
+### Diagnostics kept
+
+`libva-utils` (`vainfo`) and `mesa-utils` (`glxinfo`, `eglinfo`) were installed for this
+investigation and deliberately kept. They are the tools that answer "which GPU is
+actually doing this", and re-deriving that without them is slow.
 
 ---
 
