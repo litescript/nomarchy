@@ -33,6 +33,7 @@ immediately:
 | `~/.config/nvim` | `common/nvim` (whole dir) |
 | `~/.config/kitty/kitty.conf` | `common/kitty/kitty.conf` |
 | `~/.config/umbriel/config.toml` | `hosts/caesar/umbriel/config.toml` |
+| `~/.config/systemd/user/ssh-agent.service` | `common/systemd/ssh-agent.service` |
 
 Two things are **copies, not symlinks**, and drift silently:
 
@@ -143,12 +144,27 @@ The GitHub repo is **public** — the tree includes `docs/migration/caesar-boot-
 with filesystem UUIDs and PARTUUIDs. Scan before adding anything new that came off the
 old machine.
 
-If a git operation fails with `Permission denied (publickey)`, the SSH key is fine — the
-tool shell does not inherit `SSH_AUTH_SOCK`. Use:
+If a git operation fails with `Permission denied (publickey)`, the key is almost certainly
+fine. Two different causes look identical:
 
 ```bash
-export SSH_AUTH_SOCK=$(ls ~/.ssh/agent/s.* | head -1)
+export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/ssh-agent.socket"   # tool shell has no agent
+ssh-add -l                                                  # "no identities" = the real cause
 ```
+
+`ssh-agent.service` (a user unit, symlinked from `common/systemd/`) owns the agent and
+binds it to that fixed path; `~/.bash_profile` exports the variable for the login shell,
+so the compositor and everything it spawns inherit it. A **tool shell** started outside
+that chain still has to export it by hand.
+
+The second cause is that the agent is running but **empty**: `~/.ssh/id_ed25519_github` is
+passphrase-protected, and the passphrase must be entered once per boot. `AddKeysToAgent
+yes` in `~/.ssh/config` makes the first ssh of the session prompt for it, but no askpass
+helper is installed, so that prompt only works in a real terminal — ask the owner to run
+the push, or `ssh-add ~/.ssh/id_ed25519_github`, rather than retrying from here.
+
+Do not reintroduce the old `ls ~/.ssh/agent/s.* | head -1` glob. It sorts alphabetically,
+and a reboot leaves the previous session's dead socket in that directory.
 
 `sudo` requires a password that cannot be supplied non-interactively; ask the user to run
 privileged commands themselves with the `!` prefix.

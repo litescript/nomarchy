@@ -1,0 +1,53 @@
+# SSH agent for the desktop session.
+#
+# Nothing on this machine started an agent: not ~/.bash_profile, not a user
+# unit, nothing. The GitHub key is passphrase-protected, so from the first
+# reboot onward every push failed with `Permission denied (publickey)` — which
+# reads exactly like an unregistered key, and is not one. The key was fine; there
+# was simply no agent holding it.
+#
+# What this replaces is a hand-started agent whose socket landed in
+# ~/.ssh/agent/ under a random name. Finding it meant globbing and hoping, and
+# the glob is a trap: `ls ~/.ssh/agent/s.*` sorts alphabetically, and after a
+# reboot that directory still contains the previous session's dead socket. A
+# unit-managed agent at a fixed path removes the guessing entirely —
+# /run/user/<uid>/ssh-agent.socket, always.
+#
+# Deployment is by symlink, as everywhere else in this repo:
+#
+#   ln -s ~/Projects/nomarchy/common/systemd/ssh-agent.service \
+#         ~/.config/systemd/user/ssh-agent.service
+#   systemctl --user enable --now ssh-agent.service
+#
+# Consumers need SSH_AUTH_SOCK, and it is set in two places because they have
+# different parents. ~/.bash_profile covers the tty1 login shell — which execs
+# start-umbriel, so the compositor and everything it spawns inherit it. That is
+# the same reasoning that puts PATH there rather than in .bashrc, which returns
+# early for non-interactive shells. ExecStartPost below covers the systemd user
+# manager, for units that ssh out on their own (the old box's backup timers did).
+#
+# The passphrase is still typed once per boot. `AddKeysToAgent yes` in
+# ~/.ssh/config makes the first ssh of the session prompt for it and cache it,
+# instead of requiring an explicit ssh-add. No askpass helper is installed, so
+# that prompt appears in the terminal, not in a dialog.
+
+[Unit]
+Description=SSH authentication agent
+Documentation=man:ssh-agent(1)
+
+[Service]
+Type=simple
+# %t is the user runtime directory, /run/user/<uid>.
+Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
+# A killed agent leaves its socket file behind, and ssh-agent refuses to bind
+# over an existing one. The leading - keeps a missing file from being an error.
+ExecStartPre=-/usr/bin/rm -f %t/ssh-agent.socket
+ExecStart=/usr/bin/ssh-agent -D -a %t/ssh-agent.socket
+# Publish the path to the user manager so units started later inherit it. Done
+# here rather than in environment.d because environment.d is read only at user
+# manager startup, which would mean this took effect a login later than the unit.
+ExecStartPost=/usr/bin/systemctl --user set-environment SSH_AUTH_SOCK=%t/ssh-agent.socket
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
