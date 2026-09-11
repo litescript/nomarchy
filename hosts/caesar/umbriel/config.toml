@@ -23,7 +23,7 @@
 # ────────────────────────────────────────────────────────────────────────────
 
 [include]
-files = []                                      # Example: ["appearance.toml", "outputs.toml"]
+files = []                                      # Example: ["appearance.toml", "outputs.toml", "noctalia.toml"]
 
 [include.optional]
 files = []                                      # Example: ["~/.config/umbriel/noctalia.toml"]
@@ -254,7 +254,7 @@ tap = true                                      # Tap-to-click
 [input.mouse]
 # natural_scroll = false                        # Omit to preserve the libinput default
 # accel_profile = "flat"                        # Omit to preserve the libinput default
-sensitivity = 0.0                               # Pointer speed, -1.0 to 1.0
+sensitivity = 0.5                               # Pointer speed, -1.0 to 1.0
 scroll_wheel_step = 60                          # Logical pixels per layout-scroll action, 1-1000
 # scroll_button = "MouseBack"                   # Hold to scroll with pointer motion; omit to leave the device alone
 # scroll_button_lock = false                    # One press latches scrolling instead of holding
@@ -343,10 +343,29 @@ follows_mouse = true                           # Focus the pointer target after 
 "Mod+V" = "spawn:/home/peter/Projects/nomarchy/common/scripts/universal-clipboard paste"
 "Mod+X" = "spawn:/home/peter/Projects/nomarchy/common/scripts/universal-clipboard cut"
 
-# Applications and session
+# Applications and session.
+#
+# Phase 1 deliberately uses plain launch rather than launch-or-focus, so the
+# muscle memory lands now and the keybind layer is proven on its own. Phase 2
+# swaps one semantic at a time: B -> launch-or-focus, M -> spotify-limited.
+#
+# Keys held for software that is not installed yet, so the layout is already
+# settled when it arrives: F (shelf), T (btop), D (lazydocker), O (obsidian).
 "Mod+Return" = "spawn:kitty"
+"Mod+Space" = "spawn:noctalia msg panel-toggle launcher"
 "Mod" = "spawn:noctalia msg panel-toggle launcher"
+"Mod+B" = "spawn:firefox"
+"Mod+Shift+B" = "spawn:firefox --private-window"
+"Mod+M" = "spawn:spotify-launcher"
+"Mod+N" = "spawn:kitty -e nvim"
 "Mod+W" = "window-close"
+
+# Shell panels. Clipboard is its own panel id, not a launcher mode — `launcher
+# /clipboard` looks plausible and silently returns "No results found", because
+# /clipboard is a filesystem path completion, not a mode. Verified by opening
+# both and looking at them.
+"Mod+Shift+V" = "spawn:noctalia msg panel-toggle clipboard"
+"Mod+Ctrl+E" = "spawn:noctalia msg panel-open launcher /emo"
 
 # Focus navigation. In overview, Mod+Up/Down retain normal layout focus, so they
 # traverse stacks in the default horizontal layout. Bare Up/Down move between
@@ -356,28 +375,42 @@ follows_mouse = true                           # Focus the pointer target after 
 "Mod+Up" = "window-focus-up"
 "Mod+Right" = "window-focus-right"
 
-# Window state and layout
-"Mod+T" = "window-toggle-floating"
+# Window state and layout. Floating moved off Mod+T so T can hold btop.
+"Mod+Ctrl+T" = "window-toggle-floating"
 "Mod+Shift+T" = "window-focus-switch-floating"
 "Mod+P" = "window-toggle-pinned"
-"Mod+M" = "window-toggle-maximize-to-edges"
 
-# Overview
-"Mod+O" = { action = "overview-toggle", repeat = false }
+# Overview lives on the top-left hot corner; Mod+O is reserved for obsidian.
+# window-toggle-maximize-to-edges and window-toggle-maximize are both unbound:
+# maximize is not a state this setup uses, and fullscreen covers the intent.
 
-# Common keybinds
-"Mod+Escape" = "session-quit"
+# Common keybinds.
+# Mod+Escape is deliberately unbound. Umbriel's default is session-quit, one
+# fumbled keypress from ending the session, on a key Omarchy used for its
+# system menu. Quit from Noctalia's session widget in the bar instead.
 "Mod+F1" = "window-focus-next"
 "Mod+H" = "window-focus-left"
 "Mod+J" = "window-focus-down"
 "Mod+K" = "window-focus-up"
-"Mod+L" = "window-focus-right"
+# Lock the session. Displaces window-focus-right, which is still on Mod+Right
+# and Mod+WheelDown. Blanking the displays afterwards is a Noctalia idle
+# behavior (locked_timeout), not a bind — the idle manager owns the resume side,
+# so a bare `dpms-off` here would have nothing to wake the screens back up.
+"Mod+L" = "spawn:noctalia msg session lock"
+# Stay awake — the old SUPER+SHIFT+L "toggle idle lock".
+"Mod+Shift+L" = "spawn:noctalia msg caffeine-toggle"
+#
+# common/scripts/lock-and-blank is now unbound and obsolete: the Noctalia idle
+# behavior screen-off has locked_timeout = 120, so Mod+L alone locks and the
+# displays follow two minutes later. The script is kept in git for one
+# checkpoint as a known-working reference until lock/idle/DPMS/caffeine have
+# been boring in daily use, then removed in a cleanup commit.
 "Mod+Shift+Left" = "column-move-left"
 "Mod+Shift+Down" = "window-move-down"
 "Mod+Shift+Up" = "window-move-up"
 "Mod+Shift+Right" = "column-move-right"
-"Mod+F" = "window-toggle-fullscreen"             # Exit restores the previous layout size immediately
-"Mod+Ctrl+F" = "window-toggle-maximize"
+# Fullscreen on Shift+F, matching the old box, so Mod+F can hold shelf.
+"Mod+Shift+F" = "window-toggle-fullscreen"       # Exit restores the previous layout size immediately
 "Mod+R" = "window-cycle-width"
 "Mod+Shift+R" = "window-cycle-width-back"
 "Mod+Comma" = "window-consume-left"
@@ -416,10 +449,37 @@ follows_mouse = true                           # Focus the pointer target after 
 # keyboard focus. Layout-relative window actions leave the workspace behind it
 # unchanged.
 # Documentation: https://docs.noctalia.dev/umbriel/scratchpads/
-"Mod+Shift+Space" = "window-move-to-scratchpad"
-"Mod+Space" = "scratchpad-toggle"
-"Mod+Ctrl+Space" = "window-restore-from-scratchpad"
-"Mod+Tab" = "scratchpad-focus-next"
+# Moved off the Space cluster so Mod+Space can be the launcher. S was Omarchy's
+# scratchpad key, so this is restored muscle memory rather than a new one.
+# Single implicit `default` scratchpad — no named definitions, so bare actions
+# work and no name suffix is required.
+"Mod+S" = "scratchpad-toggle"
+"Mod+Shift+S" = "window-move-to-scratchpad"
+"Mod+Ctrl+S" = "window-restore-from-scratchpad"
+# scratchpad-focus-next is unbound: Mod+Tab is reclaimed for workspace-next.
+# If several windows end up stashed at once, put it on Mod+Alt+S.
+
+# Workspace cycling, restored from the old box.
+"Mod+Tab" = "workspace-next"
+"Mod+Ctrl+Tab" = "workspace-focus-last"
+
+# Media, volume and brightness. None of these were bound before, so the keys on
+# the G213 did nothing at all. allow_when_locked mirrors the `locked` flag the
+# old box set, so volume and transport still work at the lock screen.
+"XF86AudioRaiseVolume" = { action = "spawn:noctalia msg volume-up", allow_when_locked = true }
+"XF86AudioLowerVolume" = { action = "spawn:noctalia msg volume-down", allow_when_locked = true }
+"XF86AudioMute" = { action = "spawn:noctalia msg volume-mute", allow_when_locked = true }
+"XF86AudioMicMute" = { action = "spawn:noctalia msg mic-mute", allow_when_locked = true }
+"XF86AudioPlay" = { action = "spawn:noctalia msg media toggle", allow_when_locked = true }
+"XF86AudioPause" = { action = "spawn:noctalia msg media toggle", allow_when_locked = true }
+"XF86AudioNext" = { action = "spawn:noctalia msg media next", allow_when_locked = true }
+"XF86AudioPrev" = { action = "spawn:noctalia msg media previous", allow_when_locked = true }
+# Old box's "switch media source".
+"Shift+XF86AudioPlay" = { action = "spawn:noctalia msg media next-player", allow_when_locked = true }
+# Likely inert on a desktop with external monitors; harmless if so. Check with
+# `noctalia msg brightness-list-backlight-devices`.
+"XF86MonBrightnessUp" = { action = "spawn:noctalia msg brightness-up", allow_when_locked = true }
+"XF86MonBrightnessDown" = { action = "spawn:noctalia msg brightness-down", allow_when_locked = true }
 
 # Named mode recipe: uncomment the definitions above, then replace the four
 # action values with named forms such as these. Every scratchpad action needs a

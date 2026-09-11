@@ -165,7 +165,8 @@ behaviour, rather than simply not doing it yet.
    a measured two-stage console switch at boot. **Cosmetic only; deliberately not
    changed — see §10.**
 
-3. **Mouse sensitivity is `0.0`.** Both old caesar and waylab used `0.5`.
+3. ~~**Mouse sensitivity is `0.0`.**~~ Fixed — restored to `0.5`, matching old caesar
+   and waylab.
 
 4. **No idle or lock timings are configured.** The old `shell.json` set the screensaver
    at 1200 s and lock at 1800 s — a deliberate 8× over Omarchy's stock 150/300, called

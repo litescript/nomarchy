@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Lock the session, then power off the displays — the "walking away" key.
+#
+# Deliberately immediate rather than input-aware: this is the bind you press
+# on your way out of the chair, so there is nothing to wait for. For the
+# input-aware version (lock now, blank only after N seconds of no input) use a
+# Noctalia idle behavior with a locked_timeout instead — the idle manager owns
+# the resume side, which a bare dpms-off does not.
+#
+# Verified on caesar: `noctalia msg dpms-off` sets dpms=Off on all connected
+# outputs, and pointer motion restores them. So this is safe to walk away from.
+
+set -u
+
+command -v noctalia >/dev/null || { echo "${0##*/}: noctalia not on PATH" >&2; exit 1; }
+
+noctalia msg session lock || exit 1
+
+# Let the lock surface map before the outputs go down, so the lock screen is
+# already up when they come back rather than drawing on wake.
+sleep 2
+
+noctalia msg dpms-off
