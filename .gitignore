@@ -6,3 +6,8 @@
 docs/migration/*.tar.gz
 docs/migration/caesar-boot-backup/grub-generated/
 docs/migration/caesar-boot-backup/sda1-esp/
+
+# Cross-session working notes for Claude instances. Local memory, not codebase —
+# same convention as ~/code/revline/CLAUDE_NOTES.md. Durable guidance goes in
+# CLAUDE.md; investigation records go in docs/migration/.
+CLAUDE_NOTES.md
