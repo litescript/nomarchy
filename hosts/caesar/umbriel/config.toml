@@ -361,7 +361,7 @@ follows_mouse = true                           # Focus the pointer target after 
 "Mod" = "spawn:noctalia msg panel-toggle launcher"
 "Mod+B" = "spawn:firefox"
 "Mod+Shift+B" = "spawn:firefox --private-window"
-"Mod+M" = "spawn:spotify-launcher"
+"Mod+M" = "spawn:/home/peter/Projects/nomarchy/common/scripts/spotify-limited"
 "Mod+N" = "spawn:kitty -e nvim"
 "Mod+W" = "window-close"
 

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Launch Spotify inside a memory-capped transient systemd scope.
+#
+# Carried over from the old box's ~/.local/bin/spotify-limited. Spotify is an
+# Electron app with no internal ceiling and a long-session memory habit, which is
+# why the cap exists at all. The old box's justification was ~1960 MiB "across
+# its processes" — that was summed RSS, which double-counts shared pages. Measured
+# by cgroup on this machine, real anon is ~710 MiB; the 1500M ceiling is therefore
+# more generous than the old number made it look.
+#
+# Adapted for this machine: the old script wrapped `spotify` directly, but Arch
+# ships `spotify-launcher`, which manages the real binary under
+# ~/.local/share/spotify-launcher/install/. The launched processes still report
+# as `spotify`, so the already-running guard is unchanged.
+#
+# Note: this box has no swap, so MemorySwapMax is inert here. It is kept because
+# it costs nothing and stays correct if swap is ever added.
+
+set -u
+
+command -v spotify-launcher >/dev/null || {
+  echo "${0##*/}: spotify-launcher is not installed" >&2; exit 1; }
+
+# Already running: hand off to spotify-launcher, which signals the existing
+# single-instance app to surface rather than starting a second copy. Cheap, and
+# it gives Mod+M raise-if-running behaviour until launch-or-focus exists. The
+# new process is short-lived and does not need the scope.
+if pgrep -x spotify >/dev/null 2>&1; then
+  exec spotify-launcher "$@"
+fi
+
+# Cold start. Note what this does and does not cover: ~1.6s in, Electron moves its
+# *browser process* into a scope it creates itself (app-org.chromium.Chromium-<pid>
+# .scope, MemoryMax=infinity), so the cap covers everything EXCEPT the parent —
+# both zygotes, the renderer, gpu-process, the utilities and crashpad stay here.
+# That is the right half: the children are what grow. Measured 5 min after a cold
+# start, capped anon 529 MiB against the escaped parent's 180 MiB, the parent flat
+# (peak 333 vs current 331, i.e. it had never grown).
+#
+# Two things follow. Whatever the cap fails to hold is uncapped entirely, so a leak
+# in the parent is unbounded — ~/.local/bin/spotify-memwatch is sampling both
+# scopes to settle that. And when the cap does bite, the cgroup OOM killer takes
+# the largest process inside the scope — a renderer — so the failure mode is a UI
+# crash, not a throttle.
+#
+# Do not "fix" this with MemoryHigh: memory.current here is ~40% reclaimable page
+# cache from reading the Electron binary, so a MemoryHigh tuned against that number
+# would drive continuous reclaim on a music player.
+exec systemd-run --user --scope \
+  --unit="spotify-limited-$$" \
+  --description="Spotify (memory-capped)" \
+  -p MemoryMax=1500M \
+  -p MemorySwapMax=512M \
+  spotify-launcher "$@"
