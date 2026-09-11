@@ -142,6 +142,7 @@ rule survives whatever compositor comes next.
 | **Capture toolchain** | `grim`, `slurp`, `wl-clipboard` present. Missing `tesseract`, `zbar`, `qrencode`, `gpu-screen-recorder`, `imv`, `mpv`, `wev`. OCR, QR and screen recording are gone; the Noctalia plugins that cover them are not enabled. |
 | **Fonts** | JetBrains Mono Nerd and Noto only. Missing CaskaydiaMono Nerd, iA Writer, Symbols Nerd Font. |
 | **Input method** | No `fcitx5`, no XCompose. |
+| **NAS mount** | No `nfs-utils`, no `/mnt/nas`, no fstab entry. The old box mounted `192.168.1.208:/` over nfs4 with `noauto,x-systemd.automount`. Needed by peter's own `backup-legal-to-nas` timer as well as the second-user staging flow — see §11. |
 | **Misc services** | No `bt-agent`, no `gnome-keyring`/`libsecret`/`seahorse`, no `udiskie`, no personal timers (`backup-daily`, `backup-legal-to-nas`, `subget-sync`). |
 | **Audio completeness** | `pipewire`, `pipewire-pulse`, `pipewire-jack`, `wireplumber` present. Missing `pipewire-alsa` and `gst-plugin-pipewire`. |
 | **Terminal config** | Ported deliberately — see §9. `common/kitty/kitty.conf` is symlinked to `~/.config/kitty/kitty.conf`. Two behaviours were dropped on purpose and one is blocked: the custom kitty fork at `~/.local/opt/kitty-pete` is not rebuilt, so `mouse_selection_from_gutter` is unavailable. |
@@ -645,6 +646,89 @@ as system boilerplate someone later assumes is required.
 `libva-utils` (`vainfo`) and `mesa-utils` (`glxinfo`, `eglinfo`) were installed for this
 investigation and deliberately kept. They are the tools that answer "which GPU is
 actually doing this", and re-deriving that without them is slow.
+
+---
+
+## 11. The second user — tabled, and one finding that should not be copied
+
+Caesar is a single-user workstation at the keyboard, but the old box carried a second
+account: **`meanpete`**, a Windows/WSL user who SSHes in to rsync large files and stage
+them onto the NAS. None of the homelab depends on caesar; caesar is a staging point that
+happens to have the NAS mounted. **None of this envelope exists on the new install yet.**
+
+Audited read-only on 2026-09-10. Nothing migrated.
+
+### What the envelope consists of
+
+| Piece | Detail |
+|---|---|
+| Account | `meanpete` uid 1001, gid 1003, shell `/usr/bin/bash` |
+| Shared group | `media` — members `peter`, `meanpete` |
+| Home | `~/Scripts/`, `.ssh/`, `.bashrc`, `.bash_profile` on the `@home` subvolume |
+| Staging dir | `~meanpete/incoming` |
+| NAS | `192.168.1.208:/` → `/mnt/nas`, **nfs4**, `_netdev,noauto,x-systemd.automount,timeo=14,retrans=3` |
+| Destinations | `/mnt/nas/PlexMedia/Movies`, `/mnt/nas/PlexMedia/TV` |
+| His scripts | `~/Scripts/move-to-plex.sh`, `move-to-plex-tv.sh`, plus `movie` and `tv` wrappers |
+| Root scripts | `/usr/local/bin/plex-movie`, `/usr/local/bin/plex-tv` |
+| sudo grant | in `/etc/sudoers` itself — `/etc/sudoers.d/` is empty |
+
+Two things could not be read as `peter` and will need root at migration time:
+`~meanpete/.ssh/` (mode `drwx------`) and the sudoers grant (`0440 root:root`). That is
+correct behaviour, not an obstacle to route around.
+
+New box status: **no `nfs-utils`, no `/mnt/nas`, no `meanpete`, no `media` group.**
+
+### The finding: a root wrapper executing a user-writable script
+
+```
+meanpete runs   movie            -> exec sudo /usr/local/bin/plex-movie   (root-owned, 0755)
+plex-movie      does             -> exec /home/meanpete/Scripts/move-to-plex.sh "$TARGET"
+move-to-plex.sh is               -> -rwxr-xr-x  1 meanpete  media
+```
+
+The root-owned wrapper executes a script **owned and writable by the user who invokes it**.
+Since `meanpete` has a sudo grant for `plex-movie`, he can put arbitrary content in his own
+`~/Scripts/move-to-plex.sh` and it executes as root. That is not "meanpete can stage
+files" — it is **meanpete has root on caesar**.
+
+The realistic threat is not deliberate misuse. It is that the far end of this is a Windows
+machine running WSL: anything that compromises that account or lifts his SSH key inherits
+root on caesar, and caesar mounts the NAS.
+
+This is structurally the **same class of issue as the `docker` group** — a convenience that
+silently becomes root-equivalence — and it is a live example of why old config is
+reference material rather than a template. Migrating the perms faithfully would carry the
+flaw forward intact.
+
+### Safer shape when it is rebuilt
+
+1. **Move the logic root-side.** Put the real implementation in `/usr/local/bin/plex-movie`
+   as a root-owned file, and have the sudo grant name that exact path. `meanpete` keeps his
+   `movie`/`tv` wrappers but no longer owns any code that runs as root.
+2. **Validate the argument.** The wrapper takes `$TARGET`; constrain it to a path under
+   `~meanpete/incoming` rather than accepting anything.
+3. **Ask whether root is needed at all.** If `media` group ownership on the NAS
+   destinations is sufficient for the writes, the sudo grant disappears entirely. That is
+   the real fix; the two above are mitigations.
+4. Prefer a `sudoers.d/` drop-in over editing `/etc/sudoers`, so the grant is a tracked
+   file rather than a hand-edit.
+
+### Also on the old box, and not to be carried
+
+`/usr/local/bin/mkinitcpio` is an Omarchy-era shim that wraps the real binary and warns
+that preset regeneration "does not update **Limine** boot entries," offering to run
+`limine-mkinitcpio`. This install uses systemd-boot, so that advice is now actively wrong.
+Do not port it.
+
+`/usr/local/bin/` also held two of peter's own symlinks (`ba` → `~/code/browse_alias/ba`,
+and a PyCharm launcher) — unrelated to this envelope but worth knowing they live there.
+
+### Prerequisite for peter's own use
+
+The NAS mount is not only meanpete's. Restoring `/mnt/nas` needs `nfs-utils` installed and
+the fstab entry recreated. The old entry is worth reusing as-is — `noauto` plus
+`x-systemd.automount` means the mount happens on first access rather than blocking boot on
+a NAS that may be down, which is the right behaviour for a workstation.
 
 ---
 
