@@ -349,9 +349,14 @@ follows_mouse = true                           # Focus the pointer target after 
 # muscle memory lands now and the keybind layer is proven on its own. Phase 2
 # swaps one semantic at a time: B -> launch-or-focus, M -> spotify-limited.
 #
-# Keys held for software that is not installed yet, so the layout is already
-# settled when it arrives: F (shelf), T (btop), D (lazydocker), O (obsidian).
+# TUIs get their own app_id rather than landing as generic `kitty`, so window
+# rules and launch-or-focus can tell them apart — the useful half of Omarchy's
+# `{ tui = ... }` helper, which gave them app-ids like org.omarchy.btop.
 "Mod+Return" = "spawn:kitty"
+"Mod+T" = "spawn:kitty --app-id=btop btop"
+"Mod+D" = "spawn:kitty --app-id=lazydocker lazydocker"
+"Mod+O" = "spawn:obsidian"
+"Mod+F" = "spawn:shelf"
 "Mod+Space" = "spawn:noctalia msg panel-toggle launcher"
 "Mod" = "spawn:noctalia msg panel-toggle launcher"
 "Mod+B" = "spawn:firefox"
@@ -590,6 +595,23 @@ new_on_top = true                               # Put new windows at the top of 
 [[window_rule]]
 blur = true
 blur_optimized = false
+
+# Utilities that open floating: the TUIs launched by Mod+T / Mod+D and the file
+# manager on Mod+F. These are glance-and-dismiss windows rather than things to
+# tile a workspace around — Omarchy floated its TUIs the same way, and shelf's
+# old Hyprland contrib config floated it centred at 1100x660.
+#
+# `default_floating` only sets the initial state, so Mod+Ctrl+T still toggles
+# any of them back into the tiling layout.
+[[window_rule]]
+match.app_id = "^(btop|lazydocker)$"
+default_floating = true
+default_size = [1100, 700]
+
+[[window_rule]]
+match.app_id = "^dev\\.shelf\\.Shelf$"
+default_floating = true
+default_size = [1100, 660]
 
 # Noctalia settings
 [[window_rule]]
