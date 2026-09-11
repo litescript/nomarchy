@@ -1,0 +1,40 @@
+# NAS over NFSv4, mounted at /mnt/nas.
+#
+# Promoted from the old box's single fstab line, preserved semantic for
+# semantic:
+#
+#   192.168.1.208:/   /mnt/nas   nfs4   _netdev,noauto,x-systemd.automount,timeo=14,retrans=3   0 0
+#
+#   192.168.1.208:/        -> What=
+#   nfs4                   -> Type=
+#   _netdev                -> kept in Options, plus the network ordering below
+#   timeo=14,retrans=3     -> kept in Options
+#   noauto                 -> this unit has NO [Install] section, so it is never
+#                             pulled in at boot. Only mnt-nas.automount is
+#                             enabled, and it starts this on first access.
+#   x-systemd.automount    -> mnt-nas.automount, alongside this file
+#
+# fstab's x-systemd.automount already made systemd generate exactly these two
+# units at boot. Writing them out does not add a layer — it promotes the
+# generated implementation into configuration this repo owns.
+#
+# What= is the NFSv4 *pseudo-root*, not a single export. The server exports
+# /Public, /proxmox-backups and /PlexMedia to 192.168.1.0/24, and under v4 they
+# all appear as subdirectories of this one mount. That is why paths like
+# /mnt/nas/PlexMedia/Movies resolve.
+#
+# The unit filename must match the escaped mount path: /mnt/nas -> mnt-nas.
+
+[Unit]
+Description=NAS (NFSv4 pseudo-root on 192.168.1.208)
+After=network-online.target remote-fs-pre.target
+Wants=network-online.target
+
+[Mount]
+What=192.168.1.208:/
+Where=/mnt/nas
+Type=nfs4
+# timeo/retrans bound the failure: an unreachable NAS errors out instead of
+# hanging processes on it indefinitely, which is the classic NFS foot-gun.
+Options=_netdev,timeo=14,retrans=3
+TimeoutSec=20

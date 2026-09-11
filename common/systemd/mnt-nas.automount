@@ -1,0 +1,36 @@
+# Automount for /mnt/nas — see mnt-nas.mount alongside this file.
+#
+# This is the unit that gets enabled; mnt-nas.mount deliberately has no
+# [Install] section. That pairing is how the old fstab line's `noauto` is
+# expressed: nothing mounts at boot, the mountpoint simply exists, and the
+# first access to /mnt/nas triggers the mount.
+#
+# The point is that boot availability is not coupled to the NAS being alive.
+# Caesar boots normally whether or not 192.168.1.208 is up; a dead NAS becomes
+# an error when something touches the path, rather than a hang or a delayed
+# boot.
+#
+# Enable with:  systemctl enable --now mnt-nas.automount
+# Never enable mnt-nas.mount itself — that would reintroduce mount-at-boot.
+
+# No network ordering here, deliberately. systemd orders automount units before
+# local-fs.target so mount points exist early, so an After=network-online.target
+# on *this* unit closes a cycle:
+#
+#   mnt-nas.automount -> network-online.target -> NetworkManager-wait-online
+#     -> NetworkManager -> sysinit.target -> systemd-tmpfiles-setup
+#     -> local-fs.target -> mnt-nas.automount
+#
+# systemd-analyze verify rejects it outright ("Unable to break cycle"). The
+# automount point is only a kernel trigger and needs nothing from the network;
+# mnt-nas.mount carries the network ordering and is not started until something
+# touches the path. fstab's generator does exactly this split.
+
+[Unit]
+Description=Automount the NAS on first access
+
+[Automount]
+Where=/mnt/nas
+
+[Install]
+WantedBy=remote-fs.target
