@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Launch an app, or focus it if it is already running.
+#
+# Rebuilds Omarchy's `{ launch =, focus = }` keybind helper (omarchy-launch-or-focus).
+# Bound in hosts/<host>/umbriel/config.toml; see docs/migration/03-carry-over.md,
+# which called this the first thing to rebuild.
+#
+#   launch-or-focus [options] <match> <command> [args...]
+#
+#   --title      match <match> against the window title instead of app_id
+#   --back       if the sole match is already focused, return to the previous
+#                window, making the key a toggle
+#   --no-cycle   always focus the first match rather than cycling
+#
+# <match> is a Python regex, unanchored and case-insensitive. Anchor it when a
+# substring would be ambiguous — `^firefox$` is the house style, matching the
+# window rules in the config. Case-insensitivity is not cosmetic: XWayland apps
+# report capitalised app ids (Spotify), Wayland ones usually do not.
+#
+# Repeat presses cycle through matching windows. Omarchy's version always took
+# the first match, which is indistinguishable from a dead key when you have three
+# Firefox windows and are already in one of them.
+#
+# Why `active` and not `focused`: umbriel reports `focused` per output, so on a
+# three-output setup three windows are focused at once. `active` is the single
+# seat-focused window — the one the keyboard is talking to.
+
+set -u
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+command -v umbriel >/dev/null || die "umbriel is not on PATH"
+
+field=app_id
+back=0
+cycle=1
+while [[ ${1:-} == --* ]]; do
+  case "$1" in
+    --title)    field=title; shift ;;
+    --back)     back=1; shift ;;
+    --no-cycle) cycle=0; shift ;;
+    --)         shift; break ;;
+    *)          die "unknown option: $1" ;;
+  esac
+done
+
+match="${1:-}"
+shift || true
+[[ -n $match && $# -gt 0 ]] || die "usage: ${0##*/} [--title] [--back] [--no-cycle] <match> <command> [args...]"
+
+decision="$(umbriel windows --json 2>/dev/null | MATCH="$match" FIELD="$field" CYCLE="$cycle" python3 -c '
+import json, os, re, sys
+
+try:
+    windows = json.load(sys.stdin)
+except Exception:
+    # No compositor, no window list, nothing to focus: launching is the safe
+    # fallback. Never leave the key dead.
+    print("LAUNCH"); sys.exit()
+
+pat = re.compile(os.environ["MATCH"], re.IGNORECASE)
+field = os.environ["FIELD"]
+hits = [w for w in windows if pat.search(w.get(field) or "")]
+
+if not hits:
+    print("LAUNCH")
+elif os.environ["CYCLE"] == "1" and any(w.get("active") for w in hits) and len(hits) > 1:
+    # Already in one of them: advance to the next, wrapping.
+    i = next(n for n, w in enumerate(hits) if w.get("active"))
+    print("FOCUS", hits[(i + 1) % len(hits)]["id"])
+elif len(hits) == 1 and hits[0].get("active"):
+    print("SOLE", hits[0]["id"])
+else:
+    print("FOCUS", hits[0]["id"])
+' 2>/dev/null)"
+
+# A python failure must not eat the keypress.
+[[ -n $decision ]] || decision=LAUNCH
+
+read -r verb id <<<"$decision"
+
+case "$verb" in
+  FOCUS)
+    # Plain window-focus, not window-focus-warp: this config sets
+    # cursor.follows_focus = true, which already warps the pointer. That pairing
+    # matters because input.focus.follows_mouse is also true — focusing a window
+    # without moving the pointer would hand focus straight back to whatever sits
+    # under the cursor on the next twitch.
+    exec umbriel msg "window-focus:$id"
+    ;;
+  SOLE)
+    (( back )) && exec umbriel msg window-focus-last
+    exit 0
+    ;;
+  LAUNCH)
+    # Debounce. A slow app (Obsidian, Firefox cold) has no window to find yet, so
+    # an impatient second press would launch a second copy. Only suppresses a
+    # repeat of the same match within the window; two different keys never
+    # interfere.
+    stamp="${XDG_RUNTIME_DIR:-/tmp}/launch-or-focus"
+    mkdir -p "$stamp"
+    stamp="$stamp/$(printf '%s' "$match" | tr -c 'A-Za-z0-9_' '_')"
+    if [[ -e $stamp ]]; then
+      now=$(date +%s%3N); then_=$(date -r "$stamp" +%s%3N)
+      (( now - then_ < 1500 )) && exit 0
+    fi
+    : > "$stamp"
+
+    # exec, so the app inherits XDG_ACTIVATION_TOKEN from the `spawn:` that ran
+    # this script. Without the token the new window does not get focus on map.
+    exec "$@"
+    ;;
+esac

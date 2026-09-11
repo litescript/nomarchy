@@ -345,24 +345,37 @@ follows_mouse = true                           # Focus the pointer target after 
 
 # Applications and session.
 #
-# Phase 1 deliberately uses plain launch rather than launch-or-focus, so the
-# muscle memory lands now and the keybind layer is proven on its own. Phase 2
-# swaps one semantic at a time: B -> launch-or-focus, M -> spotify-limited.
+# Phase 2: the singletons focus, the rest launch. Spotify, shelf, btop and
+# lazydocker are things you want one of, so their keys find the existing window
+# (common/scripts/launch-or-focus). Firefox deliberately does NOT — a second
+# Mod+B is how you get a second window, and that is wanted. Mod+Return likewise.
+#
+# The match argument is a regex and reaches the script as one whitespace-free
+# token, which is why `umbriel msg spawn` not preserving shell quoting is not a
+# problem here. Backslashes are doubled for TOML, as in the window rules below.
 #
 # TUIs get their own app_id rather than landing as generic `kitty`, so window
 # rules and launch-or-focus can tell them apart — the useful half of Omarchy's
-# `{ tui = ... }` helper, which gave them app-ids like org.omarchy.btop.
+# `{ tui = ... }` helper, which gave them app-ids like org.omarchy.btop. Mod+N
+# gets one for the same reason even though it stays a launch key: without it,
+# nvim is indistinguishable from a Mod+Return terminal and nothing can target it.
+#
+# Obsidian's match is anchored only at the tail. Its desktop file declares
+# StartupWMClass=md.obsidian.Obsidian, but that is an X11 hint and Electron under
+# Wayland may report plain `obsidian`; `obsidian$` matches either. Getting this
+# wrong is not costly — Obsidian's own single-instance lock raises the existing
+# window — but a match that works is better than a fallback that hides a typo.
 "Mod+Return" = "spawn:kitty"
-"Mod+T" = "spawn:kitty --app-id=btop btop"
-"Mod+D" = "spawn:kitty --app-id=lazydocker lazydocker"
-"Mod+O" = "spawn:obsidian"
-"Mod+F" = "spawn:shelf"
+"Mod+T" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus ^btop$ kitty --app-id=btop btop"
+"Mod+D" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus ^lazydocker$ kitty --app-id=lazydocker lazydocker"
+"Mod+O" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus obsidian$ obsidian"
+"Mod+F" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus ^dev\\.shelf\\.Shelf$ shelf"
 "Mod+Space" = "spawn:noctalia msg panel-toggle launcher"
 "Mod" = "spawn:noctalia msg panel-toggle launcher"
 "Mod+B" = "spawn:firefox"
 "Mod+Shift+B" = "spawn:firefox --private-window"
-"Mod+M" = "spawn:/home/peter/Projects/nomarchy/common/scripts/spotify-limited"
-"Mod+N" = "spawn:kitty -e nvim"
+"Mod+M" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus ^Spotify$ /home/peter/Projects/nomarchy/common/scripts/spotify-limited"
+"Mod+N" = "spawn:kitty --app-id=nvim -e nvim"
 "Mod+W" = "window-close"
 
 # Shell panels. Clipboard is its own panel id, not a launcher mode — `launcher
