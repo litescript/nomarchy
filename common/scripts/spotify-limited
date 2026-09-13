@@ -37,11 +37,16 @@ fi
 # start, capped anon 529 MiB against the escaped parent's 180 MiB, the parent flat
 # (peak 333 vs current 331, i.e. it had never grown).
 #
-# Two things follow. Whatever the cap fails to hold is uncapped entirely, so a leak
-# in the parent is unbounded — ~/.local/bin/spotify-memwatch is sampling both
-# scopes to settle that. And when the cap does bite, the cgroup OOM killer takes
-# the largest process inside the scope — a renderer — so the failure mode is a UI
-# crash, not a throttle.
+# That shortfall was measured rather than assumed, over a 58-hour single-instance
+# session: the escaped parent does not leak. It reaches ~258 MiB anon within the
+# first hour and then holds, moving +2 MiB across a full day. The capped scope
+# peaked at 635 MiB anon against this 1500M ceiling and `memory.events` recorded
+# zero max hits and zero OOM kills, so the cap has never actually engaged. Full
+# numbers in docs/migration/06-post-install-audit.md §12.
+#
+# If the cap ever does bite, the cgroup OOM killer takes the largest process
+# inside the scope — a renderer — so the failure mode is a UI crash, not a
+# throttle.
 #
 # Do not "fix" this with MemoryHigh: memory.current here is ~40% reclaimable page
 # cache from reading the Electron binary, so a MemoryHigh tuned against that number

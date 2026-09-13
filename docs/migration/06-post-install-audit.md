@@ -732,4 +732,84 @@ a NAS that may be down, which is the right behaviour for a workstation.
 
 ---
 
+## 12. Spotify's memory cap — what it actually covers, measured over 58 hours
+
+`common/scripts/spotify-limited` launches Spotify in a transient systemd scope with
+`MemoryMax=1500M`. It does not cap what it looks like it caps, and the shortfall turned
+out not to matter. Both halves of that are worth recording.
+
+### The escape
+
+About 1.6 s after launch, Electron relocates its **browser process** into a scope it
+creates for itself:
+
+```
+21:47:26.749  umbriel[735]: spawned '.../common/scripts/spotify-limited'
+21:47:26.784  systemd-run[4138]: Running as unit: spotify-limited-4138.scope
+21:47:28.373  systemd[654]: Started app-org.chromium.Chromium-4138.scope.
+```
+
+That second scope has `MemoryMax=infinity`. Every other process — both zygotes, the
+renderer, gpu-process, the utilities, crashpad — stays in the capped scope. So the cap
+covers everything **except** the parent, which is the inverse of what the script's original
+comment claimed.
+
+### Whether that matters
+
+It is the right half to cap — the children are the ones that grow — but the escaped parent
+is bounded by nothing, so a leak there would be unbounded. Five minutes of observation
+could not answer that; a leak is an over-hours phenomenon. A sampling probe
+(`~/.local/bin/spotify-memwatch`, a user timer writing `memory.stat` every 5 minutes) ran
+from 2026-09-10 21:56 to 2026-09-13 08:00 — **58.1 hours against a single Spotify instance,
+no restarts, no reboot**, which is as clean a long-session test as this question can get.
+
+| | escaped parent | capped scope |
+|---|---|---|
+| anon at start | 180 MiB | 534 MiB |
+| anon at end | 269 MiB | 629 MiB |
+| min / max anon | 180 / 269 MiB | 501 / 635 MiB |
+| net change, final 24 h | **+2 MiB** | +12 MiB |
+| `memory.events` max / oom_kill | 0 / 0 | 0 / 0 |
+
+**The parent does not leak.** It reached 257 MiB within the first hour, then read 258 MiB
+for hours two through six and moved +2 MiB across the whole final day. The growth is
+warm-up, not accumulation.
+
+**The cap never engaged.** In 58 hours the capped scope peaked at 635 MiB anon against a
+1500M ceiling — roughly 2.4x headroom — and `memory.events` recorded zero `max` hits and
+zero OOM kills. The ceiling is a safety net that has never been touched, not a constraint
+being enforced.
+
+### Decisions
+
+- **Leave the cap as it is.** The escape is documented in the script and is harmless.
+- **Do not pursue the slice experiment** (`systemd-run --slice=` with `MemoryMax` on the
+  slice, to catch the self-created Chromium scope). It was only worth its cost if the
+  parent leaked. It does not.
+- **Do not add `MemoryHigh`.** An earlier note suggested `MemoryHigh=1200M` on the strength
+  of `memory.current` readings near 1216 MiB. That number is ~40% reclaimable page cache
+  from the cold start reading the Electron binary; anon never exceeded 635 MiB. A
+  `MemoryHigh` tuned against it would drive continuous reclaim on a music player.
+
+### Two measurement lessons
+
+**`memory.current` is not the app's memory.** It counts page cache. Read `anon` out of
+`memory.stat`, and read `memory.events` (`max`, `oom_kill`) to learn whether a cap ever
+actually bit — that states what happened rather than implying it.
+
+**A linear fit across a warm-up ramp manufactures a trend.** The probe's own report
+computed first-to-last growth over the full window and reported +1.5 MiB/h for the parent,
+which reads as a leak. Bucketing the same data by hour showed the entire rise happened
+before the first hour was out, and flat thereafter. The summary statistic was wrong in a
+way that pointed at the alarming conclusion; the shape of the series was right.
+
+### Provenance of the 1500M figure
+
+The old box justified the cap with "~1960 MiB across its processes". That was summed RSS,
+which double-counts shared pages. Measured by cgroup at the end of this window, real anon
+was 898 MiB across both scopes. The cap is considerably more generous than the number that
+motivated it made it sound.
+
+---
+
 *Prior context: `README.md`, `SUMMARY.md`, `01`–`05` and `raw/` in this directory.*
