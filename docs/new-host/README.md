@@ -202,6 +202,28 @@ common/scripts/bootstrap rigel --apply    # user-level changes
 
 Then the root steps it printed, which it will not run itself. Then `tailscale up`.
 
+**Three things rigel's install tripped on**, all easy to do on a bare TTY with no clipboard:
+
+- **`--apply` does not install packages.** It never runs sudo, so even with `--apply` the
+  package step only *prints* one long `sudo pacman -S --needed ...` line — which cannot be
+  copied on a console. rigel's install ended up awking names out by hand. Read the
+  manifests directly instead (tested on rigel):
+
+  ```bash
+  sudo pacman -S --needed $(grep -hvE '^\s*#|^\s*$' common/packages/repo.txt hosts/<host>/packages/repo.txt | sort -u)
+  ```
+
+  AUR packages still build one at a time with `makepkg -si`.
+- **Clone to `~/Projects/nomarchy` before the first `--apply`, not after.** The links point
+  wherever the checkout was when they were made, so cloning to `~` and moving it later
+  leaves every link dangling. The bootstrap will not fix that for you — a dangling link is
+  "exists but is not the expected symlink", reported as a conflict and left alone. Recover
+  by removing the dead links (`find ~ -maxdepth 4 -xtype l` lists them) and rerunning
+  `--apply`. The location is not a preference: the host umbriel config includes
+  `~/Projects/nomarchy/common/umbriel/base.toml` by that literal path.
+- **A fresh install has no git identity**, so the first commit fails with
+  `empty ident name`. Match the author on the existing history (`git log --format='%an <%ae>'`).
+
 **Verify against the live session, not a fresh process.** This is the single most
 load-bearing paragraph in `CLAUDE.md` and it has cost real hours twice. A probe window you
 spawn reads current config and passes while the running session stays broken. Compare
