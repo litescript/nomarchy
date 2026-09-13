@@ -28,7 +28,12 @@ prompt="${1:-Passphrase:}"
 # the window. Keep the key name, drop the path.
 short="$prompt"
 if [[ $prompt =~ [Ee]nter\ passphrase\ for\ (key\ )?\'?([^\':]+) ]]; then
-  short="🔑 ${BASH_REMATCH[2]##*/}"
+  name="${BASH_REMATCH[2]##*/}"
+  # Drop the id_<type>_ boilerplate too: every key here starts with it, so it carries no
+  # information. The trailing (.+) is required rather than optional, so a key named plainly
+  # `id_rsa` keeps its name instead of being trimmed to nothing.
+  [[ $name =~ ^id_(ed25519|rsa|ecdsa|dsa)(_sk)?_(.+)$ ]] && name="${BASH_REMATCH[3]}"
+  short="🔑 $name"
 fi
 
 if [[ -n ${WAYLAND_DISPLAY:-} ]] && command -v fuzzel >/dev/null 2>&1; then
