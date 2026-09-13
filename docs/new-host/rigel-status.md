@@ -1,112 +1,106 @@
 # rigel — where this stands
 
-A resumption point, written 2026-09-13 while rigel is still on Omarchy and Pete is
-travelling with an Arch ISO on USB. Read this first if you are picking the work back up.
-
-## ⚠ The one thing that must not go wrong
-
-**Everything in this repo must be pushed before rigel is wiped.** That is the entire point
-of the sequence in `README.md`, and rigel is now within arm's reach of an install USB.
-
-```bash
-git status -sb          # must read: ## master...origin/master   (no "ahead")
-```
-
-If it says *ahead*, push before touching the installer. `~/.ssh/id_ed25519` is registered
-on GitHub as "laptop" and is passphrase-protected; the agent needs `ssh-add` once per boot,
-in a real terminal. `gh` is authenticated with a token carrying `repo` scope, so
-`gh auth setup-git` is the route that needs no passphrase.
-
-Nothing is recoverable from the old disk afterwards unless it was kept — and keeping it is
-worth doing. caesar's old install has been mounted read-only for months and consulted most
-days.
+A resumption point. First written 2026-09-13 while rigel was still on Omarchy; **rewritten
+the same day after the install**, from the running machine. Read this first if you are
+picking the work back up. The pre-wipe version, with the push-before-wipe checklist and the
+installer instructions, is in git history before this rewrite.
 
 ## Where the work actually is
 
 | done | |
 |---|---|
-| Phase 1, survey | `rigel-survey.txt` — committed, and **scrubbed** of wifi names, MACs and tailnet identity in `84e5128` |
-| Phase 1, Omarchy sweep | `rigel-omarchy-sweep.md` — the graphics investigation, laptop layer, package separation |
+| Phase 1, survey | `rigel-survey.txt` — scrubbed of wifi names, MACs and tailnet identity in `84e5128`. Describes the **old** OS |
+| Phase 1, Omarchy sweep | `rigel-omarchy-sweep.md` — the graphics investigation, laptop layer, package separation. Also the old OS |
 | The `common/` blocker | Raised in `rigel-open-questions.md`, answered and fixed by caesar in `5e9d123` |
-
-| Phase 2, `hosts/rigel/` | **Written.** Seven files; `common/scripts/bootstrap rigel` parses it and prints a clean plan |
+| Phase 2, `hosts/rigel/` | Written in `3bc98c3` |
+| Phase 3, push | Done; the install happened |
+| Phase 4, install | Done. Recorded in **`hosts/rigel/install/`** — disk, UUIDs, subvolumes, fstab, boot |
+| Phase 5, bootstrap | `common/scripts/bootstrap rigel` reports **24 ok, 0 to do, 0 conflicts**: every package, link and user unit |
 
 | not done | |
 |---|---|
-| **The lid decision** | The one substantive hole in `hosts/rigel/`. See below |
-| Phase 3 — push | Do it before the USB goes in |
-| Phases 4–5 | Pete's install, then bootstrap |
+| **The lid** | Live security gap today. See the open decisions |
+| **Firewall** | `ufw` installed but `inactive` and `disabled`. Root step §5 not run |
+| **NAS** | `/etc/nas-creds` exists `0600` but is **empty**; `/mnt/nas/{PlexMedia,Public}` exist; the fstab lines are not added. Root step §6 half done |
+| snapper | `@snapshots` is mounted at `/.snapshots`, but snapper is not installed |
 
-## The install, in the terms the installer asks for
+Root steps confirmed done by inspection: `[multilib]` enabled, timezone
+`America/Indiana/Indianapolis`, tty1 autologin drop-in in place, `tailscaled` enabled and
+active. The bootstrap cannot tell done from not-done for root steps and prints all of them
+every run, so its output is not evidence either way.
 
-Settled: the user is **`peter`** (same as caesar, which is why the umbriel include path
-`~/Projects/nomarchy/...` resolves identically on both), locale `en_US.UTF-8`, keymap `us`,
-timezone `America/Indianapolis`.
+## The install
 
-The **old** subvolume layout, recorded because it dies with the partition table and is a
-reasonable shape to repeat — it is also what caesar's old disk used:
+Recorded in full in `hosts/rigel/install/README.md`. The headlines:
 
-```
-@       -> /
-@home   -> /home
-@pkg    -> /var/cache/pacman/pkg
-@log    -> /var/log
-mount options: rw,relatime,compress=zstd:3,ssd,space_cache=v2
-/boot   -> a separate 2G vfat ESP
-```
+- **btrfs on LUKS2**, one NVMe. No `/etc/crypttab`: root is unlocked from
+  `rd.luks.name=` on the command line, with the `systemd` + `sd-encrypt` initramfs hooks.
+- Subvolumes `@`, `@home`, `@var_log`, `@snapshots`, `swap` (8G swapfile). **No `@pkg`**,
+  unlike the old layout.
+- **systemd-boot**, not limine. Secure Boot disabled.
+- User `peter`, so the umbriel include path `~/Projects/nomarchy/...` resolves identically
+  on caesar and rigel. No display manager.
 
-The old UUIDs are not worth recording: they die with the disk. Capture the *new* LUKS
-container UUID, filesystem UUIDs, `/etc/fstab` and `/etc/crypttab` into `hosts/rigel/`
-after installing — publishing UUIDs in this public repo is settled policy.
+## Confirmed on the running session
 
-**Do not install `sddm`.** tty1 autologin is load-bearing, for the PATH reason below.
+- **umbriel inherits `PATH` with `~/.local/bin` first**, and `SSH_AUTH_SOCK` at the fixed
+  socket, via tty1 autologin → `start-umbriel`. This is the coupling the bare-name script
+  binds depend on.
+- **The panel is `eDP-1`**, a BOE 0x0AD5 at 2560x1600, 165.004 Hz or 60.002 Hz. The old OS
+  called it `eDP-2`; the name did not survive the reinstall, and every pre-install doc that
+  says `eDP-2` was describing the old OS.
+- **DRM numbering moved too.** Now Intel (`0000:00:02.0`) is `card1` / `renderD128` and
+  NVIDIA (`0000:01:00.0`) is `card0` / `renderD129`. The old OS had Intel at `card2` /
+  `renderD129`. This is the concrete case for never naming a card by number.
+- Backlight is still `nvidia_wmi_ec_backlight`, and still the only backlight device.
 
-## rigel has a NAS, which the guide did not expect
+## rigel has a NAS
 
-The guide says the NAS is caesar's and must not appear in `hosts/rigel/`. That was wrong.
-rigel reaches the **same** NAS (`192.168.1.208`), but over **CIFS** rather than caesar's
-NFS — and it works from off-site, because Tailscale makes that LAN appear local. Verified
-from another house: 31 ms, and the automount triggered and listed the shares.
+rigel reaches the **same** NAS as caesar (`192.168.1.208`), but over **CIFS** rather than
+NFS — and it works from off-site, because Tailscale makes that LAN appear local. Verified on
+the old OS from another house: 31 ms, and the automount triggered and listed the shares.
 
-So `cifs-utils` is in `hosts/rigel/packages/repo.txt`, and the two fstab lines plus the
-`/mnt/nas` directories are in `bootstrap/root-steps`. **`/etc/nas-creds` is a credential
-file and never enters this repo** — same category as `~/.config/subliminal/subliminal.toml`
-and `~/vpn/nord/`. It is root-only `0600` and must be recreated by hand.
+`cifs-utils` is installed. The fstab lines and directories are in `bootstrap/root-steps`.
+**`/etc/nas-creds` is a credential file and never enters this repo** — same category as
+`~/.config/subliminal/subliminal.toml` and `~/vpn/nord/`. It must be filled in by hand.
 
-## What the install needs to be
+## The open decisions
 
-Settled in conversation, not derivable from the tree:
+1. **The NVIDIA stack — measured once, not yet settled.** The driver is installed
+   (`nvidia-open-dkms 615.71.09`, `nvidia-utils`, `lib32-nvidia-utils`,
+   `libva-nvidia-driver`). Do **not** set `LIBVA_DRIVER_NAME`; the Intel default is right
+   where Intel drives the panel.
 
-- **btrfs on LUKS.** Pete partitions and installs by hand.
-- **tty1 autologin, and no display manager.** This is load-bearing, not cosmetic: it is how
-  `~/.local/bin` reaches umbriel's `PATH`, and every script bind is a bare name now. An
-  sddm session would leave nine keybinds registering, validating, and doing nothing.
-- **`[multilib]` enabled before the bootstrap's package step**, or it fails on
-  `lib32-nvidia-utils` and `steam`. It is enabled on rigel today only because Omarchy did
-  it; a fresh install has it commented out.
-- Record afterwards, into `hosts/rigel/`: the LUKS container UUID, filesystem UUIDs, the
-  subvolume layout, `/etc/fstab` and `/etc/crypttab`. Publishing UUIDs here is settled
-  policy.
+   The first measurement, 2026-09-13, about 14 minutes after boot, **on AC at 100%
+   battery**:
+   - umbriel is the **only** process holding NVIDIA nodes — about 20 fds across
+     `/dev/nvidia0`, `/dev/nvidiactl`, `/dev/nvidia-modeset`, `card0` and `renderD129`,
+     plus an NVIDIA GL shader cache. Noctalia holds none.
+   - Despite that, the dGPU **runtime-suspends**: `runtime_status` read `suspended` across
+     three samples five seconds apart, with `runtime_suspended_time` advancing in step with
+     the clock and `runtime_active_time` frozen at ~57 s.
 
-## The open decisions, none of them blocking
-
-1. **The NVIDIA stack.** Install the driver (`nvidia-open-dkms`, `nvidia-utils`,
-   `lib32-nvidia-utils`, `libva-nvidia-driver`) — steam, moonlight, obs and kdenlive want
-   it. Do **not** pre-set `LIBVA_DRIVER_NAME`; the Intel default is correct on a machine
-   where Intel drives the panel. Whether to constrain what umbriel opens is a *measurement
-   after install*, not a decision now: check umbriel's `/proc/<pid>/fd` and the dGPU's
-   `power/runtime_suspended_time`, and only then consider `WLR_DRM_DEVICES` — never by
-   `cardN`, never by a `by-path` name full of colons.
+   So holding the fds does not by itself keep the card awake, and `WLR_DRM_DEVICES` looks
+   unnecessary. What is not yet measured: the same check **on battery**, and after
+   something has actually woken the dGPU (a game, NVDEC) to see that it goes back down.
+   If it holds, record the decision as "not pinned, with evidence". If pinning is ever
+   needed: never by `cardN` (see above), never by a `by-path` name full of colons.
 2. **The 48 packages** (plus one yes/no on the 39-package retroarch block). Listed in the
-   sweep. `1password` and `signal-desktop` are on it only because they are installed; §4
+   sweep. `1password` and `signal-desktop` are on it only because they were installed; §4
    already settled that neither is wanted.
-3. **Lid ownership — the one with a security edge.** Pick exactly one owner: logind with
-   something locking on `PrepareForSleep`, or umbriel's `[events]` hooks with logind still
-   set to ignore the lid. Never both. Noctalia's `lock-and-suspend` is an *idle* behaviour
-   and a lid close does not pass through it, so this gap is real. The test is physical:
-   close the lid, open it, and it must be locked.
-4. **snapper and the bootloader.** Omarchy chose limine + snapper. Dropping them purely
-   because Omarchy chose them inverts the rule. Choose on merit.
+3. **Lid ownership — the one with a security edge, and it is live now.** There is no
+   `/etc/systemd/logind.conf.d/`, so logind has its default `HandleLidSwitch=suspend`, the
+   `[events]` lid hooks are commented out, and nothing locks on `PrepareForSleep`. **Closing
+   the lid today suspends and resumes unlocked.** Pick exactly one owner: logind with
+   something locking on `PrepareForSleep`, or umbriel's `[events]` hooks with logind set to
+   ignore the lid. Never both. Noctalia's `lock-and-suspend` is an *idle* behaviour and a
+   lid close does not pass through it. The test is physical: close the lid, open it, and it
+   must be locked. The design notes are in the lid section of
+   `hosts/rigel/umbriel/config.toml`.
+4. **snapper.** The bootloader question is settled: systemd-boot. Snapshots are not —
+   there is a mounted `@snapshots` and nothing using it. Dropping snapper purely because
+   Omarchy chose it inverts the rule. Choose on merit. Note that with no `@pkg`, a root
+   snapshot now includes the pacman cache.
 
 ## Things that will bite if forgotten
 
@@ -120,13 +114,13 @@ Settled in conversation, not derivable from the tree:
   tip; still in history at `c1c5fdd`, which is Pete's call to rewrite or leave.
 - `brightnessctl` needs `-d nvidia_wmi_ec_backlight`. There is no `intel_backlight` here
   despite Intel driving the panel.
-- The panel enumerates as **`eDP-2`**, not `eDP-1`. Confirm with `umbriel outputs` before
-  writing the `[output.*]` block.
+- **Output and card names are per-install facts.** `eDP-2` became `eDP-1` across the
+  reinstall. `HDMI-A-1`, commented in the host config, is also an old-OS name — read
+  `umbriel outputs` with something plugged in before trusting it.
 
 ## Conversation state
 
-Two agents are working this: rigel's (here, pre-wipe) and caesar's (which owns `common/`).
-They talk through `rigel-open-questions.md`, which now carries rigel's questions, caesar's
-answers, and caesar's review of the sweep. Both of caesar's corrections to the sweep were
-checked on rigel and were right — `modeset=1` is the driver's own default, and `[multilib]`
-is a real gap. That file is the thread; append to it rather than starting a new one.
+Two agents have worked this: rigel's and caesar's (which owns `common/`). They talk through
+`rigel-open-questions.md`, which carries rigel's questions, caesar's answers, caesar's
+review of the sweep, and now rigel's post-install corrections. That file is the thread;
+append to it rather than starting a new one.

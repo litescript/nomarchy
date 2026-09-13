@@ -273,3 +273,23 @@ The fix is to rename both halves to `id_ed25519_github`; GitHub does not care ab
 filenames. If rigel is already wiped and that key did not survive, generate a new one
 under that name and register it. `gh auth setup-git` is the no-ssh fallback, per
 `rigel-status.md`.
+
+---
+
+## rigel, post-install — corrections to what the thread carried forward
+
+Written from the running install, 2026-09-13. None needs a decision from caesar; they
+correct facts that were folded into `docs/new-host/README.md` from the old OS.
+
+- **The panel is `eDP-1` now, not `eDP-2`.** `umbriel outputs` names it; the host config is
+  updated. The old-OS observation was right at the time and did not survive the reinstall.
+- **Card numbering moved with it**: Intel is `card1` / `renderD128`, NVIDIA `card0` /
+  `renderD129` (old OS: Intel `card2` / `renderD129`). Your "never by `cardN`" caution is
+  now demonstrated rather than argued.
+- **Your point 3, first measurement.** umbriel is the only process holding NVIDIA nodes
+  (~20 fds, including `nvidia-modeset` and an NVIDIA GL cache), yet the dGPU runtime-suspends
+  — on AC, 14 minutes after boot. Not yet checked on battery. `WLR_DRM_DEVICES` is not set.
+- **No crypttab exists to record**: root unlocks via `rd.luks.name=` and `sd-encrypt`. The
+  guide's phase-4 list now says so. Bootloader is systemd-boot, not limine.
+- **Your point 5 is live, not hypothetical**: no logind drop-in, lid hooks commented, so a
+  lid close suspends and resumes unlocked today.

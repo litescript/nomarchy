@@ -1,0 +1,24 @@
+# Static information about the filesystems.
+# See fstab(5) for details.
+
+# <file system> <dir> <type> <options> <dump> <pass>
+# /dev/mapper/cryptroot LABEL=arch
+UUID=534c02c7-4941-4397-be71-79aab5d3a447	/         	btrfs     	rw,noatime,compress=zstd:3,ssd,space_cache=v2,subvol=/@	0 0
+
+# /dev/mapper/cryptroot LABEL=arch
+UUID=534c02c7-4941-4397-be71-79aab5d3a447	/home     	btrfs     	rw,noatime,compress=zstd:3,ssd,space_cache=v2,subvol=/@home	0 0
+
+# /dev/mapper/cryptroot LABEL=arch
+UUID=534c02c7-4941-4397-be71-79aab5d3a447	/var/log  	btrfs     	rw,noatime,compress=zstd:3,ssd,space_cache=v2,subvol=/@var_log	0 0
+
+# /dev/mapper/cryptroot LABEL=arch
+UUID=534c02c7-4941-4397-be71-79aab5d3a447	/.snapshots	btrfs     	rw,noatime,compress=zstd:3,ssd,space_cache=v2,subvol=/@snapshots	0 0
+
+# /dev/mapper/cryptroot LABEL=arch
+UUID=534c02c7-4941-4397-be71-79aab5d3a447	/swap     	btrfs     	rw,noatime,compress=zstd:3,ssd,space_cache=v2,subvol=/swap	0 0
+
+# /dev/nvme0n1p1
+UUID=959A-EF7B      	/boot     	vfat      	rw,relatime,fmask=0022,dmask=0022,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro	0 2
+
+/swap/swapfile      	none      	swap      	defaults  	0 0
+

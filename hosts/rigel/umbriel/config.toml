@@ -26,25 +26,26 @@ files = ["~/Projects/nomarchy/common/umbriel/base.toml"]
 files = ["~/.config/umbriel/noctalia.toml"]
 
 # ─────────────────────────────── Outputs ────────────────────────────────────
-# One internal panel. Confirm the name and the refresh rate with `umbriel outputs`
-# before trusting this block.
+# One internal panel, a BOE 0x0AD5. Name and modes are from `umbriel outputs` on the new
+# install, 2026-09-13: 2560x1600 at 165.004 Hz (current) or 60.002 Hz.
 #
-# The connector is eDP-2, NOT eDP-1 -- verified on the old OS, where eDP-1 reported
-# disconnected. Hybrid graphics enumerates two DRM cards and the panel hangs off the
-# Intel one. If umbriel reports a different name, this block silently applies to nothing.
-#
-# The mode carries no refresh rate because /sys/class/drm/card2-eDP-2/modes listed none
-# on the old OS. Add it once `umbriel outputs` states it.
+# The connector is eDP-1. The old OS called the same panel eDP-2, with eDP-1 disconnected,
+# and the pre-install docs carried that forward -- it did not survive the reinstall. Hybrid
+# graphics enumerates two DRM cards and the numbering is not stable across installs (the
+# Intel card was card2 then, card1 now), so the connector name followed it. If umbriel ever
+# reports a different name, this block silently applies to nothing: check `umbriel outputs`.
 # ────────────────────────────────────────────────────────────────────────────
 
-[output.eDP-2]
+[output.eDP-1]
 enabled = true
-mode = "2560x1600"
+mode = "2560x1600@165"
 position = [0, 0]
 scale = 1.5                                     # Carried from the old install, where it was chosen by eye
 
 # External display, for when this is docked. Kept commented because HDMI-A-1 reported
 # disconnected at survey time and an output block for an absent connector is noise.
+# That name is also from the OLD OS, and the panel's name did not survive the reinstall --
+# plug something in and read `umbriel outputs` before trusting HDMI-A-1.
 #
 # The geometry is what the old install used: external at the origin with the laptop panel
 # to its right, i.e. the laptop is the secondary. Uncomment and confirm the mode.
@@ -54,7 +55,7 @@ scale = 1.5                                     # Carried from the old install, 
 # position = [0, 0]
 # scale = 1
 # -- and move the panel out of the way:
-# [output.eDP-2]
+# [output.eDP-1]
 # position = [2560, 0]
 
 # ─────────────────────────────── Input ──────────────────────────────────────

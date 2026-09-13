@@ -24,12 +24,14 @@ Settled in conversation before you existed, so do not spend Pete's time rediscov
 - It is a **laptop** — lid, battery, backlight, touchpad, one internal panel. caesar has
   none of those and three external monitors.
 - Its graphics are **hybrid**: Intel Iris Xe plus a GeForce RTX 3050 Ti Mobile. The panel
-  enumerates as `eDP-2` under the old OS (`eDP-1` disconnected), and the backlight device is
+  enumerated as `eDP-2` under the old OS but as **`eDP-1`** after the reinstall — connector
+  and card names are per-install facts, so read `umbriel outputs`. The backlight device is
   `nvidia_wmi_ec_backlight`, not `intel_backlight` — so `brightnessctl` needs an explicit
   `-d`. It is a Dell (`DELL0B9B` touchpad), and `[input.touchpad]` in the base has never
   run against real hardware. Found by rigel's own survey.
-- It will be installed **btrfs on LUKS** — already its layout under Omarchy, with limine
-  and snapper, so capture the subvolumes before they are overwritten. caesar is currently plain ext4 and unencrypted;
+- It is now installed **btrfs on LUKS** with systemd-boot — its layout under Omarchy was
+  also btrfs on LUKS, with limine and snapper. The new install is recorded in
+  `hosts/rigel/install/`. caesar is currently plain ext4 and unencrypted;
   it gets the same treatment at its own cutover. That difference is worth remembering when
   reasoning about the ssh key passphrase: on an encrypted disk the argument changes.
 
@@ -175,7 +177,11 @@ record into `hosts/rigel/` afterwards, because it is painful to recover later:
 
 - the LUKS container UUID, and the filesystem UUIDs
 - the btrfs subvolume layout (caesar's old disk used `@`, `@home`, `@log`, `@pkg`)
-- the resulting `/etc/fstab` and `/etc/crypttab`
+- the resulting `/etc/fstab` and `/etc/crypttab` — or, if the root container is unlocked
+  from `rd.luks.name=` with `sd-encrypt` as on rigel, the kernel command line and
+  `HOOKS=` line instead, because there is no crypttab to record
+
+rigel's record is `hosts/rigel/install/README.md`; it is a reasonable shape to follow.
 
 Publishing UUIDs in this public repo is settled policy — Pete was asked directly and is
 unconcerned; they are useful to him at exactly this moment. Credentials remain a different
