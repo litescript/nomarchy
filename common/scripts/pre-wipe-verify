@@ -181,7 +181,13 @@ echo "==> MATCH. The encrypted archive on the NAS is intact."
 # the archive across a second time and learn nothing new.
 if [[ -f $LOCAL ]]; then
   echo "==> proving it decrypts and extracts, from the local copy (prompts for the passphrase)"
-  if gpg --decrypt "$LOCAL" 2>/dev/null | tar -tf - >/dev/null; then
+  # --zstd is required and must not be dropped. tar sniffs compression only when
+  # the archive is a seekable FILE; reading a pipe it does not, and fails with
+  # "Archive is compressed. Use --zstd option". Since gpg hands this over stdin
+  # there is nothing to seek, so the flag is the difference between a working
+  # check and one that has never once passed -- which is what the /var/tmp
+  # original this was promoted from did, silently, every time it was run.
+  if gpg --decrypt "$LOCAL" 2>/dev/null | tar --zstd -tf - >/dev/null; then
     echo "    decrypt + full archive walk OK"
   else
     die "*** DECRYPT OR ARCHIVE READ FAILED ***"
