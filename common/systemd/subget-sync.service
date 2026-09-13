@@ -21,10 +21,11 @@ Type=oneshot
 # following night. This must be TimeoutStartSec and not RuntimeMaxSec: systemd ignores the
 # latter for Type=oneshot, which would leave the run unbounded.
 #
-# 9900s from 00:00 lands at 02:45. The original comment said this cleared "the 03:00 NAS
-# backups" -- on this box the heavy one (backup-daily, ~6 GB of ~/code) runs at 05:00 and
-# the 02:20 Legal mirror is 2 MB of rsync, so the window is if anything more generous than
-# it was. Left at the original value.
+# 9900s from 00:00 lands at 02:45, clearing the 03:00 NAS backups. Those are NOT this
+# machine's timers -- they are the Proxmox host on the network dumping its VMs to the same
+# NAS nightly. That is why the deadline is what it is, and why it must not be relaxed to
+# suit anything local: the contended resource is the NAS and its network, and the other
+# party does not know this job exists. (caesar's own backups run at 02:20 and 05:00.)
 TimeoutStartSec=9900
 # Pinned rather than inherited: the user manager's PATH comes from the graphical session,
 # so a headless or early-boot start would not find subliminal in ~/.local/bin.
