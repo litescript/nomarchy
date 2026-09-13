@@ -11,9 +11,10 @@
 # systemd units you expect, and may be several years stale. Every probe degrades to a
 # note rather than an error.
 #
-# It prints NO secrets. Key files, wifi profiles and VPN configs are reported by NAME and
-# never by content. That rule is not a nicety: the output is meant to be committed to a
-# public repo.
+# It prints NO secrets, and nothing that locates or identifies the owner. Key files and VPN
+# configs are reported by NAME, never by content. Wifi networks are counted, not named;
+# MAC addresses and the tailnet IP/account are omitted. That rule is not a nicety: the
+# output is meant to be committed to a public repo.
 
 set -u
 
@@ -73,14 +74,23 @@ printf '  hosts/<name>/ after installing. Device names are NOT stable -- this re
 printf '  disk that moved from nvme2n1p2 to nvme1n1p2 across one reboot.\n'
 
 sec "Network — interfaces and what is relied on"
-try 'ip -brief link'
-printf '\n  Wifi profile NAMES only (never the PSKs):\n'
-if have nmcli; then nmcli -t -f NAME connection show 2>/dev/null | sed 's/^/    /'; else echo "    (nmcli not available)"; fi
+# Interface names and state, never MAC addresses. And no wifi network names: "not a secret"
+# is not the same as "fine to publish". This output is committed to a public repo, and a
+# distinctive SSID is looked up in public wardriving databases to a street address. The
+# names are for the owner, who can read them with `nmcli connection show` on the machine.
+try "ip -brief link | awk '{print \$1, \$2}'"
+if have nmcli; then
+  printf '\n  NetworkManager profiles, by type (names deliberately omitted):\n'
+  nmcli -t -f TYPE connection show 2>/dev/null | sort | uniq -c | sed 's/^ */    /'
+else
+  echo "    (nmcli not available)"
+fi
 
 sec "Tailscale — host-specific, and caesar does not run it"
 if have tailscale; then
   printf '  installed: %s\n' "$(tailscale version 2>/dev/null | head -1)"
-  printf '  state: %s\n' "$(tailscale status --peers=false 2>&1 | head -2 | tr '\n' ' ')"
+  # Up or not, and nothing else: `tailscale status` prints the tailnet IP and the account.
+  if tailscale status --peers=false >/dev/null 2>&1; then echo "  state: connected"; else echo "  state: not connected"; fi
   printf '\n  NOTE: the node key and auth are NOT config to carry. After install:\n'
   printf '  install tailscale, enable tailscaled, then `tailscale up` and authenticate\n'
   printf '  interactively. Nothing about that belongs in the repo.\n'

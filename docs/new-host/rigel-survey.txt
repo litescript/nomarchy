@@ -90,23 +90,19 @@ host survey — omarchy-lap — 2026-09-13T10:39:15-04:00
 
 
 === Network — interfaces and what is relied on ------------------
-  lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
-  enp2s0           DOWN           04:bf:1b:86:fd:93 <NO-CARRIER,BROADCAST,MULTICAST,UP> 
-  wlp0s20f3        UP             74:13:ea:ed:84:ec <BROADCAST,MULTICAST,UP,LOWER_UP> 
-  tailscale0       UNKNOWN        <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> 
+  lo UNKNOWN
+  enp2s0 DOWN
+  wlp0s20f3 UP
+  tailscale0 UNKNOWN
 
-  Wifi profile NAMES only (never the PSKs):
-    Six Fronts_5G
-    tailscale0
-    lo
-    atsf-boogiewoogie
-    Hilton Honors
-    Wired connection 1
+  NetworkManager profiles: 6 ("Wired connection 1", tailscale0, lo, and 3 others).
+  (Redacted after commit: MAC addresses and wifi network names were removed, and
+  host-survey no longer prints either.)
 
 
 === Tailscale — host-specific, and caesar does not run it -------
   installed: 1.102.3
-  state: 100.107.55.101  omarchy-lap  brown.peterg@  linux  -    
+  state: connected  (tailnet IP and account redacted after commit)
 
   NOTE: the node key and auth are NOT config to carry. After install:
   install tailscale, enable tailscaled, then `tailscale up` and authenticate
