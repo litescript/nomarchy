@@ -1,0 +1,105 @@
+# rigel — host configuration for umbriel.
+#
+# The laptop. This file carries only what is true of THIS machine: its panel, its
+# touchpad, and its lid. Everything else -- keybinds, appearance, layout, rules, animation
+# -- lives in the shared base and is identical on every nomarchy host.
+#
+# Applied in order: required includes, then optional includes, then this file. This file
+# therefore wins any conflict, which is what makes it the place for host overrides.
+#
+# The base include is REQUIRED, deliberately. A missing optional include validates as
+# `config: ok` and silently applies nothing -- the machine would come up with no keybinds
+# at all and report a clean bill of health. A missing required include fails loudly, which
+# is what you want from the one line here that is easy to get wrong.
+
+[include]
+# PATH-SENSITIVE. Include paths resolve from the directory of the file as umbriel was
+# given it, and that is ~/.config/umbriel (a symlink), not this directory -- hence ~/.
+#
+# The checkout goes to ~/Projects/nomarchy, which is what docs/new-host/README.md phase 5
+# clones, and the user is `peter` -- so this resolves identically on caesar and rigel.
+# rigel's PRE-wipe checkout was ~/nomarchy under a different user; that is gone with the
+# disk. Being a required include, a wrong path here fails loudly rather than silently.
+files = ["~/Projects/nomarchy/common/umbriel/base.toml"]
+
+[include.optional]
+files = ["~/.config/umbriel/noctalia.toml"]
+
+# ─────────────────────────────── Outputs ────────────────────────────────────
+# One internal panel. Confirm the name and the refresh rate with `umbriel outputs`
+# before trusting this block.
+#
+# The connector is eDP-2, NOT eDP-1 -- verified on the old OS, where eDP-1 reported
+# disconnected. Hybrid graphics enumerates two DRM cards and the panel hangs off the
+# Intel one. If umbriel reports a different name, this block silently applies to nothing.
+#
+# The mode carries no refresh rate because /sys/class/drm/card2-eDP-2/modes listed none
+# on the old OS. Add it once `umbriel outputs` states it.
+# ────────────────────────────────────────────────────────────────────────────
+
+[output.eDP-2]
+enabled = true
+mode = "2560x1600"
+position = [0, 0]
+scale = 1.5                                     # Carried from the old install, where it was chosen by eye
+
+# External display, for when this is docked. Kept commented because HDMI-A-1 reported
+# disconnected at survey time and an output block for an absent connector is noise.
+#
+# The geometry is what the old install used: external at the origin with the laptop panel
+# to its right, i.e. the laptop is the secondary. Uncomment and confirm the mode.
+# [output.HDMI-A-1]
+# enabled = true
+# mode = "preferred"
+# position = [0, 0]
+# scale = 1
+# -- and move the panel out of the way:
+# [output.eDP-2]
+# position = [2560, 0]
+
+# ─────────────────────────────── Input ──────────────────────────────────────
+# rigel is the first nomarchy host with a touchpad. `[input.touchpad]` exists in the base
+# but caesar has none to have tested it against, so anything here is the first real
+# exercise of it.
+# ────────────────────────────────────────────────────────────────────────────
+
+[input.touchpad]
+tap = true
+scroll_factor = 0.4                             # Carried from the old install; its default felt fast
+
+# The base sets options = "caps:swapescape", which is the setting that matters most and is
+# already shared. The old install ALSO had compose:ralt, which the base does not carry.
+# Restated here rather than changed in the base, because a compose key is a personal
+# preference and caesar has never needed one -- promote it to the base if it turns out
+# both machines want it.
+#
+# The base also sets repeat_rate = 50 / repeat_delay = 200; the old install used 40 / 250.
+# Left alone deliberately: the base value is a fine default and this is not worth a host
+# override unless it actually annoys.
+[input.keyboard]
+options = "compose:ralt,caps:swapescape"
+
+# ─────────────────────────────── Lid ────────────────────────────────────────
+# DELIBERATELY EMPTY, AND THIS IS A DECISION THAT IS STILL OPEN. See
+# docs/new-host/rigel-status.md. Read before uncommenting anything here.
+#
+# The problem: lock-before-suspend has no owner. Noctalia's lock-and-suspend is an IDLE
+# behaviour, and a lid close does not pass through the idle path. A stock Arch install
+# defaults to HandleLidSwitch=suspend, so out of the box this laptop suspends on lid close
+# and resumes UNLOCKED.
+#
+# There are two coherent designs and they must not both be active:
+#
+#   A. logind owns the lid. Leave HandleLidSwitch at its default (suspend) and give the
+#      system something that locks on PrepareForSleep. Survives a wedged compositor,
+#      which is the argument for it.
+#   B. umbriel owns the lid. Set logind's HandleLidSwitch=ignore (a root-owned drop-in,
+#      see bootstrap/copies) and handle it here:
+#        [events]
+#        lid_close = "noctalia msg session lock"
+#
+# The old Omarchy install used B, via omarchy-sleep-lock plus HandleLidSwitch=ignore.
+# That is evidence about what worked, not a reason to repeat it.
+#
+# Whichever is chosen, the acceptance test is physical and cannot be faked from a probe
+# process: close the lid, wait, open it, and it must be locked.

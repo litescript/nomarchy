@@ -1,0 +1,61 @@
+# rigel-only packages, from the official repositories. A second host does not get these
+# by default -- see CLAUDE.md: hosts/ is not a template directory.
+#
+# Curated from rigel's survey on 2026-09-13 by subtraction, not by copying: Omarchy's own
+# manifest at /usr/share/omarchy/install/*.packages accounts for 175 of the 280 explicit
+# packages on the old install, and those were its choices, not this machine's requirements.
+# What is left here is hardware and role.
+#
+# NOTE: [multilib] must be enabled BEFORE this file is installed -- lib32-nvidia-utils
+# lives only there. See bootstrap/root-steps. It was enabled on the old install only
+# because Omarchy enabled it; a fresh Arch install has it commented out.
+
+# CPU microcode. Machine-specific by definition; this is a 12th-gen Intel i7-12700H.
+intel-ucode
+
+# Intel graphics. This is the GPU that actually drives the panel -- boot_vga is the Intel
+# device, and every client measured on the old install held the Intel render node.
+intel-media-driver
+vpl-gpu-rt
+vulkan-intel
+
+# NVIDIA, for the discrete RTX 3050 Ti Mobile. It drives no display; it is here for
+# compute and encode -- steam, moonlight, obs, kdenlive.
+#
+# These buy the DRIVER and nothing else. Deliberately NOT included: nvidia_drm modeset=1
+# (the driver defaults it on -- modinfo for 610.57.04 says so) and the early-KMS
+# MODULES+= line. See docs/new-host/rigel-omarchy-sweep.md: on the old install the card
+# was asleep for 0.045% of uptime because the compositor held /dev/nvidia0 open, and
+# whether umbriel does the same is a MEASUREMENT to take after install, not a setting to
+# copy. Read audit section 10 before adding any environment variables to go with these.
+nvidia-open-dkms
+nvidia-utils
+lib32-nvidia-utils
+libva-nvidia-driver
+egl-wayland
+
+# Laptop hardware. The backlight is nvidia_wmi_ec_backlight and there is no
+# intel_backlight, despite Intel driving the panel -- a Dell hybrid quirk. brightnessctl
+# picks a device by heuristic when given no -d, so it must be told explicitly.
+brightnessctl
+
+# Power. All three were enabled together on the old install. Whether all three are wanted
+# is a question, not a finding -- power-profiles-daemon is the one Noctalia talks to.
+power-profiles-daemon
+thermald
+intel-lpmd
+
+# Networking and radios.
+tailscale
+bluez
+bluez-utils
+bluez-tools
+wireless-regdb
+
+# Audio firmware for the Sound Open Firmware HDA DSP on this platform.
+sof-firmware
+
+# NAS over SMB. rigel reaches the same NAS as caesar (192.168.1.208) but over CIFS rather
+# than caesar's NFS, and -- verified from off-site -- over Tailscale, which makes the LAN
+# appear local. Credentials live in /etc/nas-creds and never enter this repo.
+cifs-utils

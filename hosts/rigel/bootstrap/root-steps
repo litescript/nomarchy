@@ -1,0 +1,61 @@
+# Steps that need root. The bootstrap PRINTS these and never runs them: sudo cannot be fed
+# a password non-interactively here, and each one deserves a human reading it first.
+# Paths are relative to the repo root.
+#
+# ORDER MATTERS for the first one.
+
+# ── 1. Enable [multilib] BEFORE any package install ──────────────────────────
+# lib32-nvidia-utils lives only in [multilib], and so does steam. A fresh Arch install has
+# the section commented out; rigel's old install had it enabled only because Omarchy did
+# it. Without this the package step fails partway.
+sudo sed -i '/^#\[multilib\]/,/^#Include = .*mirrorlist/ s/^#//' /etc/pacman.conf
+sudo pacman -Sy
+
+# ── 2. Locale, time and console, carried from the old install ────────────────
+sudo timedatectl set-timezone America/Indianapolis
+sudo localectl set-locale LANG=en_US.UTF-8
+sudo localectl set-keymap us
+
+# ── 3. tty1 autologin. LOAD-BEARING, not a convenience ───────────────────────
+# This is how ~/.local/bin reaches umbriel's PATH. Every script bind in the base config is
+# a BARE NAME now, resolved through PATH, so a session started any other way -- a display
+# manager, notably -- leaves nine keybinds registering, validating, and doing nothing.
+# Do not install sddm.
+# Each line here is printed as its own step, so this is one command rather than a heredoc.
+# The user is `peter`, the same as caesar -- which is also why the umbriel include path in
+# hosts/rigel/umbriel/config.toml (~/Projects/nomarchy/...) resolves the same on both.
+sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
+sudo sh -c 'printf "[Service]\nExecStart=\nExecStart=-/usr/bin/agetty --autologin peter --noclear %%I \$TERM\n" > /etc/systemd/system/getty@tty1.service.d/autologin.conf'
+sudo systemctl daemon-reload
+
+# ── 4. Tailscale. The `up` is INTERACTIVE and authenticates in a browser ─────
+# The node key and auth state are not config and nothing about them goes in this repo.
+sudo systemctl enable --now tailscaled
+tailscale up        # interactive; Pete completes this in a browser
+
+# ── 5. Firewall ──────────────────────────────────────────────────────────────
+sudo systemctl enable --now ufw
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw enable
+
+# ── 6. NAS over SMB. Credentials NEVER enter this repo ───────────────────────
+# rigel reaches the same NAS as caesar (192.168.1.208), but over CIFS rather than caesar's
+# NFS, and it works from off-site because Tailscale makes that LAN appear local -- verified
+# from another house: 31ms, and the automount triggered.
+#
+# /etc/nas-creds is root-only 0600 and holds username/password/domain. It is in the same
+# category as ~/.config/subliminal/subliminal.toml and ~/vpn/nord/: migrated by hand, named
+# here so it is not forgotten, never copied here.
+sudo install -m 0600 /dev/null /etc/nas-creds     # then fill it in by hand
+sudo mkdir -p /mnt/nas/PlexMedia /mnt/nas/Public
+# Append to /etc/fstab -- these two lines are exactly what worked on the old install:
+#  //192.168.1.208/PlexMedia  /mnt/nas/PlexMedia  cifs  credentials=/etc/nas-creds,iocharset=utf8,vers=3.0,file_mode=0777,dir_mode=0777,_netdev,nofail,x-systemd.automount  0  0
+#  //192.168.1.208/Public     /mnt/nas/Public     cifs  credentials=/etc/nas-creds,iocharset=utf8,vers=3.0,file_mode=0777,dir_mode=0777,_netdev,nofail,x-systemd.automount  0  0
+# nofail and x-systemd.automount together are why a missing NAS does not stall the boot.
+
+# ── 7. THE LID. NOT WRITTEN, BECAUSE IT IS NOT DECIDED ───────────────────────
+# A stock Arch install suspends on lid close and resumes UNLOCKED. That is the gap. Read
+# the lid section of hosts/rigel/umbriel/config.toml, pick design A or B, then add the one
+# step it needs here and the matching file to bootstrap/copies.
+# The acceptance test is physical: close the lid, wait, open it, it must be locked.

@@ -29,11 +29,49 @@ days.
 | Phase 1, Omarchy sweep | `rigel-omarchy-sweep.md` — the graphics investigation, laptop layer, package separation |
 | The `common/` blocker | Raised in `rigel-open-questions.md`, answered and fixed by caesar in `5e9d123` |
 
+| Phase 2, `hosts/rigel/` | **Written.** Seven files; `common/scripts/bootstrap rigel` parses it and prints a clean plan |
+
 | not done | |
 |---|---|
-| **Phase 2 — `hosts/rigel/`** | Nothing written yet. Unblocked; this is the next task |
-| Phase 3 — push | Only matters once Phase 2 exists |
+| **The lid decision** | The one substantive hole in `hosts/rigel/`. See below |
+| Phase 3 — push | Do it before the USB goes in |
 | Phases 4–5 | Pete's install, then bootstrap |
+
+## The install, in the terms the installer asks for
+
+Settled: the user is **`peter`** (same as caesar, which is why the umbriel include path
+`~/Projects/nomarchy/...` resolves identically on both), locale `en_US.UTF-8`, keymap `us`,
+timezone `America/Indianapolis`.
+
+The **old** subvolume layout, recorded because it dies with the partition table and is a
+reasonable shape to repeat — it is also what caesar's old disk used:
+
+```
+@       -> /
+@home   -> /home
+@pkg    -> /var/cache/pacman/pkg
+@log    -> /var/log
+mount options: rw,relatime,compress=zstd:3,ssd,space_cache=v2
+/boot   -> a separate 2G vfat ESP
+```
+
+The old UUIDs are not worth recording: they die with the disk. Capture the *new* LUKS
+container UUID, filesystem UUIDs, `/etc/fstab` and `/etc/crypttab` into `hosts/rigel/`
+after installing — publishing UUIDs in this public repo is settled policy.
+
+**Do not install `sddm`.** tty1 autologin is load-bearing, for the PATH reason below.
+
+## rigel has a NAS, which the guide did not expect
+
+The guide says the NAS is caesar's and must not appear in `hosts/rigel/`. That was wrong.
+rigel reaches the **same** NAS (`192.168.1.208`), but over **CIFS** rather than caesar's
+NFS — and it works from off-site, because Tailscale makes that LAN appear local. Verified
+from another house: 31 ms, and the automount triggered and listed the shares.
+
+So `cifs-utils` is in `hosts/rigel/packages/repo.txt`, and the two fstab lines plus the
+`/mnt/nas` directories are in `bootstrap/root-steps`. **`/etc/nas-creds` is a credential
+file and never enters this repo** — same category as `~/.config/subliminal/subliminal.toml`
+and `~/vpn/nord/`. It is root-only `0600` and must be recreated by hand.
 
 ## What the install needs to be
 

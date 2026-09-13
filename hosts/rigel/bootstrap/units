@@ -1,0 +1,17 @@
+# systemd --user units enabled on rigel.
+#
+# Empty on purpose. ssh-agent.service comes from common/bootstrap/units. rigel's old
+# install ran six omarchy-* user units and none has a successor here yet:
+#
+#   omarchy-sleep-lock              -> lock before suspend. THE OPEN ONE. See the lid
+#                                      decision in umbriel/config.toml; a lid close does
+#                                      not pass through Noctalia's idle path
+#   omarchy-recover-internal-monitor-> recover the internal panel toggle with no external
+#                                      display attached. Pure laptop; no equivalent here
+#   omarchy-crash-watch             -> crash notifications
+#   omarchy-tailscale-receive       -> save Taildrop files to ~/Downloads
+#   omarchy-fcitx5                  -> fcitx5 for XCompose
+#   bt-agent                        -> bluetooth pairing agent, -c NoInputNoOutput
+#
+# syncthing.service was also enabled and is not Omarchy's -- it is an application
+# decision, deferred with the rest.

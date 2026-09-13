@@ -1,0 +1,10 @@
+# rigel-only AUR packages. Built with makepkg -si; there is no AUR helper.
+#
+# Empty on purpose. The old install had five foreign packages -- arduino-ide-bin,
+# minipro, and three inside the retroarch/libretro block (libretro-bsnes2014,
+# libretro-mame2016, retroarch-assets-git). None is hardware or role, all are
+# applications, and applications are a deliberate pass after the machine boots rather
+# than a bulk import. See the 48-package list in docs/new-host/rigel-omarchy-sweep.md.
+#
+# umbriel-git and xdg-desktop-portal-umbriel-git come from common/packages/aur.txt and
+# are not repeated here.

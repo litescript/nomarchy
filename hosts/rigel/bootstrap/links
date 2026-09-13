@@ -1,0 +1,6 @@
+# rigel-only symlinks: <repo path>  <system path>
+#
+# Just the umbriel config. Everything else this machine needs -- nvim, kitty, bash, ssh,
+# fuzzel, the ssh-agent unit, and common/scripts onto ~/.local/bin -- comes from
+# common/bootstrap/links and is not repeated here.
+hosts/rigel/umbriel/config.toml	~/.config/umbriel/config.toml

@@ -1,0 +1,13 @@
+# Root-owned copies: <repo path>  <system path>
+#
+# These cannot be symlinks -- /etc is not ours to link into. Copies drift silently, which
+# is the failure mode this repo keeps warning about, so the bootstrap diffs them and
+# reports it rather than pretending.
+#
+# Empty until the lid decision is made. If design B is chosen -- umbriel owns the lid --
+# it needs a logind drop-in setting HandleLidSwitch=ignore, and that file belongs here so
+# its drift is visible. If design A is chosen, logind keeps its default and there is
+# nothing to copy, but the thing that locks on PrepareForSleep will need a home.
+#
+# See the lid section of hosts/rigel/umbriel/config.toml. Do not add anything here until
+# one of the two is actually chosen and physically tested.
