@@ -52,7 +52,19 @@ sec "Laptop hardware — things caesar has no concept of"
 [[ -d /sys/class/power_supply ]] && ls /sys/class/power_supply/ | sed 's/^/  power supply: /' || echo "  no power supplies (desktop?)"
 [[ -d /proc/acpi/button/lid ]] && echo "  lid switch: present" || echo "  lid switch: absent"
 [[ -d /sys/class/backlight ]] && ls /sys/class/backlight/ | sed 's/^/  backlight: /' || echo "  backlight: none"
-have libinput && try 'libinput list-devices | grep -E "^Device|^Capabilities" | head -40' || echo "  (libinput not available; touchpad detection needs it)"
+# Read input devices from /proc rather than libinput: the CLI is not installed on a
+# stock Arch (caesar has the library and no binary), and this survey has to run on
+# whatever the old OS happens to be. /proc/bus/input/devices needs no package at all.
+if [[ -r /proc/bus/input/devices ]]; then
+  printf '  input devices:\n'
+  grep -E '^N: Name=' /proc/bus/input/devices | sed 's/^N: Name=//; s/"//g' | sed 's/^/    /'
+  printf '\n  NOTE: a touchpad usually names itself Touchpad or Synaptics/Elan here. Its\n'
+  printf '  settings belong in the HOST umbriel config -- [input.touchpad] is in the base\n'
+  printf '  but caesar has no touchpad to have tested it against.\n'
+else
+  echo "  (/proc/bus/input/devices unreadable)"
+fi
+have libinput && try 'libinput list-devices | grep -E "^Device|^Capabilities" | head -40' 
 
 sec "Disks — the install target"
 try 'lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINT'
