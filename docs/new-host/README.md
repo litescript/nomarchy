@@ -162,8 +162,11 @@ old OS, before `~/.local/bin` exists.
 
 **`pre-wipe-verify` computes the digest on the NAS over ssh, and that is the entire point
 of it.** Checksumming through `/mnt/nas` is the obvious move and it is wrong twice over —
-read the script's header before reaching for it. Set `NOMARCHY_NAS_SSH` and
-`NOMARCHY_NAS_DEST_PATH` once; the script tells you what they should be.
+read the script's header before reaching for it. The only thing to set is
+`NOMARCHY_NAS_SSH`; it works the server-side path out for itself, because a share's mount
+path says nothing about where the NAS keeps it and the vendors disagree — Synology under
+`/volume1`, QNAP under `/share` with the data at `/share/CACHEDEV1_DATA`. The NAS here is
+a QNAP, which a home directory of `/share/homes/<user>` in the ssh banner gives away.
 
 ## Phase 4 — the install (Pete's, not yours)
 

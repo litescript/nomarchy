@@ -35,13 +35,14 @@ set -euo pipefail
 
 DEST=/mnt/nas/Public/Backups/laptop
 
-# Server-side access. Set these in the environment once -- they stay out of the
-# repo because it is public, not because they are secret:
+# Server-side access. Set this in the environment once -- it stays out of the repo
+# because the repo is public, not because it is secret:
 #
-#   NOMARCHY_NAS_SSH        ssh target that can read the share, e.g. admin@192.168.1.208
-#   NOMARCHY_NAS_DEST_PATH  the directory above, as the NAS itself sees it. A DSM
-#                           share named "Public" is usually /volume1/Public, so
-#                           this is typically /volume1/Public/Backups/laptop.
+#   NOMARCHY_NAS_SSH   ssh target that can read the share, e.g. <user>@192.168.1.208
+#
+# The server-side path is worked out for you: the share name and the subpath under
+# it come from the local mount, and the NAS is then asked to locate its own share
+# root. Set NOMARCHY_NAS_DEST_PATH to a literal directory to skip that.
 NAS_SSH=${NOMARCHY_NAS_SSH:-}
 NAS_DEST_PATH=${NOMARCHY_NAS_DEST_PATH:-}
 
@@ -105,11 +106,43 @@ EOF
   got=$(sha256sum < "$DEST/$NAME" | cut -d' ' -f1)
   got_from="read back through /mnt/nas"
 else
-  [[ -n $NAS_SSH && -n $NAS_DEST_PATH ]] || die \
-"set NOMARCHY_NAS_SSH and NOMARCHY_NAS_DEST_PATH to verify NAS-side (see the
-       header of this script), or pass --read-back to pull ${nas_size} bytes back
-       across the link instead"
-  case $NAS_DEST_PATH in *\'*) die "NAS_DEST_PATH must not contain a single quote" ;; esac
+  [[ -n $NAS_SSH ]] || die \
+"set NOMARCHY_NAS_SSH to verify NAS-side (see the header of this script), or
+       pass --read-back to pull ${nas_size} bytes back across the link instead"
+
+  # A share's client-side mount path says nothing about where the NAS keeps it,
+  # and the vendors disagree: Synology puts shares under /volume1, QNAP under
+  # /share with the real data at /share/CACHEDEV1_DATA. Guessing wrong costs a
+  # password attempt, and password attempts are what trip Auto Block -- so derive
+  # the share name and subpath from the mount, and let the NAS find its own root.
+  # (A home directory of /share/homes/<user> in the ssh banner means QNAP.)
+  mp=$(findmnt -n -o TARGET --target "$DEST" -t cifs 2>/dev/null | head -1)
+  src=$(findmnt -n -o SOURCE --target "$DEST" -t cifs 2>/dev/null | head -1)
+  [[ -n $mp && -n $src ]] \
+    || die "cannot tell which cifs share '$DEST' belongs to -- set NOMARCHY_NAS_DEST_PATH"
+  share=${src##*/}
+  sub=${DEST#"$mp"/}
+
+  for component in "$NAS_DEST_PATH" "$share" "$sub" "$NAME"; do
+    case $component in *\'*) die "path component contains a single quote: $component" ;; esac
+  done
+
+  # One ssh invocation does discovery AND the checksum, so this prompts for a
+  # password once rather than once per candidate.
+  read -r -d '' remote_probe <<'RSH' || true
+set -u
+dir=$1; share=$2; sub=$3; name=$4
+try() {
+  if [ -f "$1/$name" ]; then printf 'DIR %s\n' "$1"; sha256sum "$1/$name"; exit 0; fi
+}
+[ -n "$dir" ] && try "$dir"
+for root in /share /volume1 /volume2 /volume3 /shares /i-data /mnt/pool1 /tank; do
+  try "$root/$share/$sub"
+  try "$root/CACHEDEV1_DATA/$share/$sub"
+done
+echo NOTFOUND >&2
+exit 3
+RSH
 
   echo "==> checksumming on the NAS over ssh (only the digest crosses the link)"
   # ConnectTimeout and a single password prompt are deliberate. A NAS with
@@ -121,9 +154,17 @@ else
   # mount carries on serving while nothing new can connect. Getting the target
   # wrong a few times here is precisely how that happened on 2026-09-13. Fail
   # fast instead of retrying into a ban.
-  got=$(ssh -o ConnectTimeout=10 -o NumberOfPasswordPrompts=1 \
-          "$NAS_SSH" "sha256sum -- '$NAS_DEST_PATH/$NAME'" | cut -d' ' -f1) \
-    || die "ssh to '$NAS_SSH' failed -- do not retry blindly, see the note above"
+  out=$(printf '%s\n' "$remote_probe" \
+    | ssh -o ConnectTimeout=10 -o NumberOfPasswordPrompts=1 "$NAS_SSH" \
+        "/bin/sh -s -- '$NAS_DEST_PATH' '$share' '$sub' '$NAME'") \
+    || die "ssh to '$NAS_SSH' failed, or the archive was not found under any known
+       share root -- do not retry blindly, see the note above. Set
+       NOMARCHY_NAS_DEST_PATH to the directory as the NAS sees it."
+
+  found_dir=$(printf '%s\n' "$out" | sed -n 's/^DIR //p' | head -1)
+  got=$(printf '%s\n' "$out" | grep -oE '^[0-9a-f]{64}' | head -1)
+  [[ -n $got ]] || die "the NAS returned no digest; it said: $out"
+  [[ -z $found_dir ]] || printf '    found at %s\n' "$found_dir"
   got_from="computed on the NAS"
 fi
 
