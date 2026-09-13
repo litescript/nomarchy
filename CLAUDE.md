@@ -105,8 +105,13 @@ Four things about it that were established by testing umbriel 0.1.0, not by read
 A new host is a deliberately written `hosts/<name>/`, never a copy of another host's.
 `hosts/` is not a template directory.
 
-Scripts in `common/scripts/` are referenced from the Umbriel config by **absolute path**,
-so the session depends on this checkout staying at `/home/peter/Projects/nomarchy`.
+Scripts in `common/scripts/` are called by **bare name**, from both the Umbriel binds and
+the systemd units (`%h/.local/bin/<name>`), so nothing in `common/` names a home directory
+or a checkout location. `common/bootstrap/links` makes that true by symlinking the scripts
+into `~/.local/bin`; umbriel's `spawn:` resolves through `PATH` (tested, not assumed). The
+coupling: `PATH` must reach the compositor, which it does via `~/.bash_profile` on the tty1
+login. A compositor started any other way would not inherit it, and every script bind would
+register, validate, and do nothing.
 
 ## Bootstrapping a host
 
@@ -138,7 +143,8 @@ that only make sense on a machine that can reach that NAS.
 **A new host is a `hosts/<name>/` somebody wrote on purpose.** The bootstrap refuses a
 host directory that does not exist rather than defaulting to another machine's. `hosts/`
 is not a template directory, and a laptop is not a caesar clone: it has different
-microcode, no NVIDIA, no NAS, no second user, and lid events caesar has no concept of.
+microcode, hybrid Intel + NVIDIA graphics rather than one desktop card, no NAS, no second
+user, and lid events caesar has no concept of.
 
 **Standing up a new machine has its own document: `docs/new-host/README.md`.** It is
 written for the agent running on that machine's *old* OS, and covers the sequence that

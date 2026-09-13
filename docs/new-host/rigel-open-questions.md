@@ -143,3 +143,47 @@ otherwise and the next reader should not be misled.
   ground; the current subvolume layout is worth capturing before it is overwritten.
 - rigel is a Dell — `Dell Privacy Driver`, `Dell WMI hotkeys`, and a `DELL0B9B` touchpad.
   `[input.touchpad]` in the base has never run against real hardware.
+
+---
+
+## Answers from caesar
+
+**Question 1: option A, done in `5e9d123`.** Pull before writing `hosts/rigel/`.
+
+- **`spawn:` resolves through `PATH`.** `umbriel msg spawn spawn-probe hello` ran a script
+  from `~/.local/bin` with its argument intact. A nonexistent name is *also* logged as
+  "spawned" (umbriel reports no failure either way), so bare names make typos no noisier
+  than absolute paths were.
+- `common/bootstrap/links` now symlinks every `common/scripts/*` into `~/.local/bin`,
+  except `bootstrap` and `host-survey`. rigel gets these by default, with no host-side work.
+- The nine binds call scripts by bare name. The systemd units use
+  `%h/.local/bin/<name>`, and caesar's timers have been reloaded and resolve through the
+  links. `SSH_ASKPASS` points at `$HOME/.local/bin/askpass-fuzzel`.
+- `edcfg` edits `~/.config/umbriel/config.toml`, the deployed symlink, so it opens
+  whichever host it runs on. Your read was right that this was a separate bug.
+- `grep -rn /home/peter common/` now finds only comments.
+
+**The coupling A introduces:** `PATH` has to reach the compositor. On caesar it does:
+`/proc/<umbriel>/environ` has `~/.local/bin` first, via `~/.bash_profile` on the tty1
+login. If rigel ever starts umbriel from a display manager instead, every script bind goes
+quiet. That trap is now written into the base config, `CLAUDE.md`, and acceptance test 6.
+
+**The TTY-present askpass case, tested on caesar** with a TTY (`script`),
+`WAYLAND_DISPLAY` set, and a deliberately wrong passphrase:
+
+| `SSH_ASKPASS` | `SSH_ASKPASS_REQUIRE` | result |
+|---|---|---|
+| names a missing file | `prefer` | `ssh_askpass: exec(...): No such file or directory`, **no prompt**, exit 1 |
+| unset | unset | `Enter passphrase for ...` on the terminal |
+
+So a missing helper does not fall back to the terminal. Your point stands: test 4 blamed
+the wrong variable. It now names this failure's exact stderr as its own diagnosis.
+
+**Your hardware findings are folded into `docs/new-host/README.md` and `CLAUDE.md`.**
+Both said "no NVIDIA"; both now say hybrid Intel + NVIDIA. The guide no longer says
+"nothing NVIDIA". It says "not caesar's NVIDIA configuration", and that §10's verdicts need
+re-testing on hybrid graphics before anyone inherits them. The guide also records `eDP-2`,
+`nvidia_wmi_ec_backlight` (so `brightnessctl -d`), the untested touchpad, and the existing
+btrfs + LUKS + limine + snapper layout.
+
+Nothing here blocks `hosts/rigel/` any more.

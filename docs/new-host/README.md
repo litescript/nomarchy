@@ -23,7 +23,13 @@ Settled in conversation before you existed, so do not spend Pete's time rediscov
   Tailscale section below.
 - It is a **laptop** — lid, battery, backlight, touchpad, one internal panel. caesar has
   none of those and three external monitors.
-- It will be installed **btrfs on LUKS**. caesar is currently plain ext4 and unencrypted;
+- Its graphics are **hybrid**: Intel Iris Xe plus a GeForce RTX 3050 Ti Mobile. The panel
+  enumerates as `eDP-2` under the old OS (`eDP-1` disconnected), and the backlight device is
+  `nvidia_wmi_ec_backlight`, not `intel_backlight` — so `brightnessctl` needs an explicit
+  `-d`. It is a Dell (`DELL0B9B` touchpad), and `[input.touchpad]` in the base has never
+  run against real hardware. Found by rigel's own survey.
+- It will be installed **btrfs on LUKS** — already its layout under Omarchy, with limine
+  and snapper, so capture the subvolumes before they are overwritten. caesar is currently plain ext4 and unencrypted;
   it gets the same treatment at its own cutover. That difference is worth remembering when
   reasoning about the ssh key passphrase: on an encrypted disk the argument changes.
 
@@ -42,7 +48,7 @@ the same treatment at its own cutover.
 **This is not a caesar clone, and the repo is built to refuse one.** `hosts/` is not a
 template directory and `common/scripts/bootstrap` errors on a host directory that does not
 exist, rather than defaulting to another machine's. A laptop has different microcode, a
-different GPU, one internal panel, a lid, a battery, a touchpad, and Tailscale. caesar has
+hybrid Intel + NVIDIA GPU, one internal panel, a lid, a battery, a touchpad, and Tailscale. caesar has
 three monitors, an NVIDIA card, a NAS, a Stream Deck and a second user account. Almost
 nothing about the *hardware* layer transfers; almost everything about the *desktop* layer
 does, and that is exactly the split `common/` and `hosts/<host>/` already encode.
@@ -84,8 +90,9 @@ because several decisions are already made and re-litigating them wastes Pete's 
   browser plugin, not an app. Do not rebuild the `chromium --app` wrapper for them.
 - **`launch-or-focus` is rebuilt** and lives at `common/scripts/launch-or-focus`.
 - **The kitty config is classified line by line** in §9, and the NVIDIA environment
-  variables are settled with evidence in §10 — three of them measured as no-ops. If this
-  machine has an NVIDIA GPU, read §10 before adding any of them back.
+  variables are settled with evidence in §10 — three of them measured as no-ops. rigel does
+  have an NVIDIA GPU, so read §10 — but its verdicts were measured on caesar's single
+  desktop card, and hybrid laptop graphics is a different question. Re-test, don't inherit.
 
 What is worth sweeping on a laptop specifically: `~/.local/bin`, `~/.config/omarchy/hooks`,
 its systemd user units, its shell config, and anything hardware-adjacent Omarchy set up
@@ -109,7 +116,8 @@ Minimum contents. This is a checklist, not a template — write each file for th
 Do **not** copy `hosts/caesar/` wholesale. Specifically, these are caesar's and must not
 appear: `meanpete/` (a second user with a NAS staging role — see §11, it carried a
 privesc), the NAS mount units, the Stream Deck udev rule, the netconsole ufw rule, and
-anything NVIDIA.
+caesar's NVIDIA configuration. rigel needs its own GPU stack, written from its own survey
+for hybrid graphics — not caesar's, which describes a different card in a different role.
 
 Umbriel's `[events]` lid hooks sit commented in the base config. A laptop is the first
 host that wants them; set them in the host file, which is applied last and wins.
@@ -172,12 +180,18 @@ Acceptance tests, in order:
 4. `ssh-add -l` → "no identities" is *correct* on a fresh boot: the agent is up and the
    passphrase has not been given. Then `ssh-add` should prompt in **fuzzel**, not the
    terminal. If it prompts in the terminal, `SSH_ASKPASS_REQUIRE=prefer` has not reached
-   the shell
+   the shell. If it prints `ssh_askpass: exec(<path>): No such file or directory` and
+   **never prompts at all**, the variables arrived and `SSH_ASKPASS` names a missing file —
+   check the `~/.local/bin/askpass-fuzzel` link. Tested on caesar: with a TTY present, a
+   missing helper does not fall back to the terminal, it just exits 1
 5. `tailscale status` → connected
 6. Keybinds: the ones in `common/umbriel/base.toml` all work, which proves the include
    resolved. If they do not, check the include path — it resolves from the directory of
    the file **as given** to umbriel, and `~/.config/umbriel/config.toml` is a symlink, so
-   relative includes miss
+   relative includes miss. If built-in binds work but the script ones (`Super+C/V/X`,
+   `Print`, `Super+T/D/O/F/M`) do nothing, the include is fine and `PATH` is not: check the
+   `~/.local/bin` links exist and that `~/.local/bin` is in the compositor's environment
+   (`tr '\0' '\n' < /proc/$(pgrep -x umbriel)/environ | grep ^PATH`)
 
 ---
 
