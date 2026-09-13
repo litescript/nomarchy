@@ -20,8 +20,19 @@ set -u
 
 prompt="${1:-Passphrase:}"
 
+# Shorten ssh's own wording before showing it. fuzzel's width is measured in CHARACTERS,
+# and ssh asks with the full key path -- "Enter passphrase for
+# /home/peter/.ssh/id_ed25519_github: " is ~55 of them. At any sane window width that
+# prompt consumes the entire line and the input field renders off the right edge, so the
+# prompt looks inert: you are typing, the asterisks exist, they are just past the edge of
+# the window. Keep the key name, drop the path.
+short="$prompt"
+if [[ $prompt =~ [Ee]nter\ passphrase\ for\ (key\ )?\'?([^\':]+) ]]; then
+  short="🔑 ${BASH_REMATCH[2]##*/}"
+fi
+
 if [[ -n ${WAYLAND_DISPLAY:-} ]] && command -v fuzzel >/dev/null 2>&1; then
-  exec fuzzel --dmenu --password --prompt-only="$prompt "
+  exec fuzzel --dmenu --password --prompt-only="$short "
 fi
 
 # No compositor -- a bare TTY, or a systemd unit. Fall back to the controlling terminal
