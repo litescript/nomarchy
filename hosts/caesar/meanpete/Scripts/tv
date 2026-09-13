@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Ingest TV episodes into Plex. Takes a file or a folder; defaults to ~/incoming.
+#
+# See the note in `movie` -- the old root wrapper is gone, its default argument is here.
+exec "$HOME/Scripts/move-to-plex-tv.sh" "${1:-$HOME/incoming}"

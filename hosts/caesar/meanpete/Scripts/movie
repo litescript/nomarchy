@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Ingest movies into Plex. Takes a file or a folder; defaults to ~/incoming.
+#
+# Replaces the old chain `movie` -> `sudo /usr/local/bin/plex-movie` -> move-to-plex.sh.
+# The root wrapper's only actual content was this default argument, so it folds in here
+# and the sudo grant disappears with it.
+exec "$HOME/Scripts/move-to-plex.sh" "${1:-$HOME/incoming}"

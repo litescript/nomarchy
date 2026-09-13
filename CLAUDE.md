@@ -35,13 +35,23 @@ immediately:
 | `~/.config/umbriel/config.toml` | `hosts/caesar/umbriel/config.toml` |
 | `~/.config/systemd/user/ssh-agent.service` | `common/systemd/ssh-agent.service` |
 
-Two things are **copies, not symlinks**, and drift silently:
+Some things are **copies, not symlinks**, and drift silently:
 
 - `~/.local/state/noctalia/settings.toml` — Noctalia rewrites this file itself, so the
   repo copy is a snapshot. Read the live file when you need current state; it is
   routinely ahead of `hosts/caesar/noctalia/settings.toml`.
 - `/etc/udev/rules.d/99-streamdeck-no-keyboard.rules` — root-owned, installed with
   `sudo install`.
+- `/etc/ssh/sshd_config.d/10-nomarchy.conf` — root-owned. Validate with `sshd -t` and
+  apply with `systemctl reload sshd`, never restart.
+- `~meanpete/Scripts/`, `~meanpete/.bashrc`, `~meanpete/.bash_profile` — another user's
+  home, and `/home/peter` is `drwx------`, so a symlink into this repo would dangle for
+  him. See `hosts/caesar/meanpete/README.md`; that whole directory is temporary and gets
+  deleted after the NVMe cutover.
+
+The firewall is not a file copy at all: `hosts/caesar/ufw/apply-rules` is a script that
+issues `ufw` commands, because the live rules in `/etc/ufw/user.rules` are generated and
+owned by `ufw` itself.
 
 `common/umbriel/config.toml` is **not** a base layer — nothing includes it. It is a stale
 copy of the waylab testbed's config from an older Umbriel release. Do not treat it as

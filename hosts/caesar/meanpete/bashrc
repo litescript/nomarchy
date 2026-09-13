@@ -1,0 +1,8 @@
+# ~/.bashrc for meanpete on caesar.
+#
+# Scripts on PATH so `movie` and `tv` are callable by name.
+#
+# The old file also carried `alias movie="sudo plex-movie"` and `alias tv="sudo plex-tv"`.
+# Both are gone: the root wrappers they called no longer exist, and `movie`/`tv` are now
+# ordinary scripts in ~/Scripts. Nothing meanpete runs touches sudo.
+export PATH=$HOME/Scripts:$PATH

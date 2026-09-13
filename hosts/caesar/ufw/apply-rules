@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Caesar's firewall, reconstructed from the old box's /etc/ufw on 2026-09-13.
+#
+# Run as root:  sudo hosts/caesar/ufw/apply-rules
+#
+# The old rule set, decoded from /etc/ufw/user.rules, and what happened to each:
+#
+#   allow tcp 22 from 192.168.1.0/24       KEPT. This is meanpete's rsync access, and it
+#                                          means ssh was never internet-facing.
+#   allow udp 6666 from 192.168.1.50       KEPT. Commented "netconsole from proxmox".
+#   allow udp 53 -> 172.17.0.1             DROPPED. Commented "allow-docker-dns", for
+#     (from 172.16/12 and 192.168/16)      rootful Docker's bridge. Docker here is
+#                                          ROOTLESS: no docker0 bridge, no host netfilter
+#                                          manipulation. The old box's after.rules also
+#                                          carried the ufw-docker DOCKER-USER hack for the
+#                                          same reason; it is likewise not ported. If
+#                                          rootful Docker ever returns, both come back
+#                                          together -- rootful Docker bypasses ufw.
+#   allow tcp 5174 from anywhere (v4+v6)   DROPPED. Some dev server; Pete will re-add it
+#                                          when he next meets it.
+#   allow tcp/udp 53317 from anywhere      DROPPED. LocalSend, never used and not
+#                                          installed here.
+#
+# Defaults match the old box: deny in, allow out, deny routed.
+
+set -euo pipefail
+
+(( EUID == 0 )) || { echo "${0##*/}: must run as root" >&2; exit 1; }
+
+ufw default deny incoming
+ufw default allow outgoing
+ufw default deny routed
+
+ufw allow from 192.168.1.0/24 to any port 22 proto tcp comment 'ssh from LAN'
+ufw allow from 192.168.1.50 to any port 6666 proto udp comment 'netconsole from proxmox'
+
+# Adding the ssh rule before enabling is deliberate: enabling first would drop inbound ssh
+# between the two steps.
+ufw --force enable
+systemctl enable ufw
+
+ufw status verbose
