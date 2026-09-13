@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# merge-show-dirs SRC DST [--apply]
+#
+# Fold one Plex show folder into another that differs only in capitalisation.
+# Release groups are inconsistent about case, and because the show title is
+# derived from the filename, "FROM.S04E01" lands beside an existing "From" and
+# Plex lists the show twice.
+#
+# Refuses to run if any file would be overwritten. Dry run unless --apply.
+
+set -euo pipefail
+
+TV_DIR="${TV_DIR:-/mnt/nas/PlexMedia/TV}"
+APPLY=0
+ARGS=()
+for a in "$@"; do
+    case "$a" in
+        --apply) APPLY=1 ;;
+        *) ARGS+=("$a") ;;
+    esac
+done
+
+if (( ${#ARGS[@]} != 2 )); then
+    echo "usage: merge-show-dirs <source-show> <dest-show> [--apply]" >&2
+    exit 2
+fi
+
+SRC="$TV_DIR/${ARGS[0]}"
+DST="$TV_DIR/${ARGS[1]}"
+
+for d in "$SRC" "$DST"; do
+    [[ -d "$d" ]] || { echo "not a directory: $d" >&2; exit 1; }
+done
+[[ "$SRC" == "$DST" ]] && { echo "source and destination are the same" >&2; exit 1; }
+
+count_videos() {
+    find "$1" -type f \( -iname '*.mkv' -o -iname '*.mp4' -o -iname '*.avi' \
+                      -o -iname '*.m4v' \) 2>/dev/null | wc -l
+}
+
+src_before=$(count_videos "$SRC")
+dst_before=$(count_videos "$DST")
+echo "source: ${ARGS[0]}  ($src_before videos)"
+echo "dest  : ${ARGS[1]}  ($dst_before videos)"
+echo
+
+# ---- collision check: same relative path present on both sides
+collisions=0
+while IFS= read -r rel; do
+    if [[ -e "$DST/$rel" ]]; then
+        echo "  COLLISION: $rel"
+        collisions=$((collisions + 1))
+    fi
+done < <(cd "$SRC" && find . -type f -printf '%P\n' 2>/dev/null)
+
+if (( collisions > 0 )); then
+    echo
+    echo "refusing to merge: $collisions file(s) exist on both sides." >&2
+    echo "resolve those by hand first; nothing has been changed." >&2
+    exit 1
+fi
+echo "  no filename collisions"
+
+# ---- writability check, so we fail loudly rather than half-way through
+problems=0
+while IFS= read -r d; do
+    [[ -w "$d" ]] || { echo "  NOT WRITABLE: $d"; problems=$((problems + 1)); }
+done < <(find "$SRC" -type d 2>/dev/null | sort -u)
+[[ -w "$DST" ]] || { echo "  NOT WRITABLE: $DST"; problems=$((problems + 1)); }
+[[ -w "$TV_DIR" ]] || { echo "  NOT WRITABLE: $TV_DIR"; problems=$((problems + 1)); }
+if (( problems > 0 )); then
+    echo
+    echo "refusing to merge: $problems path(s) not writable; nothing changed." >&2
+    echo "fix on the NAS with:  sudo chmod g+ws <path>" >&2
+    exit 1
+fi
+echo "  all paths writable"
+echo
+
+if (( APPLY == 0 )); then
+    echo "DRY RUN -- would move:"
+    (cd "$SRC" && find . -type f -printf '  %P\n' 2>/dev/null | sort | head -40)
+    total=$(cd "$SRC" && find . -type f 2>/dev/null | wc -l)
+    (( total > 40 )) && echo "  ... and $((total - 40)) more"
+    echo
+    echo "re-run with --apply to perform the merge"
+    exit 0
+fi
+
+# ---- move everything, directories first so parents exist
+while IFS= read -r rel; do
+    install -d -m 2775 "$DST/$rel"
+done < <(cd "$SRC" && find . -mindepth 1 -type d -printf '%P\n' 2>/dev/null)
+
+moved=0
+while IFS= read -r rel; do
+    mv -n "$SRC/$rel" "$DST/$rel"
+    moved=$((moved + 1))
+done < <(cd "$SRC" && find . -type f -printf '%P\n' 2>/dev/null)
+
+# ---- husk removal, deepest first; only ever removes empty directories
+find "$SRC" -depth -type d -exec rmdir {} + 2>/dev/null || true
+
+src_after=$(count_videos "$SRC" 2>/dev/null || echo 0)
+dst_after=$(count_videos "$DST")
+echo "moved $moved files"
+echo "dest  : ${ARGS[1]}  $dst_before -> $dst_after videos"
+if [[ -d "$SRC" ]]; then
+    echo "note: $SRC still exists (leftover non-video files):"
+    find "$SRC" -type f -printf '  %P\n' 2>/dev/null | head
+else
+    echo "source folder removed"
+fi
+
+if (( dst_after != dst_before + src_before )); then
+    echo "WARNING: expected $((dst_before + src_before)) videos, found $dst_after" >&2
+    exit 1
+fi
+echo "counts reconcile"
