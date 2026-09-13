@@ -273,13 +273,26 @@ follows_mouse = true                           # Focus the pointer target after 
 
 [keybinds]
 # Screenshot behavior with printscreen key
-"Print" = "spawn:/home/peter/Projects/nomarchy/common/scripts/screenshot-region"
+"Print" = "spawn:screenshot-region"
 
 # Universal clipboard. Terminal-aware; see common/scripts/universal-clipboard.
 # Requires the matching Insert bindings in the terminal's own config.
-"Mod+C" = "spawn:/home/peter/Projects/nomarchy/common/scripts/universal-clipboard copy"
-"Mod+V" = "spawn:/home/peter/Projects/nomarchy/common/scripts/universal-clipboard paste"
-"Mod+X" = "spawn:/home/peter/Projects/nomarchy/common/scripts/universal-clipboard cut"
+# These call scripts by BARE NAME, not by path, so this file carries no home directory
+# and works for any user on any host. umbriel's spawn: resolves through PATH -- verified,
+# not assumed -- and common/bootstrap/links puts common/scripts on PATH by symlinking them
+# into ~/.local/bin.
+#
+# The coupling that creates is worth knowing: PATH has to reach the compositor, which it
+# does because ~/.bash_profile exports it before exec'ing start-umbriel from the tty1
+# login shell. A host that starts the compositor some other way -- a display manager, say
+# -- would not inherit it, and every one of these binds would go quiet. That exact failure
+# has happened here once already, with `spawn:shelf`.
+#
+# umbriel logs "spawned '<cmd>'" whether or not the command exists, so a name that cannot
+# be resolved fails silently. That was equally true of absolute paths.
+"Mod+C" = "spawn:universal-clipboard copy"
+"Mod+V" = "spawn:universal-clipboard paste"
+"Mod+X" = "spawn:universal-clipboard cut"
 
 # Applications and session.
 #
@@ -304,15 +317,15 @@ follows_mouse = true                           # Focus the pointer target after 
 # wrong is not costly — Obsidian's own single-instance lock raises the existing
 # window — but a match that works is better than a fallback that hides a typo.
 "Mod+Return" = "spawn:kitty"
-"Mod+T" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus ^btop$ kitty --app-id=btop btop"
-"Mod+D" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus ^lazydocker$ kitty --app-id=lazydocker lazydocker"
-"Mod+O" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus obsidian$ obsidian"
-"Mod+F" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus ^dev\\.shelf\\.Shelf$ shelf"
+"Mod+T" = "spawn:launch-or-focus ^btop$ kitty --app-id=btop btop"
+"Mod+D" = "spawn:launch-or-focus ^lazydocker$ kitty --app-id=lazydocker lazydocker"
+"Mod+O" = "spawn:launch-or-focus obsidian$ obsidian"
+"Mod+F" = "spawn:launch-or-focus ^dev\\.shelf\\.Shelf$ shelf"
 "Mod+Space" = "spawn:noctalia msg panel-toggle launcher"
 "Mod" = "spawn:noctalia msg panel-toggle launcher"
 "Mod+B" = "spawn:firefox"
 "Mod+Shift+B" = "spawn:firefox --private-window"
-"Mod+M" = "spawn:/home/peter/Projects/nomarchy/common/scripts/launch-or-focus ^Spotify$ /home/peter/Projects/nomarchy/common/scripts/spotify-limited"
+"Mod+M" = "spawn:launch-or-focus ^Spotify$ spotify-limited"
 "Mod+N" = "spawn:kitty --app-id=nvim -e nvim"
 "Mod+W" = "window-close"
 

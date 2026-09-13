@@ -26,7 +26,7 @@ export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ssh-agent.socket"
 # reads neither. REQUIRE=prefer is what makes ssh use the prompt even when a TTY exists;
 # without these two here, `ssh-add` in a kitty window falls back to asking on the terminal
 # and it looks like the askpass helper is broken when it has simply never been consulted.
-export SSH_ASKPASS="/home/peter/Projects/nomarchy/common/scripts/askpass-fuzzel"
+export SSH_ASKPASS="$HOME/.local/bin/askpass-fuzzel"
 export SSH_ASKPASS_REQUIRE=prefer
 
 # --- Navigation ---
@@ -44,7 +44,10 @@ alias grep='grep --color=auto'
 # --- Editing this config ---
 alias nvrc='nvim ~/.bashrc'
 alias rcsrc='source ~/.bashrc'
-alias edcfg='nvim ~/Projects/nomarchy/hosts/caesar/umbriel/config.toml'
+# Edits the DEPLOYED path, not a host directory by name: ~/.config/umbriel/config.toml is
+# a symlink into hosts/<this host>/, so this opens the right machine's config anywhere,
+# and nvim writes through the symlink into the repo.
+alias edcfg='nvim ~/.config/umbriel/config.toml'
 
 # --- Carried from the old box, verbatim ---
 #

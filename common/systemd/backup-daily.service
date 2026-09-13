@@ -11,7 +11,7 @@ Description=Daily backup of ~/code and ~/.claude to NAS
 
 [Service]
 Type=oneshot
-ExecStart=/home/peter/Projects/nomarchy/common/scripts/backup-daily
+ExecStart=%h/.local/bin/backup-daily
 # Backups are bulk I/O competing with an interactive desktop; stay out of its way.
 Nice=10
 IOSchedulingClass=best-effort

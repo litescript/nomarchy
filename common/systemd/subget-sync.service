@@ -32,6 +32,6 @@ TimeoutStartSec=9900
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Nice=10
 IOSchedulingClass=idle
-ExecStart=/home/peter/Projects/nomarchy/common/scripts/subget -l vi -l en
+ExecStart=%h/.local/bin/subget -l vi -l en
 StandardOutput=append:%h/Logs/subget-sync.log
 StandardError=append:%h/Logs/subget-sync.log
