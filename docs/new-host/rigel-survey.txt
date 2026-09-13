@@ -1,0 +1,267 @@
+host survey — omarchy-lap — 2026-09-13T10:39:15-04:00
+
+
+=== Identity and OS ---------------------------------------------
+  NAME="Omarchy"
+  PRETTY_NAME="Omarchy"
+  ID=omarchy
+  ID_LIKE=arch
+  BUILD_ID="4.0.1"
+  VERSION_ID="4.0.1"
+  ANSI_COLOR="38;2;158;206;106"
+  HOME_URL="https://omarchy.org/"
+  DOCUMENTATION_URL="https://learn.omacom.io/2/the-omarchy-manual"
+  SUPPORT_URL="https://discord.gg/tXFUdasqhY"
+  BUG_REPORT_URL="https://github.com/basecamp/omarchy/issues"
+  LOGO=omarchy
+  Linux omarchy-lap 7.1.9-arch1-2 #1 SMP PREEMPT_DYNAMIC Fri, 21 Aug 2026 22:18:59 +0000 x86_64 GNU/Linux
+
+
+=== CPU — decides the microcode package -------------------------
+  Architecture:                            x86_64
+  Vendor ID:                               GenuineIntel
+  Model name:                              12th Gen Intel(R) Core(TM) i7-12700H
+
+
+=== GPU — decides the driver stack ------------------------------
+  0000:00:02.0 VGA compatible controller [0300]: Intel Corporation Alder Lake-P GT2 [Iris Xe Graphics] [8086:46a6] (rev 0c)
+  0000:01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA107BM [GeForce RTX 3050 Ti Mobile] [10de:25e0] (rev a1)
+  loaded video modules: nvidia_wmi_ec_backlight i915 nvidia_drm nvidia_uvm nvidia_modeset nvidia 
+
+
+=== Displays — becomes [output.*] in the umbriel host config ----
+  eDP-1              disconnected  preferred: 
+  HDMI-A-1           disconnected  preferred: 
+  DP-1               disconnected  preferred: 
+  DP-2               disconnected  preferred: 
+  eDP-2              connected  preferred: 2560x1600
+
+  NOTE: connector names here are kernel names and usually match umbriel output
+  names, but confirm with `umbriel outputs` once the compositor runs.
+
+
+=== Laptop hardware — things caesar has no concept of -----------
+  power supply: AC
+  power supply: BAT0
+  power supply: ucsi-source-psy-USBC000:001
+  lid switch: present
+  backlight: nvidia_wmi_ec_backlight
+  input devices:
+    Lid Switch
+    Power Button
+    AT Translated Set 2 keyboard
+    HID 0d62:3740 Keyboard
+    HID 0d62:3740 Wireless Radio Control
+    Video Bus
+    Video Bus
+    Intel HID events
+    Intel HID 5 button array
+    PC Speaker
+    Dell Privacy Driver
+    Dell WMI hotkeys
+    HDA NVidia HDMI/DP,pcm=3
+    HDA NVidia HDMI/DP,pcm=7
+    HDA NVidia HDMI/DP,pcm=8
+    HDA NVidia HDMI/DP,pcm=9
+    DELL0B9B:00 04F3:317E Mouse
+    DELL0B9B:00 04F3:317E Touchpad
+    PS/2 Generic Mouse
+    sof-hda-dsp Headphone Mic
+    sof-hda-dsp HDMI/DP,pcm=3
+    sof-hda-dsp HDMI/DP,pcm=4
+    sof-hda-dsp HDMI/DP,pcm=5
+
+  NOTE: a touchpad usually names itself Touchpad or Synaptics/Elan here. Its
+  settings belong in the HOST umbriel config -- [input.touchpad] is in the base
+  but caesar has no touchpad to have tested it against.
+
+
+=== Disks — the install target ----------------------------------
+  NAME          SIZE FSTYPE      LABEL MOUNTPOINT
+  zram0        15.3G swap        zram0 [SWAP]
+  nvme0n1     476.9G                   
+  ├─nvme0n1p1     2G vfat              /boot
+  └─nvme0n1p2 474.9G crypto_LUKS       
+    └─root    474.9G btrfs             /var/log
+
+  NOTE: record the eventual LUKS UUID and btrfs subvolume layout in
+  hosts/<name>/ after installing. Device names are NOT stable -- this repo has a
+  disk that moved from nvme2n1p2 to nvme1n1p2 across one reboot.
+
+
+=== Network — interfaces and what is relied on ------------------
+  lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+  enp2s0           DOWN           04:bf:1b:86:fd:93 <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+  wlp0s20f3        UP             74:13:ea:ed:84:ec <BROADCAST,MULTICAST,UP,LOWER_UP> 
+  tailscale0       UNKNOWN        <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> 
+
+  Wifi profile NAMES only (never the PSKs):
+    Six Fronts_5G
+    tailscale0
+    lo
+    atsf-boogiewoogie
+    Hilton Honors
+    Wired connection 1
+
+
+=== Tailscale — host-specific, and caesar does not run it -------
+  installed: 1.102.3
+  state: 100.107.55.101  omarchy-lap  brown.peterg@  linux  -    
+
+  NOTE: the node key and auth are NOT config to carry. After install:
+  install tailscale, enable tailscaled, then `tailscale up` and authenticate
+  interactively. Nothing about that belongs in the repo.
+
+
+=== Services relied on ------------------------------------------
+  enabled system units (non-default):
+    cups.path
+    avahi-daemon.service
+    bluetooth.service
+    cups-browsed.service
+    cups.service
+    getty@.service
+    intel_lpmd.service
+    limine-snapper-sync.service
+    linux-modules-cleanup.service
+    NetworkManager-dispatcher.service
+    NetworkManager.service
+    power-profiles-daemon.service
+    sddm.service
+    sshd.service
+    systemd-oomd.service
+    systemd-resolved.service
+    systemd-timesyncd.service
+    tailscaled.service
+    thermald.service
+    ufw.service
+    valkey.service
+    avahi-daemon.socket
+    cups.socket
+    docker.socket
+    systemd-oomd.socket
+    systemd-resolved-monitor.socket
+    systemd-resolved-varlink.socket
+    systemd-userdbd.socket
+    remote-fs.target
+    snapper-cleanup.timer
+  enabled user units:
+    bt-agent.service
+    omarchy-crash-watch.service
+    omarchy-fcitx5.service
+    omarchy-migrate-notify.service
+    omarchy-recover-internal-monitor.service
+    omarchy-sleep-lock.service
+    omarchy-tailscale-receive.service
+    pipewire-pulse.service
+    ssh-agent.service
+    syncthing.service
+    wireplumber.service
+    xdg-user-dirs.service
+    gnome-keyring-daemon.socket
+    p11-kit-server.socket
+    pipewire-pulse.socket
+    pipewire.socket
+
+
+=== Explicitly installed packages -------------------------------
+  1password 1password-cli 7zip adw-gtk-theme aether alacritty alsa-utils arduino-ide-bin 
+  asdcontrol avahi base base-devel bash-completion bat bind bluez bluez-tools bluez-utils 
+  bolt brightnessctl btop btrfs-progs chromium clang cliamp cmake cmake-extras 
+  cool-retro-term cups cups-browsed cups-filters cups-pdf ddcutil dmidecode docker 
+  docker-buildx docker-compose dosfstools dotnet-runtime dotnet-runtime-9.0 dua-cli 
+  efibootmgr egl-wayland evince exfatprogs expac eza fakeroot fastfetch fcitx5 fcitx5-gtk 
+  fcitx5-qt fd ffmpegthumbnailer firefox fontconfig foot fwupd fzf git github-cli glew glfw 
+  glm gnome-disk-utility gnome-keyring gnome-themes-extra go gobject-introspection 
+  gpu-screen-recorder grim gst-plugin-pipewire gum gvfs-mtp gvfs-nfs gvfs-smb herdr 
+  hyprland hyprland-guiutils hyprland-preview-share-picker hyprpicker hyprshot hyprsunset 
+  imagemagick imv inetutils inotify-tools intel-lpmd intel-media-driver intel-ucode inxi jq 
+  kdenlive kernel-modules-hook kitty lazydocker lazygit less lib32-nvidia-utils libpulse 
+  libqalculate libreoffice-fresh libretro-beetle-pce libretro-beetle-pce-fast 
+  libretro-beetle-psx libretro-beetle-psx-hw libretro-beetle-supergrafx libretro-blastem 
+  libretro-bsnes libretro-bsnes-hd libretro-bsnes2014 libretro-desmume libretro-dolphin 
+  libretro-fbneo-git libretro-flycast libretro-gambatte libretro-genesis-plus-gx 
+  libretro-kronos libretro-mame libretro-mame2016 libretro-melonds libretro-mesen 
+  libretro-mesen-s libretro-mgba libretro-mupen64plus-next libretro-nestopia 
+  libretro-overlays libretro-parallel-n64 libretro-picodrive libretro-play libretro-ppsspp 
+  libretro-sameboy libretro-scummvm libretro-shaders-slang libretro-snes9x libretro-yabause 
+  libsecret libva-nvidia-driver libvips libyaml limine limine-mkinitcpio-hook 
+  limine-snapper-sync linux linux-firmware linux-headers llvm localsend lua51 luarocks 
+  man-db man-pages mariadb-libs minipro mise-bin moonlight-qt mpv mpv-mpris mypy nano 
+  nautilus nautilus-python neovim net-tools networkmanager nmap nodejs noto-fonts 
+  noto-fonts-cjk noto-fonts-emoji noto-fonts-extra npm nss-mdns nvidia-open-dkms 
+  nvidia-utils obs-studio obsidian omacalc omacut omarchy omarchy-keyring omarchy-nvim 
+  omarchy-settings omawrite pacman-contrib pamixer php pinta pipewire pipewire-alsa 
+  pipewire-jack pipewire-pulse plocate plymouth postgresql postgresql-libs 
+  power-profiles-daemon python-gobject python-pip python-pipx python-poetry-core 
+  qemu-user-static-binfmt qrencode qt5-wayland qt6-imageformats quickshell restic retroarch 
+  retroarch-assets-git retroarch-assets-glui retroarch-assets-ozone retroarch-assets-xmb 
+  ripgrep rsync ruby ruff rust sddm signal-desktop slurp snapper socat sof-firmware spotify 
+  starship steam sushi syncthing system-config-printer tailscale tensaku tesseract 
+  tesseract-data-eng thermald tldr tmux tobi-try tor torbrowser-launcher tree 
+  tree-sitter-cli ttf-cascadia-mono-nerd ttf-ia-writer ttf-jetbrains-mono-nerd-basic ttfx 
+  turbostat typora tzupdate udiskie ufw ufw-docker unzip usage uv uwsm valkey virt-viewer 
+  vpl-gpu-rt vulkan-intel walker wev whois wireless-regdb wireplumber wl-clip-persist 
+  wl-clipboard woff2-font-awesome wtype xdg-desktop-portal-gtk xdg-desktop-portal-hyprland 
+  xdg-terminal-exec xmlstarlet xournalpp yaru-icon-theme yay yq yt-dlp zbar zoxide 
+  zram-generator 
+
+=== Home directory — what would be lost -------------------------
+  .agents
+  Applications
+  Arduino
+  .arduino15
+  .arduinoIDE
+  .bash_history
+  .bash_logout
+  .bash_profile
+  .bashrc
+  .bashrc.omarchy-upgrade-to-quattro.20260814201145.bak
+  .basilisk_ii_prefs
+  .cache
+  .cargo
+  .claude
+  .claude.json
+  .claude.json.backup
+  code
+  .codex
+  .config
+  Desktop
+  .docker
+  Documents
+  .dotnet
+  Downloads
+  emulation
+  go
+  kindle
+  lipsum.txt
+  .local
+  ls-horizons-darwin-arm64.zip
+  .mozilla
+  Music
+  nomarchy
+  .npm
+  .npmrc
+  .nv
+  omarchy-quattro-prep
+  omarchy-theme-marketplace
+  .pi
+  Pictures
+
+  Dotfiles worth deciding about:
+    .bashrc          4.0K
+    .bash_profile    4.0K
+    .ssh/config      4.0K
+    .config          740M
+
+  SSH key NAMES only:
+    id_ed25519
+
+  NOTE: keys, wifi PSKs, VPN credentials and API tokens are migrated by hand,
+  outside the repo. See CLAUDE.md. They are named here so none is forgotten,
+  never copied here.
+
+
+=== End ---------------------------------------------------------
+  Next: docs/new-host/README.md, phase 2.
+
