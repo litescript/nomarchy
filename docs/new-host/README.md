@@ -7,6 +7,26 @@ afterwards.
 
 Read `CLAUDE.md` at the repo root first. It is the doctrine; this file is the procedure.
 
+**The machine being stood up next is `rigel`.** Use that name everywhere: `hosts/rigel/`,
+`common/scripts/bootstrap rigel`, `docs/new-host/rigel-survey.txt`. Hosts here are named
+after stars and Romans — caesar is the desktop, waylab the testbed, rigel the laptop — and
+the name is load-bearing, not decorative: every manifest path keys off it.
+
+### What is already known about rigel
+
+Settled in conversation before you existed, so do not spend Pete's time rediscovering it:
+
+- It runs **Omarchy** today. Its migration is therefore a second run of the one
+  `docs/migration/` records — read that before surveying, and treat the old install as
+  *reference for what to investigate*, never a template to copy.
+- It uses **Tailscale**. caesar does not, so there is no precedent in this repo; see the
+  Tailscale section below.
+- It is a **laptop** — lid, battery, backlight, touchpad, one internal panel. caesar has
+  none of those and three external monitors.
+- It will be installed **btrfs on LUKS**. caesar is currently plain ext4 and unencrypted;
+  it gets the same treatment at its own cutover. That difference is worth remembering when
+  reasoning about the ssh key passphrase: on an encrypted disk the argument changes.
+
 One thing you cannot see: `CLAUDE_NOTES.md` is gitignored, so the working notes from
 caesar's migration are not in your checkout. Everything you actually need was committed —
 `docs/migration/` and `CLAUDE.md` — and this file carries the rest.
@@ -47,7 +67,7 @@ away with the disk.
 ## Phase 1 — survey, on the old OS
 
 ```bash
-common/scripts/host-survey > docs/new-host/<name>-survey.txt
+common/scripts/host-survey > docs/new-host/rigel-survey.txt
 ```
 
 Read it yourself, then commit it. It captures identity, CPU (which decides the microcode
@@ -72,7 +92,7 @@ its systemd user units, its shell config, and anything hardware-adjacent Omarchy
 that this repo has no equivalent for yet — power profiles, suspend behaviour, backlight
 keys, fingerprint readers.
 
-## Phase 2 — write `hosts/<name>/`, before the wipe
+## Phase 2 — write `hosts/rigel/`, before the wipe
 
 Minimum contents. This is a checklist, not a template — write each file for this machine:
 
@@ -104,14 +124,14 @@ Put the package in `packages/repo.txt`, the service in `bootstrap/root-steps`, a
 
 ## Phase 3 — push
 
-Commit the survey and `hosts/<name>/` and **push before the machine is wiped**. This is
+Commit the survey and `hosts/rigel/` and **push before the machine is wiped**. This is
 the whole point of the sequence. Follow the repo's commit style: explain why, not just
 what, and record what was rejected along with what was chosen.
 
 ## Phase 4 — the install (Pete's, not yours)
 
 btrfs on LUKS. Pete does the partitioning and install by hand. What you should ask him to
-record into `hosts/<name>/` afterwards, because it is painful to recover later:
+record into `hosts/rigel/` afterwards, because it is painful to recover later:
 
 - the LUKS container UUID, and the filesystem UUIDs
 - the btrfs subvolume layout (caesar's old disk used `@`, `@home`, `@log`, `@pkg`)
@@ -130,8 +150,8 @@ days since — CLAUDE.md documents the unlock.
 ```bash
 git clone git@github.com:litescript/nomarchy.git ~/Projects/nomarchy
 cd ~/Projects/nomarchy
-common/scripts/bootstrap <name>            # read what it intends to do
-common/scripts/bootstrap <name> --apply    # user-level changes
+common/scripts/bootstrap rigel            # read what it intends to do
+common/scripts/bootstrap rigel --apply    # user-level changes
 ```
 
 Then the root steps it printed, which it will not run itself. Then `tailscale up`.
@@ -144,7 +164,7 @@ is actually registered rather than what the file says.
 
 Acceptance tests, in order:
 
-1. `common/scripts/bootstrap <name>` → `0 to do, 0 conflicts`
+1. `common/scripts/bootstrap rigel` → `0 to do, 0 conflicts`
 2. `id` (bare, not `id <user>`) → the groups you expect. The group database is ahead of
    session credentials until the next login, so `id <user>` will look right while the
    session is stale
