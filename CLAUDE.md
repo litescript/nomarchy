@@ -96,8 +96,21 @@ whereas `MOZ_LOG=FFmpegVideo:5` says outright whether hardware decode engaged.
 
 ## Working doctrine
 
-The previous system was Omarchy 4.0.3 (Hyprland). Its filesystem is mounted **read-only**
-at `/mnt/omarchy-old` (`@`, `@home` subvolumes). Note that symlinks under
+The previous system was Omarchy 4.0.3 (Hyprland), on a **LUKS-encrypted btrfs** volume.
+It is **not mounted automatically** — there is no fstab entry, so it vanishes on every
+reboot and needs unlocking by hand (the passphrase prompt needs a real terminal):
+
+```bash
+sudo cryptsetup open /dev/disk/by-uuid/cd84de61-5f81-4968-91e3-434381780328 omarchy-old
+sudo mount -o ro,nosuid,nodev,subvolid=5 /dev/mapper/omarchy-old /mnt/omarchy-old
+```
+
+Address it **by UUID**: the device name has already shifted once, from `nvme2n1p2` on the
+old box to `nvme1n1p2` now. `subvolid=5` mounts the btrfs top level so `@` and `@home`
+appear as directories, which is what every path in the migration docs assumes. `nosuid`
+and `nodev` because this is another system's root and §11 found a privesc in it.
+
+Once mounted it is read-only at `/mnt/omarchy-old` (`@`, `@home` subvolumes). Note that symlinks under
 `/mnt/omarchy-old/@/usr/share/omarchy/bin/` point at `/usr/bin/...` and therefore resolve
 against the *live* root — read `/mnt/omarchy-old/@/usr/bin/<name>` directly.
 
