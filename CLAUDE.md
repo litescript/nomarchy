@@ -34,6 +34,8 @@ immediately:
 | `~/.config/kitty/kitty.conf` | `common/kitty/kitty.conf` |
 | `~/.config/umbriel/config.toml` | `hosts/caesar/umbriel/config.toml` |
 | `~/.config/systemd/user/ssh-agent.service` | `common/systemd/ssh-agent.service` |
+| `~/.bashrc` | `common/bash/bashrc` |
+| `~/.bash_profile` | `common/bash/bash_profile` |
 
 Some things are **copies, not symlinks**, and drift silently:
 
@@ -48,6 +50,11 @@ Some things are **copies, not symlinks**, and drift silently:
   home, and `/home/peter` is `drwx------`, so a symlink into this repo would dangle for
   him. See `hosts/caesar/meanpete/README.md`; that whole directory is temporary and gets
   deleted after the NVMe cutover.
+
+Two things deliberately live **outside** the repo because they hold credentials:
+`~/.config/subliminal/subliminal.toml` (opensubtitles login, `0600`) and `~/vpn/nord/`
+(`auth.txt` and `linux_token.txt`). Scripts that read them are tracked; the secrets are
+not, and must not be.
 
 The firewall is not a file copy at all: `hosts/caesar/ufw/apply-rules` is a script that
 issues `ufw` commands, because the live rules in `/etc/ufw/user.rules` are generated and

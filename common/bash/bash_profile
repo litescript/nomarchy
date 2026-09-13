@@ -1,0 +1,40 @@
+#
+# ~/.bash_profile  ->  common/bash/bash_profile in the nomarchy repo
+#
+# Login shell. Everything here reaches NON-interactive shells too, which is the whole
+# point: ~/.bashrc returns early for those, so anything exported there never reaches
+# start-umbriel, the compositor, or anything spawned from a keybind. `spawn:shelf` failing
+# silently was exactly this, and it cost an hour to find.
+
+export EDITOR=nvim
+export VISUAL=nvim
+
+# Force truecolor. Carried from the old box.
+export COLORTERM=truecolor
+
+# PATH, lowest priority first: the loop prepends, so the last entry ends up leftmost.
+# ~/.local/bin must win -- it carries the locally maintained kitty fork and the scripts
+# the compositor calls by name.
+#
+# Guarded on existence so a missing toolchain leaves no dead entry. The old box also had
+# ~/.opencode/bin and ~/.config/herd-lite/bin (PHP); neither tool is installed here, so
+# they are not carried. Re-add them next to these if that changes.
+# The second test makes this idempotent. Without it every re-source prepends again, so
+# `rcsrc` compounds the PATH and a nested login shell inherits the duplicates -- the live
+# compositor was carrying ~/.local/bin three times over from exactly this.
+for _d in "$HOME/.npm-global/bin" "$HOME/go/bin" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+  [[ -d $_d && ":$PATH:" != *":$_d:"* ]] && PATH="$_d:$PATH"
+done
+unset _d
+export PATH
+
+# The ssh-agent user unit owns the socket; this is how the login shell -- and so
+# start-umbriel, the compositor, and everything spawned from a keybind -- finds the agent.
+# See common/systemd/ssh-agent.service.
+export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ssh-agent.socket"
+
+[[ -f ~/.bashrc ]] && . ~/.bashrc
+
+if [[ -z $DISPLAY && -z $WAYLAND_DISPLAY && $(tty) == /dev/tty1 ]]; then
+    exec start-umbriel
+fi
