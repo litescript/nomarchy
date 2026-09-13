@@ -1,0 +1,98 @@
+#!/bin/bash
+# ba - Browse Aliases with fzf
+#
+# INSTALL: Add this to your ~/.bashrc:
+#   source ~/code/browse_alias/ba
+#
+# Or copy the ba() function below directly into ~/.bashrc
+
+ba() {
+    # Resolve symlinks. ~/.bashrc is a symlink into a config repo, and `sed -i` (used by
+    # `ba rm`) does not follow symlinks -- it writes a new file and renames it over the
+    # link, silently replacing it with a regular file. The repo would keep the alias you
+    # just removed, the shell would stop being version-controlled, and nothing would say
+    # so. Resolving up front fixes rm, edit and add alike, so all three act on the real
+    # file wherever it lives.
+    local BASHRC
+    BASHRC="$(readlink -f "$HOME/.bashrc")"
+
+    _ba_get_aliases() {
+        grep -E "^alias [^=]+=" "$BASHRC" | sed "s/^alias //" | sort
+    }
+
+    _ba_copy() {
+        if command -v wl-copy &>/dev/null; then
+            echo -n "$1" | wl-copy
+        elif command -v xclip &>/dev/null; then
+            echo -n "$1" | xclip -selection clipboard
+        elif command -v xsel &>/dev/null; then
+            echo -n "$1" | xsel --clipboard
+        else
+            echo "Command: $1"
+            echo "(install wl-copy, xclip, or xsel for clipboard)"
+            return 1
+        fi
+        echo "Copied: $1"
+    }
+
+    _ba_extract_cmd() {
+        echo "$1" | cut -d= -f2- | sed "s/^[\"']//" | sed "s/[\"']$//"
+    }
+
+    case "${1:-}" in
+        run)
+            local selected=$(_ba_get_aliases | fzf --height=40% --reverse --prompt="Run> ")
+            if [[ -n "$selected" ]]; then
+                local cmd=$(_ba_extract_cmd "$selected")
+                echo "$ $cmd"
+                eval "$cmd"
+            fi
+            ;;
+        edit)
+            local selected=$(_ba_get_aliases | fzf --height=40% --reverse --prompt="Edit> ")
+            if [[ -n "$selected" ]]; then
+                local name=$(echo "$selected" | cut -d= -f1)
+                local line=$(grep -n "^alias $name=" "$BASHRC" | cut -d: -f1)
+                ${EDITOR:-vim} "+$line" "$BASHRC"
+                echo "Reload with: source ~/.bashrc"
+            fi
+            ;;
+        add)
+            read -p "Alias name: " name
+            [[ -z "$name" ]] && return 1
+            read -p "Command: " cmd
+            [[ -z "$cmd" ]] && return 1
+            echo "alias $name='$cmd'" >> "$BASHRC"
+            # Also define it in current session
+            alias "$name=$cmd"
+            echo "Added & loaded: alias $name='$cmd'"
+            ;;
+        rm|remove)
+            local selected=$(_ba_get_aliases | fzf --height=40% --reverse --prompt="Remove> ")
+            if [[ -n "$selected" ]]; then
+                local name=$(echo "$selected" | cut -d= -f1)
+                read -p "Remove '$name'? [y/N] " confirm
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                    sed -i "/^alias $name=/d" "$BASHRC"
+                    unalias "$name" 2>/dev/null
+                    echo "Removed: $name"
+                fi
+            fi
+            ;;
+        *)
+            local selected=$(_ba_get_aliases | fzf --height=40% --reverse --prompt="Alias> ")
+            if [[ -n "$selected" ]]; then
+                local cmd=$(_ba_extract_cmd "$selected")
+                _ba_copy "$cmd"
+            fi
+            ;;
+    esac
+}
+
+# If sourced, function is defined. If run directly, show install instructions.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "To install, add this to your ~/.bashrc:"
+    echo "  source $(realpath "${BASH_SOURCE[0]}")"
+    echo ""
+    echo "Then run: source ~/.bashrc"
+fi

@@ -37,6 +37,7 @@ immediately:
 | `~/.bashrc` | `common/bash/bashrc` |
 | `~/.bash_profile` | `common/bash/bash_profile` |
 | `~/.config/fuzzel/fuzzel.conf` | `common/fuzzel/fuzzel.conf` |
+| `~/code/browse_alias` | `common/browse_alias` (whole dir) |
 
 **The default is: version it here, symlink it into place.** If a config file is worth
 editing twice, it belongs in this repo at the path above, not loose in `$HOME`. Two
