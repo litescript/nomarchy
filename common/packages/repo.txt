@@ -1,0 +1,86 @@
+# Base packages for any nomarchy host, from the official repositories.
+#   sudo pacman -S --needed - < this file   (comments and blanks stripped by the bootstrap)
+#
+# Curated from caesar's `pacman -Qqe` on 2026-09-13, not copied from it. Anything tied to
+# this machine's hardware or role lives in hosts/<host>/packages/ instead.
+
+# System
+base
+base-devel
+linux
+linux-firmware
+linux-headers
+sudo
+git
+openssh
+networkmanager
+efibootmgr
+btrfs-progs
+ufw
+
+# Desktop: compositor, shell, portal
+noctalia
+xwayland-satellite
+
+# Terminal and editor
+kitty
+kitty-terminfo
+neovim
+bash-completion
+less
+man-db
+man-pages
+
+# Shell tooling -- these are what .bashrc assumes exists
+eza
+bat
+fd
+fzf
+ripgrep
+zoxide
+starship
+tmux
+wget
+rsync
+inetutils
+
+# Wayland utilities: the clipboard, screenshot and askpass stack
+fuzzel
+wl-clipboard
+wtype
+grim
+slurp
+imagemagick
+
+# Audio
+pipewire
+pipewire-pulse
+wireplumber
+
+# Fonts
+noto-fonts
+noto-fonts-emoji
+ttf-jetbrains-mono-nerd
+
+# Graphics diagnostics -- vendor-neutral, and the first thing wanted when a
+# session misbehaves
+mesa-utils
+libva-utils
+
+# Applications
+firefox
+
+# Development
+python-pip
+python-pipx
+nodejs
+npm
+go
+rustup
+luarocks
+cmake
+tree-sitter-cli
+eslint
+github-cli
+lazygit
+btop

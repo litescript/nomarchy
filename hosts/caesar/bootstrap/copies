@@ -1,0 +1,15 @@
+# Root-owned copies: <repo path>  <system path>
+#
+# These cannot be symlinks -- a mount unit for /mnt/nas has to be a system unit, and
+# /etc is not ours to link into. So they are copies, and copies drift silently, which is
+# the failure mode this repo keeps warning about. The bootstrap cannot fix them without
+# root, but it CAN diff them and say so, which turns silent drift into a reported
+# conflict.
+#
+# Deliberately absent: hosts/caesar/noctalia/settings.toml. Noctalia rewrites that file
+# itself, so the repo copy is a snapshot and is EXPECTED to be behind. Flagging it would
+# train the eye to ignore this section.
+common/systemd/mnt-nas.mount		/etc/systemd/system/mnt-nas.mount
+common/systemd/mnt-nas.automount	/etc/systemd/system/mnt-nas.automount
+hosts/caesar/ssh/10-nomarchy.conf	/etc/ssh/sshd_config.d/10-nomarchy.conf
+common/udev/99-streamdeck-no-keyboard.rules	/etc/udev/rules.d/99-streamdeck-no-keyboard.rules

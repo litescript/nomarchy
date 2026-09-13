@@ -63,6 +63,8 @@ Some things are **copies, not symlinks**, and drift silently:
   `sudo install`.
 - `/etc/ssh/sshd_config.d/10-nomarchy.conf` — root-owned. Validate with `sshd -t` and
   apply with `systemctl reload sshd`, never restart.
+- `/etc/systemd/system/mnt-nas.{mount,automount}` — root-owned, and necessarily so: a
+  mount unit for `/mnt/nas` has to be a system unit, not a `--user` one.
 - `~meanpete/Scripts/`, `~meanpete/.bashrc`, `~meanpete/.bash_profile` — another user's
   home, and `/home/peter` is `drwx------`, so a symlink into this repo would dangle for
   him. See `hosts/caesar/meanpete/README.md`; that whole directory is temporary and gets
@@ -104,6 +106,38 @@ A new host is a deliberately written `hosts/<name>/`, never a copy of another ho
 
 Scripts in `common/scripts/` are referenced from the Umbriel config by **absolute path**,
 so the session depends on this checkout staying at `/home/peter/Projects/nomarchy`.
+
+## Bootstrapping a host
+
+```bash
+common/scripts/bootstrap caesar            # report drift, change nothing
+common/scripts/bootstrap caesar --apply    # make the user-level changes
+```
+
+Dry run is the default, so it doubles as a **drift audit**: run it any time to ask whether
+this machine still matches the repo. It never runs `sudo` — root steps are printed for a
+human — and it never clobbers: a path that exists but is not the expected symlink is
+reported as a conflict and left alone.
+
+It is data-driven, and the data is the spec:
+
+| file | what it declares |
+|---|---|
+| `common/packages/{repo,aur}.txt` | packages on every host |
+| `hosts/<host>/packages/{repo,aur}.txt` | packages only that machine gets |
+| `common/bootstrap/links`, `hosts/<host>/bootstrap/links` | symlinks to lay |
+| `hosts/<host>/bootstrap/copies` | root-owned copies, **diffed** so their drift is reported rather than silent |
+| `common/bootstrap/units`, `hosts/<host>/bootstrap/units` | `systemd --user` units to enable |
+| `hosts/<host>/bootstrap/root-steps` | printed, never run |
+
+A file living in `common/` means it is *available* to any host; a host's `links` list is
+what that machine actually installs. The NAS units are the example — general-purpose files
+that only make sense on a machine that can reach that NAS.
+
+**A new host is a `hosts/<name>/` somebody wrote on purpose.** The bootstrap refuses a
+host directory that does not exist rather than defaulting to another machine's. `hosts/`
+is not a template directory, and a laptop is not a caesar clone: it has different
+microcode, no NVIDIA, no NAS, no second user, and lid events caesar has no concept of.
 
 ## Verification — read this before changing any config
 

@@ -1,0 +1,9 @@
+# Base AUR packages. Not installable with pacman -S; there is no AUR helper on caesar --
+# these were built with makepkg. The bootstrap prints them rather than installing them.
+#
+# Deliberately NOT listed: umbriel-git-debug and xdg-desktop-portal-umbriel-git-debug.
+# Those are makepkg byproducts that arrive alongside the real package when debug packaging
+# is enabled; they show up in `pacman -Qqe` but must not be installed on their own.
+
+umbriel-git
+xdg-desktop-portal-umbriel-git

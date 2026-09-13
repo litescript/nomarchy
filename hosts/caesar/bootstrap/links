@@ -1,0 +1,13 @@
+# caesar-only symlinks.
+#
+# Note several sources live in common/. That is deliberate: a file in common/ is
+# AVAILABLE to any host, while this list is what THIS host actually installs. The NAS
+# units and the backup timers are the case in point -- they are general-purpose files that
+# only make sense on a machine that can reach that NAS.
+hosts/caesar/umbriel/config.toml	~/.config/umbriel/config.toml
+common/systemd/backup-daily.service	~/.config/systemd/user/backup-daily.service
+common/systemd/backup-daily.timer	~/.config/systemd/user/backup-daily.timer
+common/systemd/backup-legal-to-nas.service	~/.config/systemd/user/backup-legal-to-nas.service
+common/systemd/backup-legal-to-nas.timer	~/.config/systemd/user/backup-legal-to-nas.timer
+common/systemd/subget-sync.service	~/.config/systemd/user/subget-sync.service
+common/systemd/subget-sync.timer	~/.config/systemd/user/subget-sync.timer

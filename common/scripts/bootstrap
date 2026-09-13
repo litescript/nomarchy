@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# Bring a machine up to a nomarchy host, or report how far it already is.
+#
+#   bootstrap <host>            report what would change; change nothing
+#   bootstrap <host> --apply    make the user-level changes
+#
+# Dry run is the default, matching the other scripts here (merge-show-dirs, subget). Run it
+# with no --apply as often as you like: it doubles as a drift audit, answering "does this
+# machine still match the repo".
+#
+# It never runs sudo. Root-level steps are printed from hosts/<host>/bootstrap/root-steps
+# for a human to read and run, because sudo cannot be fed a password non-interactively here
+# and because each of those steps deserves to be read before it happens.
+#
+# It never clobbers. A path that exists but is not the expected symlink is reported as a
+# conflict and left exactly as it is -- on a fresh Arch install ~/.bashrc is a real file
+# with real content, and deleting it unasked is not this script's decision to make.
+#
+# <host> is required and must already exist as hosts/<host>/. A new host is a directory
+# somebody wrote on purpose, never a copy of another machine's -- see CLAUDE.md.
+
+set -uo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+cd "$repo" || exit 1
+
+host="${1:-}"
+apply=0
+[[ ${2:-} == --apply ]] && apply=1
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+[[ -n $host ]] || die "usage: ${0##*/} <host> [--apply]   (hosts: $(ls hosts | tr '\n' ' '))"
+[[ -d hosts/$host ]] || die "no such host: hosts/$host -- a new host is written deliberately, not cloned"
+
+ok=0; todo=0; conflict=0
+say()  { printf '  %s\n' "$*"; }
+good() { printf '  \033[32m✓\033[0m %s\n' "$*"; ((ok++)); }
+want() { printf '  \033[33m→\033[0m %s\n' "$*"; ((todo++)); }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; ((conflict++)); }
+
+manifest() { grep -vE '^\s*#|^\s*$' "$1" 2>/dev/null; }
+
+printf '\n\033[1mnomarchy bootstrap — host %s — %s\033[0m\n' "$host" \
+       "$( ((apply)) && echo 'APPLYING' || echo 'dry run, nothing will change')"
+
+# ── Packages ────────────────────────────────────────────────────────────────
+printf '\n\033[1mPackages\033[0m\n'
+repo_pkgs=$(cat <(manifest common/packages/repo.txt) <(manifest "hosts/$host/packages/repo.txt") 2>/dev/null | sort -u)
+aur_pkgs=$(cat <(manifest common/packages/aur.txt) <(manifest "hosts/$host/packages/aur.txt") 2>/dev/null | sort -u)
+missing=$(comm -23 <(printf '%s\n' "$repo_pkgs") <(pacman -Qq | sort))
+if [[ -z $missing ]]; then
+  good "all $(printf '%s\n' "$repo_pkgs" | wc -l) repo packages present"
+else
+  want "$(printf '%s\n' "$missing" | wc -l) missing. Install with:"
+  say  "    sudo pacman -S --needed $(printf '%s ' $missing)"
+fi
+aur_missing=$(comm -23 <(printf '%s\n' "$aur_pkgs") <(pacman -Qq | sort))
+if [[ -z $aur_missing ]]; then
+  good "all AUR packages present"
+else
+  want "AUR, no helper installed here -- build each with makepkg -si:"
+  for p in $aur_missing; do say "    https://aur.archlinux.org/$p.git"; done
+fi
+
+# ── Symlinks ────────────────────────────────────────────────────────────────
+printf '\n\033[1mSymlinks\033[0m\n'
+while read -r src dst; do
+  [[ -n ${src:-} && -n ${dst:-} ]] || continue
+  target="${dst/#\~/$HOME}"
+  want_path="$repo/$src"
+  if [[ ! -e $want_path ]]; then bad "$src does not exist in the repo"; continue; fi
+  if [[ -L $target ]]; then
+    have="$(readlink -f "$target")"
+    if [[ $have == "$(readlink -f "$want_path")" ]]; then good "$dst"; else bad "$dst -> $have (expected $src)"; fi
+  elif [[ -e $target ]]; then
+    bad "$dst exists and is not a symlink -- move it aside, then re-run"
+  else
+    if ((apply)); then
+      mkdir -p "$(dirname "$target")" && ln -s "$want_path" "$target" && good "$dst (created)"
+    else
+      want "$dst -> $src"
+    fi
+  fi
+done < <(cat common/bootstrap/links "hosts/$host/bootstrap/links" 2>/dev/null | grep -vE '^\s*#|^\s*$')
+
+# ── Root-owned copies ───────────────────────────────────────────────────────
+# Cannot be symlinks, so they drift silently. Diffing them is the whole point of listing
+# them: this turns "the repo and the machine quietly disagree" into a reported conflict.
+printf '\n\033[1mRoot-owned copies\033[0m\n'
+if [[ -f hosts/$host/bootstrap/copies ]]; then
+  while read -r src dst; do
+    [[ -n ${src:-} && -n ${dst:-} ]] || continue
+    if [[ ! -e $dst ]]; then
+      want "$dst not installed (see root steps)"
+    elif [[ ! -r $dst ]]; then
+      say "  ? $dst not readable as $USER -- cannot check"
+    elif diff -q "$repo/$src" "$dst" >/dev/null 2>&1; then
+      good "$dst"
+    else
+      bad "$dst DIFFERS from $src"
+    fi
+  done < <(grep -vE '^\s*#|^\s*$' "hosts/$host/bootstrap/copies")
+else
+  say "none declared"
+fi
+
+# ── User units ──────────────────────────────────────────────────────────────
+printf '\n\033[1msystemd --user units\033[0m\n'
+units=$(cat <(manifest common/bootstrap/units) <(manifest "hosts/$host/bootstrap/units") 2>/dev/null)
+for u in $units; do
+  state="$(systemctl --user is-enabled "$u" 2>/dev/null)"
+  if [[ $state == enabled ]]; then
+    good "$u"
+  elif ((apply)); then
+    systemctl --user daemon-reload
+    systemctl --user enable --now "$u" >/dev/null 2>&1 && good "$u (enabled)" || bad "$u failed to enable"
+  else
+    want "$u (currently: ${state:-not found})"
+  fi
+done
+
+# ── Root steps ──────────────────────────────────────────────────────────────
+printf '\n\033[1mRoot steps — run these yourself\033[0m\n'
+manifest "hosts/$host/bootstrap/root-steps" | while read -r line; do say "$line"; done
+
+printf '\n\033[1m%d ok, %d to do, %d conflicts\033[0m\n\n' "$ok" "$todo" "$conflict"
+((conflict == 0))

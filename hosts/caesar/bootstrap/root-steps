@@ -1,0 +1,13 @@
+# Steps that need root. The bootstrap PRINTS these and never runs them: sudo cannot be fed
+# a password non-interactively here, and each one deserves a human reading it first.
+# Paths are relative to the repo root.
+sudo install -m 0644 common/systemd/mnt-nas.mount /etc/systemd/system/mnt-nas.mount
+sudo install -m 0644 common/systemd/mnt-nas.automount /etc/systemd/system/mnt-nas.automount
+sudo systemctl daemon-reload && sudo systemctl enable --now mnt-nas.automount
+sudo install -m 0644 hosts/caesar/ssh/10-nomarchy.conf /etc/ssh/sshd_config.d/10-nomarchy.conf
+sudo sshd -t && sudo systemctl reload sshd
+sudo hosts/caesar/ufw/apply-rules
+sudo install -m 0644 common/udev/99-streamdeck-no-keyboard.rules /etc/udev/rules.d/99-streamdeck-no-keyboard.rules
+sudo udevadm control --reload-rules
+# The second user, only if this machine is meant to be a staging point for meanpete.
+# Read hosts/caesar/meanpete/README.md first -- it explains why there is no sudo grant.

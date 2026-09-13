@@ -1,0 +1,5 @@
+# systemd --user units enabled on caesar. Timers, not their services: the timer pulls the
+# service in, and enabling a oneshot service directly would run it at every login.
+backup-daily.timer
+backup-legal-to-nas.timer
+subget-sync.timer

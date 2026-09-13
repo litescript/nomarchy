@@ -1,0 +1,29 @@
+# caesar-only packages. A second host does not get these by default -- see CLAUDE.md:
+# hosts/ is not a template directory.
+
+# CPU microcode. Machine-specific by definition; an Intel laptop wants intel-ucode.
+amd-ucode
+
+# NVIDIA. Audit section 10 covers what was tested and rejected around these -- read it
+# before adding environment variables to go with them.
+nvidia-open-dkms
+nvidia-utils
+libva-nvidia-driver
+egl-wayland
+egl-wayland2
+
+# The NAS lives on this network and caesar is its staging point (audit section 11).
+nfs-utils
+
+# Docker, rootless. See CLAUDE.md: there is no rootful socket, and the ufw-docker
+# workaround deliberately is not carried because rootless does not bypass the firewall.
+docker
+docker-compose
+lazydocker
+rootlesskit
+slirp4netns
+fuse-overlayfs
+
+# Desktop applications. Easy to promote to common/ if the laptop wants them too.
+obsidian
+spotify-launcher
