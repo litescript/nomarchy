@@ -187,3 +187,66 @@ re-testing on hybrid graphics before anyone inherits them. The guide also record
 btrfs + LUKS + limine + snapper layout.
 
 Nothing here blocks `hosts/rigel/` any more.
+
+---
+
+## caesar's review of `rigel-omarchy-sweep.md`
+
+Good sweep. Where it can be checked from caesar, it holds up. These are the points that
+change what you do next, most urgent first.
+
+**0. Privacy, already fixed in `84e5128`.** `rigel-survey.txt` published three wifi names,
+both MACs, and the tailnet IP and account. That was a `host-survey` bug, not yours. The
+script no longer prints any of them, and the file is scrubbed at the tip. The values are
+still in history at `c1c5fdd`, and rewriting that is Pete's decision. **Pull before
+editing the survey file.** Anything else you publish off rigel gets the same check.
+
+**1. Enable `[multilib]` before the bootstrap, or its package step fails.**
+`lib32-nvidia-utils` is only in `[multilib]`, and so is `steam` from the 48. caesar has
+multilib disabled (`pacman -Si lib32-nvidia-utils` finds nothing), and no root-step or
+guide line enables it. It belongs in `hosts/rigel/bootstrap/root-steps`, ahead of any
+package install. Every other name in the proposed `repo.txt` resolves: `intel-lpmd`,
+`vpl-gpu-rt`, `bluez-tools` and `libva-nvidia-driver` are all in `[extra]`.
+
+**2. Omitting Omarchy's `nvidia.conf` does not turn modeset off.** `modinfo nvidia_drm` for
+the 610.57 driver, the version rigel will get, reads `modeset ... (1 = enable (default))`,
+and `fbdev` likewise. The first link of your causal chain is the driver default, not a
+choice Omarchy made. Leaving the file out changes nothing, and `modeset=0` would be the
+wrong fight anyway. The real lever is further down the chain:
+
+**3. What umbriel opens is controllable, and it is the test that matters.** umbriel links
+`libwlroots-0.20`, whose binary contains
+`Opening fixed list of KMS devices from WLR_DRM_DEVICES`. After install, check two things
+before deciding anything: umbriel's `/proc/<pid>/fd`, and the dGPU's
+`power/runtime_suspended_time` across a few minutes. If umbriel holds the NVIDIA nodes,
+pin `WLR_DRM_DEVICES` to the Intel card, with two cautions:
+- **Never by `cardN`.** Your own sweep shows why: the numbering is inverted relative to
+  caesar, and Omarchy 3's `card0` line rotted into naming nothing.
+- **Not by `/dev/dri/by-path/` either.** wlroots documents the variable as a
+  colon-separated list, and `pci-0000:00:02.0-card` is full of colons. Use a udev rule
+  that makes a colon-free symlink.
+
+Two more notes. umbriel's own binary contains `/proc/driver/nvidia/gpus`, so it has
+NVIDIA-specific code beyond plain wlroots; read that before assuming stock behaviour. And
+1password was the other process holding the card, and it is not being installed. One of
+the two holders goes away for free.
+
+**4. Don't set `LIBVA_DRIVER_NAME=nvidia` on rigel.** On a laptop, "reroutes" means waking
+the dGPU for every video. The default, iHD on the Intel card that drives the panel, is
+the right one. Strictly, the ffmpeg run proved the NVDEC driver *initialises* against
+the Intel fd, not that frames decoded there. That matters only if anyone ever wants it
+set.
+
+**5. Lock-before-suspend has no owner yet. This is the security one.** caesar's Noctalia
+has `lock-and-suspend` only as an *idle* behaviour. A lid close that goes through logind
+never passes through Noctalia's idle path. On Omarchy, `omarchy-sleep-lock` plus logind's
+`HandleLidSwitch=ignore` filled that gap. Pick one owner for the lid: logind, with
+something locking on `PrepareForSleep`, or umbriel's `[events]` lid hooks with logind
+still ignoring the lid. Never both. The acceptance test is physical: close the lid, open
+it, and it must be locked.
+
+**6. Two small ones.** tty1 autologin is load-bearing now: it is how `~/.local/bin`
+reaches umbriel's PATH, and without it every script bind goes quiet. So "no sddm" is
+required, not just tidier. And btrfs snapshots were already noted as the better backup
+story for these machines. Dropping snapper just because Omarchy chose it is the
+copy-don't-copy rule inverted. Choose it, or choose something else, on its own merits.
