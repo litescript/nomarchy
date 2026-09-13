@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Survey a machine before it becomes a nomarchy host.
+#
+#   common/scripts/host-survey > docs/new-host/<name>-survey.txt
+#
+# Run this on the machine's EXISTING operating system, before anything is wiped. Most of
+# what it captures cannot be recovered afterwards: which outputs the panel actually
+# reports, what the wifi is called, which services were relied on, what is in $HOME.
+#
+# Deliberately portable and undemanding -- the existing OS may not be Arch, may not have
+# systemd units you expect, and may be several years stale. Every probe degrades to a
+# note rather than an error.
+#
+# It prints NO secrets. Key files, wifi profiles and VPN configs are reported by NAME and
+# never by content. That rule is not a nicety: the output is meant to be committed to a
+# public repo.
+
+set -u
+
+sec() { printf '\n\n=== %s %s\n' "$1" "$(printf '%.0s-' $(seq 1 $((60 - ${#1}))))"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+try() { if have "${1%% *}"; then eval "$@" 2>&1 | sed 's/^/  /'; else printf '  (%s not available)\n' "${1%% *}"; fi; }
+
+printf 'host survey — %s — %s\n' "$(hostname 2>/dev/null || echo '?')" "$(date -Is)"
+
+sec "Identity and OS"
+try 'cat /etc/os-release'
+try 'uname -a'
+
+sec "CPU — decides the microcode package"
+try "lscpu | grep -Ei 'model name|vendor|architecture'"
+
+sec "GPU — decides the driver stack"
+try 'lspci -nn | grep -Ei "vga|3d|display"'
+have lsmod && printf '  loaded video modules: %s\n' "$(lsmod | awk '/^(i915|amdgpu|nouveau|nvidia)/{print $1}' | tr '\n' ' ')"
+
+sec "Displays — becomes [output.*] in the umbriel host config"
+if [[ -d /sys/class/drm ]]; then
+  for c in /sys/class/drm/card*-*/; do
+    [[ -f "$c/status" ]] || continue
+    printf '  %-18s %s' "$(basename "$c" | sed 's/^card[0-9]*-//')" "$(cat "$c/status")"
+    [[ -f "$c/modes" ]] && printf '  preferred: %s' "$(head -1 "$c/modes" 2>/dev/null)"
+    printf '\n'
+  done
+else
+  echo "  (no /sys/class/drm)"
+fi
+printf '\n  NOTE: connector names here are kernel names and usually match umbriel output\n'
+printf '  names, but confirm with `umbriel outputs` once the compositor runs.\n'
+
+sec "Laptop hardware — things caesar has no concept of"
+[[ -d /sys/class/power_supply ]] && ls /sys/class/power_supply/ | sed 's/^/  power supply: /' || echo "  no power supplies (desktop?)"
+[[ -d /proc/acpi/button/lid ]] && echo "  lid switch: present" || echo "  lid switch: absent"
+[[ -d /sys/class/backlight ]] && ls /sys/class/backlight/ | sed 's/^/  backlight: /' || echo "  backlight: none"
+have libinput && try 'libinput list-devices | grep -E "^Device|^Capabilities" | head -40' || echo "  (libinput not available; touchpad detection needs it)"
+
+sec "Disks — the install target"
+try 'lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINT'
+printf '\n  NOTE: record the eventual LUKS UUID and btrfs subvolume layout in\n'
+printf '  hosts/<name>/ after installing. Device names are NOT stable -- this repo has a\n'
+printf '  disk that moved from nvme2n1p2 to nvme1n1p2 across one reboot.\n'
+
+sec "Network — interfaces and what is relied on"
+try 'ip -brief link'
+printf '\n  Wifi profile NAMES only (never the PSKs):\n'
+if have nmcli; then nmcli -t -f NAME connection show 2>/dev/null | sed 's/^/    /'; else echo "    (nmcli not available)"; fi
+
+sec "Tailscale — host-specific, and caesar does not run it"
+if have tailscale; then
+  printf '  installed: %s\n' "$(tailscale version 2>/dev/null | head -1)"
+  printf '  state: %s\n' "$(tailscale status --peers=false 2>&1 | head -2 | tr '\n' ' ')"
+  printf '\n  NOTE: the node key and auth are NOT config to carry. After install:\n'
+  printf '  install tailscale, enable tailscaled, then `tailscale up` and authenticate\n'
+  printf '  interactively. Nothing about that belongs in the repo.\n'
+else
+  echo "  not installed here"
+fi
+
+sec "Services relied on"
+if have systemctl; then
+  echo "  enabled system units (non-default):"
+  systemctl list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print "    "$1}' | head -40
+  echo "  enabled user units:"
+  systemctl --user list-unit-files --state=enabled --no-pager --no-legend 2>/dev/null | awk '{print "    "$1}' | head -20
+else
+  echo "  (no systemctl -- record the init system's equivalents by hand)"
+fi
+
+sec "Explicitly installed packages"
+if have pacman;   then pacman -Qqe | tr '\n' ' ' | fold -w 90 -s | sed 's/^/  /'
+elif have apt-mark; then apt-mark showmanual 2>/dev/null | tr '\n' ' ' | fold -w 90 -s | sed 's/^/  /'
+elif have dnf;    then dnf repoquery --userinstalled --qf '%{name}' 2>/dev/null | tr '\n' ' ' | fold -w 90 -s | sed 's/^/  /'
+else echo "  (unknown package manager -- list what matters by hand)"; fi
+
+sec "Home directory — what would be lost"
+try "ls -A ~ | head -40"
+printf '\n  Dotfiles worth deciding about:\n'
+for f in .bashrc .bash_profile .zshrc .profile .gitconfig .ssh/config .config; do
+  [[ -e ~/$f ]] && printf '    %-16s %s\n' "$f" "$(du -sh ~/"$f" 2>/dev/null | cut -f1)"
+done
+printf '\n  SSH key NAMES only:\n'
+ls ~/.ssh/*.pub 2>/dev/null | xargs -r -n1 basename | sed 's/\.pub$//' | sed 's/^/    /' || echo "    none"
+printf '\n  NOTE: keys, wifi PSKs, VPN credentials and API tokens are migrated by hand,\n'
+printf '  outside the repo. See CLAUDE.md. They are named here so none is forgotten,\n'
+printf '  never copied here.\n'
+
+sec "End"
+printf '  Next: docs/new-host/README.md, phase 2.\n\n'

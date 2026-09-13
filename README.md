@@ -11,3 +11,16 @@ The opinions are mine.
 - Noctalia owns the desktop shell.
 - Small Unix/Linux components own the layers beneath them.
 - This repository owns policy and integration.
+
+## Hosts
+
+Machine-agnostic configuration lives in `common/`; each machine's own in `hosts/<name>/`.
+A host is written deliberately, never cloned from another — `hosts/` is not a template
+directory.
+
+```bash
+common/scripts/bootstrap <host>            # report drift; change nothing
+common/scripts/bootstrap <host> --apply    # apply the user-level changes
+```
+
+Standing up a new machine: **`docs/new-host/README.md`**.

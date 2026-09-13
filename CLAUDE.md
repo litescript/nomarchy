@@ -140,6 +140,13 @@ host directory that does not exist rather than defaulting to another machine's. 
 is not a template directory, and a laptop is not a caesar clone: it has different
 microcode, no NVIDIA, no NAS, no second user, and lid events caesar has no concept of.
 
+**Standing up a new machine has its own document: `docs/new-host/README.md`.** It is
+written for the agent running on that machine's *old* OS, and covers the sequence that
+matters — survey and write `hosts/<name>/` **before** the wipe, push, then install, then
+bootstrap. `common/scripts/host-survey` captures what only exists while the old OS is
+alive: connected outputs and their modes, CPU vendor, GPU, lid and battery, wifi profile
+names, enabled services. It prints no secrets, by design.
+
 ## Verification — read this before changing any config
 
 **Config changes do not reach running processes, and the failure is silent.** This has
