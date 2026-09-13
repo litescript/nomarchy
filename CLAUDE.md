@@ -77,9 +77,30 @@ The firewall is not a file copy at all: `hosts/caesar/ufw/apply-rules` is a scri
 issues `ufw` commands, because the live rules in `/etc/ufw/user.rules` are generated and
 owned by `ufw` itself.
 
-`common/umbriel/config.toml` is **not** a base layer — nothing includes it. It is a stale
-copy of the waylab testbed's config from an older Umbriel release. Do not treat it as
-shared configuration.
+**The umbriel config is layered, and the layering is load-bearing.**
+`common/umbriel/base.toml` holds everything host-agnostic — keybinds, input, appearance,
+layout, rules, animation. `hosts/<host>/umbriel/config.toml` is the main file and holds
+only that machine's `[output.*]` blocks plus any overrides. Umbriel applies required
+includes, then optional includes, then the main file, so the host always wins.
+
+Four things about it that were established by testing umbriel 0.1.0, not by reading docs:
+
+- **Include paths resolve from the directory of the file as *given* to umbriel, not its
+  realpath.** `~/.config/umbriel/config.toml` is a symlink into this repo, so a relative
+  include resolves against `~/.config/umbriel` and misses. Use a `~/` path.
+- **A missing `[include.optional]` file validates as `config: ok` and applies nothing.**
+  The base must therefore be a required `[include]` — otherwise a bad path yields a
+  machine with no keybinds and a clean bill of health. A missing required include fails
+  loudly.
+- **`[[window_rule]]` and `[[layer_rule]]` entries accumulate across files**; every other
+  value is replaced by the last file to set it. A host can add rules but cannot remove one
+  the base defines, so anything a host might need to *not* have belongs in the host file.
+- `~/.config/umbriel/noctalia.toml` is Noctalia's generated palette, pulled in as an
+  optional include. It is genuinely optional — Noctalia rewrites it on every theme change
+  and it does not exist until that template has run once.
+
+A new host is a deliberately written `hosts/<name>/`, never a copy of another host's.
+`hosts/` is not a template directory.
 
 Scripts in `common/scripts/` are referenced from the Umbriel config by **absolute path**,
 so the session depends on this checkout staying at `/home/peter/Projects/nomarchy`.
