@@ -1,0 +1,11 @@
+# Carried over unchanged from the old box.
+
+[Unit]
+Description=Run Legal NAS backup nightly
+
+[Timer]
+OnCalendar=*-*-* 02:20:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

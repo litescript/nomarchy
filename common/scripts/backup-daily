@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+# Daily backup of ~/code and ~/.claude to the NAS, with a local fallback.
+# Ported from the old box (~/Scripts/backup-daily.sh) on 2026-09-13. Logic unchanged;
+# only the notification path differs, because this box has no libnotify.
+set -euo pipefail
+
+LOG_FILE="$HOME/Logs/code-backup.log"
+RETENTION_DAYS=14
+DEST_NAS="/mnt/nas/Public/Backups"
+DEST_LOCAL="$HOME/Backups"
+NAS_HOST="192.168.1.208"
+NAS_WAIT_SECS=120
+
+timestamp() { date +"%Y-%m-%d %H:%M:%S"; }
+log() { echo "[$(timestamp)] $*" | tee -a "$LOG_FILE"; }
+# There is no libnotify on this box -- `notify-send` does not exist. Noctalia owns
+# org.freedesktop.Notifications on the session bus, so talk to it directly. The old
+# version was `command -v notify-send` guarded, which meant it degraded to silence here:
+# the "NAS unavailable" warning would simply never arrive.
+notify() {
+  busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
+    org.freedesktop.Notifications Notify 'susssasa{sv}i' \
+    'Backups' 0 '' 'Backups' "$*" 0 0 0 >/dev/null 2>&1 || true
+}
+
+wait_for_nas() {
+  local waited=0
+  while (( waited < NAS_WAIT_SECS )); do
+    # `mountpoint -q` is deliberate and must not be "fixed" to findmnt. /mnt/nas is a
+    # systemd automount: the path is held by autofs and reports as a mountpoint whether
+    # or not the NFS mount is live, and the -w test below is what triggers the real
+    # mount. findmnt -t nfs4 would report nothing until something touched the path, so
+    # this loop would spin the full NAS_WAIT_SECS and fall back to a local backup while
+    # the NAS was perfectly healthy.
+    if ping -c1 -W1 "$NAS_HOST" >/dev/null 2>&1 && mountpoint -q /mnt/nas; then
+      if [[ -w "$DEST_NAS" || ( -d "$DEST_NAS" && -w "$(dirname "$DEST_NAS")" ) ]]; then
+        mkdir -p "$DEST_NAS/code" "$DEST_NAS/claude" 2>/dev/null || true
+        return 0
+      fi
+    fi
+    (( waited+=2 ))
+    sleep 2
+  done
+  return 1
+}
+
+do_backup() {
+  local SRC_DIR="$1"
+  local NAME="$2"
+  local DEST_PATH="$3"
+
+  [[ -d "$SRC_DIR" ]] || { log "ERROR: Source '$SRC_DIR' not found."; return 1; }
+
+  mkdir -p "$DEST_PATH"
+  local STAMP="$(date +%Y%m%d-%H%M%S)"
+  local ARCHIVE="${DEST_PATH}/${NAME}-${STAMP}.tar.zst"
+
+  log "Backing up '$SRC_DIR' → '$ARCHIVE'"
+#  tar --zstd -cf "$ARCHIVE" -C "$SRC_DIR" . 2>>"$LOG_FILE"
+  tar --zstd \
+    --warning=no-file-ignored \
+    --warning=no-file-changed \
+    --ignore-failed-read \
+    --exclude='*/.ruff_cache' \
+    --exclude='*/.ruff_cache/*' \
+    --exclude='*/node_modules/*' \
+    --exclude='*/.venv/*' \
+    --exclude='*/__pycache__/*' \
+    --exclude='*/target/*' \
+    --exclude='*/dist/*' \
+    --exclude='*/build/*' \
+    -cf "$ARCHIVE" \
+    -C "$SRC_DIR" . 2>>"$LOG_FILE"
+
+  tar -tf "$ARCHIVE" >/dev/null 2>>"$LOG_FILE" || {
+    log "ERROR: verification failed for '$ARCHIVE'"
+    return 1
+  }
+
+  local SIZE=$(stat -c%s "$ARCHIVE" 2>/dev/null || stat -f%z "$ARCHIVE")
+  log "Backup complete (${SIZE} bytes). Pruning old archives…"
+  find "$DEST_PATH" -maxdepth 1 -type f -name "${NAME}-*.tar.zst" -mtime +$RETENTION_DAYS -print -delete | tee -a "$LOG_FILE" || true
+}
+
+main() {
+  if wait_for_nas; then
+    DEST="$DEST_NAS"
+    log "NAS available. Using '$DEST'."
+  else
+    DEST="$DEST_LOCAL"
+    log "WARN: NAS not available after wait. Using local '$DEST'."
+    notify "NAS unavailable; backups saved locally."
+  fi
+
+  mkdir -p "$DEST/code" "$DEST/claude"
+  do_backup "$HOME/code"     "code"   "$DEST/code"
+  do_backup "$HOME/.claude"  "claude" "$DEST/claude"
+  log "All backups complete."
+}
+
+main "$@"

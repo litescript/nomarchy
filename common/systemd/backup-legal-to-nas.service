@@ -1,0 +1,17 @@
+# Mirror ~/Legal to the NAS. Ported from the old box on 2026-09-13.
+#
+# The script carries guards the original did not have: it refuses to run when ~/Legal is
+# missing or empty, because `rsync --delete` would otherwise mirror that absence and empty
+# the NAS copy. See common/scripts/backup-legal-to-nas.
+#
+# No [Install] section, matching the original: the timer is the only thing that starts it.
+
+[Unit]
+Description=Back up ~/Legal to NAS
+
+[Service]
+Type=oneshot
+ExecStart=/home/peter/Projects/nomarchy/common/scripts/backup-legal-to-nas
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6

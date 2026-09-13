@@ -1,0 +1,21 @@
+# Daily backup of ~/code and ~/.claude. Ported from the old box on 2026-09-13.
+#
+# Two changes from the original. ExecStart points at the repo checkout by absolute path,
+# the same convention the Umbriel keybinds use, so the script is version-controlled rather
+# than a loose copy in ~/Scripts. And the original's `Wants=default.target` is dropped: a
+# service wanting default.target is backwards -- it says "starting this backup should pull
+# in the whole session" -- and the [Install] section below is what actually matters.
+
+[Unit]
+Description=Daily backup of ~/code and ~/.claude to NAS
+
+[Service]
+Type=oneshot
+ExecStart=/home/peter/Projects/nomarchy/common/scripts/backup-daily
+# Backups are bulk I/O competing with an interactive desktop; stay out of its way.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=default.target

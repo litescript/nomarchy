@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# Mirror ~/Legal to the NAS. Ported from the old box (~/Scripts/backups/
+# backup-legal-to-nas.sh) on 2026-09-13, with guards the original did not have.
+#
+# The original was one line:
+#
+#   rsync -a --delete /home/peter/Legal/ /mnt/nas/Public/Backups/Legal/
+#
+# `--delete` makes the destination match the source exactly. That is correct for a mirror
+# and dangerous without a source check: if ~/Legal is missing or empty when this runs,
+# rsync faithfully empties the NAS copy. At the time of the port that was not theoretical
+# -- ~/Legal did not exist on this machine yet, while the NAS held the only copy.
+#
+# So: refuse to run rather than mirror an absence.
+
+set -euo pipefail
+
+SRC="$HOME/Legal"
+DEST="/mnt/nas/Public/Backups/Legal/"
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+[[ -d $SRC ]] || die "source '$SRC' does not exist -- refusing, --delete would empty the backup"
+[[ -n "$(ls -A "$SRC" 2>/dev/null)" ]] || die "source '$SRC' is empty -- refusing, --delete would empty the backup"
+
+# Touching the path is what triggers the automount; do it before rsync so a dead NAS
+# fails here with a clear message rather than mid-transfer.
+[[ -d /mnt/nas/Public/Backups ]] || die "/mnt/nas/Public/Backups unavailable -- is the NAS up?"
+
+exec rsync -a --delete "$SRC/" "$DEST"
