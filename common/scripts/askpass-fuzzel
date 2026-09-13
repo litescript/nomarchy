@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# SSH_ASKPASS helper: ask for a passphrase in a fuzzel prompt instead of the terminal.
+#
+# Wired up in common/bash/bash_profile via SSH_ASKPASS + SSH_ASKPASS_REQUIRE=prefer.
+# ssh calls this with the prompt text as $1 and reads the secret from stdout.
+#
+# Why this exists rather than gnome-keyring: on the old box, pam_gnome_keyring unlocked a
+# keyring with the login password, and the keyring held the ssh key passphrase -- so Pete
+# never typed it. Caesar autologins (agetty --autologin), so there is no login password to
+# unlock anything with. Reproducing that here would mean an empty-password keyring, which
+# only looks like protection. Caesar's root is also plain ext4, where the old box's was
+# LUKS, so the passphrase is doing more work now, not less. It stays; only the prompt
+# changes.
+#
+# --prompt-only is the right flag, not --prompt: in dmenu mode it does not wait on stdin
+# and implies --lines=0, so the window is a single input line with no empty match list.
+
+set -u
+
+prompt="${1:-Passphrase:}"
+
+if [[ -n ${WAYLAND_DISPLAY:-} ]] && command -v fuzzel >/dev/null 2>&1; then
+  exec fuzzel --dmenu --password --prompt-only="$prompt "
+fi
+
+# No compositor -- a bare TTY, or a systemd unit. Fall back to the controlling terminal
+# rather than failing, so `ssh-add` from a console still works.
+#
+# Test by OPENING /dev/tty, not with `[[ -e ]]`: that node exists whether or not the
+# process has a controlling terminal, so -e is true inside a systemd unit too and tells
+# you nothing. The subshell form keeps the failure quiet -- `exec 3<>/dev/tty 2>/dev/null`
+# does not, because redirections apply in order and the error is printed before stderr
+# has been silenced.
+if { : < /dev/tty; } 2>/dev/null; then
+  read -r -s -p "$prompt " secret < /dev/tty || exit 1
+  printf '\n' > /dev/tty
+  printf '%s\n' "$secret"
+  exit 0
+fi
+
+exit 1

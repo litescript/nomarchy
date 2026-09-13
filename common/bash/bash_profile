@@ -33,6 +33,13 @@ export PATH
 # See common/systemd/ssh-agent.service.
 export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ssh-agent.socket"
 
+# Ask for key passphrases in a fuzzel prompt rather than the terminal. REQUIRE=prefer is
+# what makes ssh use it even when a TTY is available -- without it, askpass is only
+# consulted when there is no terminal to ask on. The script falls back to /dev/tty itself
+# when there is no compositor, so a bare console still works.
+export SSH_ASKPASS="/home/peter/Projects/nomarchy/common/scripts/askpass-fuzzel"
+export SSH_ASKPASS_REQUIRE=prefer
+
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 
 if [[ -z $DISPLAY && -z $WAYLAND_DISPLAY && $(tty) == /dev/tty1 ]]; then
