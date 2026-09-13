@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# Encrypt a machine's pre-wipe $HOME archive and send it to the NAS.
+#
+# Run this yourself, not from an agent shell: gpg prompts for the symmetric
+# passphrase, and that must not pass through a tool's stdin.
+#
+# Usage: pre-wipe-backup <host> [stamp]
+#          host   the machine being wiped, e.g. rigel
+#          stamp  YYYYMMDD, defaults to today
+#
+# Expects these to exist already, built by the archive step in
+# docs/new-host/README.md phase 3:
+#
+#   /var/tmp/<host>-home-<stamp>.tar.zst          the archive
+#   /var/tmp/<host>-home-<stamp>.manifest         its file list
+#   /var/tmp/<host>-home-<stamp>.sha256           the PLAINTEXT archive's digest,
+#                                                 to check after a future restore
+#
+# This script does not verify the copy that lands. pre-wipe-verify does, and it
+# is a separate script because the obvious way to verify is a trap -- read the
+# header of pre-wipe-verify before you reach for `sha256sum /mnt/nas/...`.
+
+set -euo pipefail
+
+DEST=/mnt/nas/Public/Backups/laptop
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+HOST=${1:-}
+[[ -n $HOST ]] || die "usage: ${0##*/} <host> [stamp]"
+STAMP=${2:-$(date +%Y%m%d)}
+
+BASE=/var/tmp/$HOST-home-$STAMP
+SRC=$BASE.tar.zst
+
+[[ -f $SRC ]] || die "'$SRC' not found -- build the archive first"
+
+# Touching the path is what triggers the automount. Do it before gpg so a dead
+# NAS fails here, in a second, rather than after a ten-minute encryption pass.
+[[ -d $DEST ]] || mkdir -p "$DEST" 2>/dev/null || true
+[[ -d $DEST ]] || die "'$DEST' unavailable -- is the NAS up and /mnt/nas mounted?"
+
+if [[ -f $SRC.gpg ]]; then
+  echo "==> $SRC.gpg already exists, reusing it (delete it to re-encrypt)"
+else
+  echo "==> encrypting (you will be prompted twice)"
+  gpg --symmetric --cipher-algo AES256 --output "$SRC.gpg" "$SRC"
+fi
+
+echo "==> checksumming the encrypted file locally"
+sha256sum "$SRC.gpg" > "$SRC.gpg.sha256"
+
+echo "==> sending to $DEST  (resumable; safe to re-run if it drops)"
+# No -a on purpose. The mount forces uid=0 and file_mode=0777, so -a would spend
+# the whole transfer failing to set ownership it can never set. Even without it
+# rsync can exit 23 on cifs; that is attribute noise, not data loss, and the size
+# comparison below is what actually decides whether the bytes arrived.
+rc=0
+rsync -h --progress --partial --inplace \
+  "$SRC.gpg" "$SRC.gpg.sha256" "$BASE.manifest" "$BASE.sha256" \
+  "$DEST/" || rc=$?
+
+case $rc in
+  0)  ;;
+  23|24)
+      printf '%s: rsync exited %d (attribute noise on cifs) -- checking sizes\n' \
+        "${0##*/}" "$rc" >&2 ;;
+  *)  die "rsync failed with exit $rc -- re-run, it resumes from where it stopped" ;;
+esac
+
+echo "==> comparing sizes"
+# One small stat over the mount. This is cheap; reading the file back is not.
+local_size=$(stat -c%s "$SRC.gpg")
+nas_size=$(stat -c%s "$DEST/${SRC##*/}.gpg") \
+  || die "the archive is not on the NAS at all -- re-run"
+printf '    local : %s\n    NAS   : %s\n' "$local_size" "$nas_size"
+[[ $local_size == "$nas_size" ]] \
+  || die "size mismatch -- the transfer is incomplete, re-run (it resumes)"
+
+cat <<EOF
+
+==> Sent. rsync checksums every block it transfers, and the sizes agree, so the
+    copy is almost certainly good. To confirm it independently:
+
+      pre-wipe-verify $HOST $STAMP
+
+    Do NOT verify by checksumming through /mnt/nas. pre-wipe-verify explains why.
+EOF

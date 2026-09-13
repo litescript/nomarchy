@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#
+# Verify the encrypted pre-wipe archive that actually landed on the NAS.
+#
+# Usage: pre-wipe-verify <host> [stamp] [--read-back]
+#
+# THE OBVIOUS IMPLEMENTATION IS A TRAP. `sha256sum /mnt/nas/.../archive.gpg`
+# reads the whole archive back across the link, and on 2026-09-13 that cost an
+# afternoon. Two separate reasons, either one sufficient:
+#
+#   1. Off-site, /mnt/nas is not a LAN path. It is a cifs mount reached through a
+#      Tailscale subnet route with no direct connection -- every byte relays via
+#      DERP at ~60 ms RTT. That socket had congestion-collapsed to cwnd:10
+#      against ssthresh:565 after ~3700 retransmits, which caps it near 200 KB/s;
+#      measured throughput was 35-70 KB/s. A 1.6 GB read-back was on track to
+#      take between six and twelve hours.
+#
+#   2. Worse, and less obvious: cifs multiplexes every request for a server over
+#      ONE TCP connection. The 4 MB reads head-of-line block every other process
+#      touching that mount. An unrelated editor session sat in uninterruptible
+#      sleep for fifty minutes waiting on a single stat() queued behind them --
+#      /proc/fs/cifs/DebugData showed its SMB2_CREATE/QUERY_INFO/CLOSE stuck
+#      behind six SMB2_READs. A slow read here does not merely make this script
+#      slow, it freezes the whole machine's view of /mnt/nas.
+#
+# So the digest is computed ON the NAS over ssh, and 64 characters cross the
+# link instead of 1.6 GB. Reading the archive back is --read-back, and is never
+# the default.
+#
+# Worth knowing anyway: rsync checksums every block it transfers and would have
+# failed the send. This script is independent confirmation, not the only line of
+# defence.
+
+set -euo pipefail
+
+DEST=/mnt/nas/Public/Backups/laptop
+
+# Server-side access. Set these in the environment once -- they stay out of the
+# repo because it is public, not because they are secret:
+#
+#   NOMARCHY_NAS_SSH        ssh target that can read the share, e.g. admin@192.168.1.208
+#   NOMARCHY_NAS_DEST_PATH  the directory above, as the NAS itself sees it. A DSM
+#                           share named "Public" is usually /volume1/Public, so
+#                           this is typically /volume1/Public/Backups/laptop.
+NAS_SSH=${NOMARCHY_NAS_SSH:-}
+NAS_DEST_PATH=${NOMARCHY_NAS_DEST_PATH:-}
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+READ_BACK=0
+ARGS=()
+for a in "$@"; do
+  case $a in
+    --read-back) READ_BACK=1 ;;
+    -*) die "unknown option '$a'" ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+HOST=${1:-}
+[[ -n $HOST ]] || die "usage: ${0##*/} <host> [stamp] [--read-back]"
+STAMP=${2:-$(date +%Y%m%d)}
+
+NAME=$HOST-home-$STAMP.tar.zst.gpg
+BASE=/var/tmp/$HOST-home-$STAMP
+LOCAL=$BASE.tar.zst.gpg
+
+[[ -d $DEST ]] || die "'$DEST' unavailable -- is the NAS up and /mnt/nas mounted?"
+[[ -f $DEST/$NAME ]] || die "'$DEST/$NAME' is not there"
+
+echo "==> sizes"
+nas_size=$(stat -c%s "$DEST/$NAME")
+if [[ -f $LOCAL ]]; then
+  local_size=$(stat -c%s "$LOCAL")
+  printf '    local : %s\n' "$local_size"
+fi
+printf '    NAS   : %s\n' "$nas_size"
+if [[ -f $LOCAL && $local_size != "$nas_size" ]]; then
+  die "size mismatch -- the copy is incomplete, re-run pre-wipe-backup"
+fi
+
+# The expected digest: prefer the local sidecar, fall back to the one rsync put
+# on the NAS. That sidecar is ~100 bytes, so reading it over the mount is free.
+if [[ -f $LOCAL.sha256 ]]; then
+  want=$(cut -d' ' -f1 < "$LOCAL.sha256")
+  want_from="local sidecar"
+elif [[ -f $DEST/$NAME.sha256 ]]; then
+  want=$(cut -d' ' -f1 < "$DEST/$NAME.sha256")
+  want_from="sidecar on the NAS"
+else
+  die "no .sha256 sidecar anywhere -- nothing to compare against"
+fi
+[[ -n $want ]] || die "the .sha256 sidecar is empty"
+
+echo "==> expected digest (from $want_from)"
+printf '    %s\n' "$want"
+
+if (( READ_BACK )); then
+  cat >&2 <<'EOF'
+==> --read-back: pulling the whole archive through /mnt/nas.
+    This can take hours off-site, and while it runs every other process that
+    touches /mnt/nas will block behind it. Ctrl-C is safe.
+EOF
+  got=$(sha256sum < "$DEST/$NAME" | cut -d' ' -f1)
+  got_from="read back through /mnt/nas"
+else
+  [[ -n $NAS_SSH && -n $NAS_DEST_PATH ]] || die \
+"set NOMARCHY_NAS_SSH and NOMARCHY_NAS_DEST_PATH to verify NAS-side (see the
+       header of this script), or pass --read-back to pull ${nas_size} bytes back
+       across the link instead"
+  case $NAS_DEST_PATH in *\'*) die "NAS_DEST_PATH must not contain a single quote" ;; esac
+
+  echo "==> checksumming on the NAS over ssh (only the digest crosses the link)"
+  # ConnectTimeout and a single password prompt are deliberate. A NAS with
+  # DSM-style Auto Block -- or fail2ban -- blacklists a source address after a
+  # handful of failed logins, and the block is a DROP rule on the guarded ports.
+  # The result reads exactly like a dead NAS and is not one: 22/139/443/445 go
+  # silent while ports with no listener still answer RST, ICMP keeps replying,
+  # and connections that are already ESTABLISHED keep working, so an existing
+  # mount carries on serving while nothing new can connect. Getting the target
+  # wrong a few times here is precisely how that happened on 2026-09-13. Fail
+  # fast instead of retrying into a ban.
+  got=$(ssh -o ConnectTimeout=10 -o NumberOfPasswordPrompts=1 \
+          "$NAS_SSH" "sha256sum -- '$NAS_DEST_PATH/$NAME'" | cut -d' ' -f1) \
+    || die "ssh to '$NAS_SSH' failed -- do not retry blindly, see the note above"
+  got_from="computed on the NAS"
+fi
+
+echo "==> actual digest ($got_from)"
+printf '    %s\n' "$got"
+
+[[ $got == "$want" ]] \
+  || die "MISMATCH -- do not trust this copy, re-run pre-wipe-backup (it resumes)"
+echo "==> MATCH. The encrypted archive on the NAS is intact."
+
+# The decrypt/extract test runs against the LOCAL copy on purpose. The digests
+# just proved the two files are identical byte for byte, so proving the local one
+# decrypts proves the NAS one does. Running gpg against $DEST/$NAME would drag
+# the archive across a second time and learn nothing new.
+if [[ -f $LOCAL ]]; then
+  echo "==> proving it decrypts and extracts, from the local copy (prompts for the passphrase)"
+  if gpg --decrypt "$LOCAL" 2>/dev/null | tar -tf - >/dev/null; then
+    echo "    decrypt + full archive walk OK"
+  else
+    die "*** DECRYPT OR ARCHIVE READ FAILED ***"
+  fi
+else
+  echo "==> local copy is gone, skipping the decrypt test"
+  echo "    (the digests match, so the NAS copy is byte-identical to what was sent)"
+fi
+
+if [[ -f $BASE.sha256 ]]; then
+  echo "==> plaintext sha256, to check after any future restore:"
+  sed 's/^/    /' < "$BASE.sha256"
+fi

@@ -14,8 +14,10 @@ common/ssh/config		~/.ssh/config
 # and the units use %h/.local/bin. These links are what makes that true, so they are not
 # optional decoration: without them, nine keybinds go quiet.
 #
-# Everything in common/scripts except bootstrap and host-survey, which are repo operations
-# run from the checkout and whose names are too generic to want on PATH.
+# Everything in common/scripts except bootstrap, host-survey and the two pre-wipe-*
+# scripts. Those four are repo operations run from the checkout: bootstrap and host-survey
+# have names too generic to want on PATH, and the pre-wipe pair runs on a machine's OLD OS
+# before this file has ever been applied, so ~/.local/bin does not exist yet.
 common/scripts/askpass-fuzzel		~/.local/bin/askpass-fuzzel
 common/scripts/backup-daily		~/.local/bin/backup-daily
 common/scripts/backup-legal-to-nas	~/.local/bin/backup-legal-to-nas

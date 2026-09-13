@@ -130,11 +130,40 @@ Pete. The node key and auth state are not config: nothing about them goes in the
 Put the package in `packages/repo.txt`, the service in `bootstrap/root-steps`, and the
 `tailscale up` step in the post-install checklist with a note that it is interactive.
 
-## Phase 3 — push
+## Phase 3 — push, and get `$HOME` off the machine
 
 Commit the survey and `hosts/rigel/` and **push before the machine is wiped**. This is
 the whole point of the sequence. Follow the repo's commit style: explain why, not just
 what, and record what was rejected along with what was chosen.
+
+### The `$HOME` archive
+
+The repo carries config. It does not carry `$HOME` — ssh keys, GPG keyrings, browser
+profiles, anything under `~/Documents`. That needs its own archive, built under
+`/var/tmp` as three files:
+
+```
+/var/tmp/rigel-home-20260913.tar.zst     the archive
+/var/tmp/rigel-home-20260913.manifest    its file list
+/var/tmp/rigel-home-20260913.sha256      the plaintext archive's digest
+```
+
+Then encrypt it, send it, and confirm what landed:
+
+```bash
+common/scripts/pre-wipe-backup rigel 20260913   # gpg prompts — Pete runs this, not you
+common/scripts/pre-wipe-verify rigel 20260913
+```
+
+`pre-wipe-backup` encrypts with `gpg --symmetric`, rsyncs all four files to
+`/mnt/nas/Public/Backups/laptop/`, and compares sizes. It resumes, so re-run it if the
+link drops. Both scripts stay out of `common/bootstrap/links` on purpose: they run on the
+old OS, before `~/.local/bin` exists.
+
+**`pre-wipe-verify` computes the digest on the NAS over ssh, and that is the entire point
+of it.** Checksumming through `/mnt/nas` is the obvious move and it is wrong twice over —
+read the script's header before reaching for it. Set `NOMARCHY_NAS_SSH` and
+`NOMARCHY_NAS_DEST_PATH` once; the script tells you what they should be.
 
 ## Phase 4 — the install (Pete's, not yours)
 
@@ -207,6 +236,16 @@ Acceptance tests, in order:
 - **Version it here and symlink it into place.** If a config file is worth editing twice
   it belongs in the repo. Watch for `sed -i`, which replaces a symlink with a regular file
   and silently detaches it.
+- **Never verify a NAS copy by reading it back.** Compute the digest on the NAS over
+  ssh; `pre-wipe-verify` does. `/mnt/nas` is cifs, and cifs multiplexes every request to a
+  server over one TCP connection, so a large read head-of-line blocks every *other*
+  process touching that mount — on 2026-09-13 it held an unrelated session in
+  uninterruptible sleep for fifty minutes. Off-site over a relayed Tailscale route the
+  same read ran at 35-70 KB/s.
+- **A NAS that answers ping but drops new connections is usually you, blocked.** Failed
+  ssh logins trip DSM-style Auto Block, which DROPs the guarded ports while ports with no
+  listener still answer RST and already-established mounts keep working. Do not retry into
+  a ban; clear it from the NAS admin UI.
 - **`sudo` needs a password that cannot be supplied non-interactively.** Ask Pete to run
   privileged commands himself; in Claude Code he can prefix them with `!`.
 - **Investigate, propose, get approval, then apply.** Separate a question into independent
