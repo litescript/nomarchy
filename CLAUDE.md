@@ -38,6 +38,21 @@ immediately:
 | `~/.bash_profile` | `common/bash/bash_profile` |
 | `~/.config/fuzzel/fuzzel.conf` | `common/fuzzel/fuzzel.conf` |
 
+**The default is: version it here, symlink it into place.** If a config file is worth
+editing twice, it belongs in this repo at the path above, not loose in `$HOME`. Two
+reasons, and the second is the one that bites. Config living only on disk does not survive
+a rebuild — `.bashrc` and `.bash_profile` were load-bearing for a week (PATH,
+`SSH_AUTH_SOCK`, `AddKeysToAgent`) while being invisible to `git status` and absent from
+any backup. And a symlink means there is exactly one file: edits are live immediately, and
+there is no question of which copy is current.
+
+**The sharp edge:** `sed -i` does not follow symlinks. It writes a temporary file and
+renames it over the link, so the symlink becomes a regular file, the repo keeps the old
+content, and nothing announces it. Verified here. Anything that edits config in place must
+resolve the link first — `readlink -f` — which is why `~/code/browse_alias/ba` does. Most
+editors are fine (vim and nvim write through), but check before trusting a tool with a
+symlinked config.
+
 Some things are **copies, not symlinks**, and drift silently:
 
 - `~/.local/state/noctalia/settings.toml` — Noctalia rewrites this file itself, so the
