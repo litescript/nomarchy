@@ -179,21 +179,40 @@ libva-nvidia-driver` and wrote both files that shape the boot:
 /etc/mkinitcpio.conf.d/nvidia.conf -> MODULES+=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
 ```
 
-That closes the causal chain measured above:
+**Corrected by caesar's review, and the correction matters.** The first draft called
+`modeset=1` the root of the chain. It is not: `modinfo nvidia_drm` for 610.57.04 — the
+driver rigel runs now and will get again — reports `modeset ... (1 = enable (default))`,
+and `fbdev` the same. Omarchy's `nvidia.conf` restates the driver default. Omitting it
+changes nothing, and the early-KMS `MODULES+=` line only moves the load earlier; udev
+would load the module regardless. So the chain is real but its first link is not a choice
+anyone made:
 
 ```
-lspci sees an NVIDIA card
-  -> early KMS + nvidia_drm modeset=1
-    -> the nvidia DRM node exists at boot, in front of the compositor
+an NVIDIA card is present
+  -> the driver's own modeset default creates the nvidia DRM node
+    -> the node sits in front of the compositor at startup
       -> Hyprland opens /dev/nvidia0 and holds it for the session
         -> the dGPU never reaches runtime suspend (asleep 0.045% of uptime)
 ```
 
-Nothing in that chain is wrong for a machine where NVIDIA drives the panel. Every step of
-it was decided on rigel by `grep -qi nvidia`, on a machine where Intel drives the only
-panel. **This is the single clearest example on the box of a default that was never a
-decision** — and it belongs to the *base install* layer, not to anything this repo
-declares, so it is Pete's call during the Arch install rather than a `hosts/rigel/` entry.
+What *is* Omarchy's decision is the trigger above: `grep -qi nvidia` installs the whole
+stack on the strength of the card existing, without ever asking whether it drives a
+display. That is a fair criticism of the installer and it is still an install-layer
+concern, not a `hosts/rigel/` entry.
+
+**The lever is further down**, per caesar: what the compositor opens. umbriel links
+`libwlroots-0.20` and its binary carries `Opening fixed list of KMS devices from
+WLR_DRM_DEVICES`, so the set is controllable — but only after measuring umbriel's own
+`/proc/<pid>/fd` and `power/runtime_suspended_time` on the new install. Two cautions if it
+comes to that: never pin by `cardN` (this sweep is itself the evidence — the numbering is
+inverted relative to caesar, and Omarchy 3's `card0` line rotted into naming nothing), and
+not by `/dev/dri/by-path/` either, since wlroots parses the variable as a colon-separated
+list and `pci-0000:00:02.0-card` is full of colons. A udev rule making a colon-free symlink
+is the way. Note also that umbriel's binary references `/proc/driver/nvidia/gpus`, so it
+has NVIDIA-specific code beyond stock wlroots and should not be assumed to behave like it.
+
+One holder goes away for free: 1password was the second process pinning the card, and it
+is not being installed.
 
 ---
 
@@ -309,8 +328,14 @@ wireless-regdb  sof-firmware
 ```
 
 The NVIDIA entries buy the *driver*. They do not require `nvidia_drm modeset=1` or the
-initramfs modules, and per the provenance above those should be a tested decision on the
-new install rather than a copied one.
+initramfs modules — per the correction above, the driver enables modeset itself.
+
+**`[multilib]` must be enabled before the bootstrap's package step, or it fails.**
+`lib32-nvidia-utils` lives only in `[multilib]`, and so does `steam` from the 48. It is
+enabled on rigel *today* because Omarchy enabled it, which is exactly the kind of
+inherited fact that disappears with the wipe — a fresh Arch install has it commented out.
+It belongs in `hosts/rigel/bootstrap/root-steps`, ahead of any package install. Caught by
+caesar's review; every other name in the list above resolves from `[extra]`.
 
 ### The 48, for a separate pass
 
