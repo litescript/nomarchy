@@ -1,0 +1,427 @@
+#!/usr/bin/env bash
+#
+# Ported from the old box (~/Scripts/setup_proxmox_toolkit_and_persistence.sh) on
+# 2026-09-13, unmodified. Renamed without the .sh to match this directory.
+#
+# The companion to proxmox-rescue-usb: creates ext4 persistence images, writes
+# ventoy.json, and installs the recovery scripts onto the stick -- detect_disks,
+# mount_proxmox (ZFS, LUKS and LVM paths), enter_chroot, and backup_to_nas.
+#
+# Those scripts call mdadm, lvs and zpool, none of which are installed on caesar. That is
+# correct and not a gap: they run inside the rescue environment on the USB, not here. What
+# this script itself needs -- dd and mkfs.ext4 -- is present.
+#
+# backup_to_nas.sh inside it points at 192.168.1.208:/Public, the same NAS as the rest of
+# this repo.
+set -euo pipefail
+
+VENTOY_MOUNT="/mnt/ventoy"
+PERSIST_DIR="${VENTOY_MOUNT}/persistence"
+FILES_DIR="${VENTOY_MOUNT}/files"
+TOOL_DIR="${FILES_DIR}/recovery_scripts"
+LOG_DIR="${FILES_DIR}/logs"
+IMG_DIR="${FILES_DIR}/images"
+
+PERSIST_SIZE_MB=8192   # 8 GiB each
+
+echo "== Proxmox Rescue Toolkit + Persistence Setup =="
+
+# 1) Sanity checks
+if ! mountpoint -q "$VENTOY_MOUNT"; then
+  echo "ERROR: $VENTOY_MOUNT is not mounted. Mount your Ventoy data partition first."
+  exit 1
+fi
+
+for bin in dd mkfs.ext4; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "ERROR: '$bin' is required but not installed."
+    exit 1
+  fi
+done
+
+# 2) Ensure directories exist
+mkdir -p "$PERSIST_DIR" "$TOOL_DIR" "$LOG_DIR" "$IMG_DIR"
+
+# 3) Create persistence images (idempotent)
+mk_persist() {
+  local label="$1"
+  local size_mb="$2"
+  local path="${PERSIST_DIR}/${label}.dat"
+
+  if [[ -f "$path" ]]; then
+    echo "-- Persistence image exists: $path (skipping)"
+    return
+  fi
+
+  echo "-- Creating persistence image: $path (${size_mb} MiB)"
+  dd if=/dev/zero of="$path" bs=1M count="$size_mb" status=progress
+  mkfs.ext4 -F -L "$label" "$path"
+}
+
+mk_persist "systemrescue_persist" "$PERSIST_SIZE_MB"
+mk_persist "ubuntu24_persist" "$PERSIST_SIZE_MB"
+mk_persist "mint22_persist" "$PERSIST_SIZE_MB"
+
+# 4) Write ventoy.json (back up existing if present)
+VENTOY_JSON="${VENTOY_MOUNT}/ventoy.json"
+if [[ -f "$VENTOY_JSON" ]]; then
+  cp "$VENTOY_JSON" "${VENTOY_JSON}.bak.$(date +%Y%m%d-%H%M%S)"
+  echo "-- Backed up existing ventoy.json -> ${VENTOY_JSON}.bak.*"
+fi
+
+cat > "$VENTOY_JSON" <<EOF
+{
+  "persistence": [
+    {
+      "image": "/systemrescue-12.02-amd64.iso",
+      "backend": "/persistence/systemrescue_persist.dat"
+    },
+    {
+      "image": "/ubuntu-24.04.3-desktop-amd64.iso",
+      "backend": "/persistence/ubuntu24_persist.dat"
+    },
+    {
+      "image": "/linuxmint-22.1-cinnamon-64bit.iso",
+      "backend": "/persistence/mint22_persist.dat"
+    }
+  ]
+}
+EOF
+
+echo "-- ventoy.json written with persistence mappings"
+
+# 5) Install recovery scripts
+echo "== Installing recovery scripts into ${TOOL_DIR} =="
+
+###########################
+# detect_disks.sh
+###########################
+cat > "${TOOL_DIR}/detect_disks.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "== lsblk =="
+lsblk -e7 -o NAME,SIZE,FSTYPE,TYPE,MOUNTPOINTS,MODEL | sed 's/^/  /'
+echo
+echo "== blkid (fs + luks) =="
+blkid | sed 's/^/  /'
+echo
+echo "== mdadm (RAID) =="
+mdadm --examine --scan || true
+echo
+echo "== LVM =="
+pvscan || true
+vgscan || true
+lvscan || true
+echo
+echo "== ZFS pools (importable) =="
+zpool import || true
+echo
+echo "Tip: If you see crypto_LUKS, unlock it with cryptsetup, then re-run mount_proxmox.sh."
+EOF
+
+###########################
+# mount_proxmox.sh
+###########################
+cat > "${TOOL_DIR}/mount_proxmox.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET="${1:-/mnt/pve-root}"
+BOOT="${2:-/mnt/pve-boot}"
+EFI="${3:-/mnt/pve-efi}"
+
+mkdir -p "$TARGET" "$BOOT" "$EFI"
+
+# Try ZFS first
+if command -v zpool >/dev/null 2>&1; then
+  if zpool import -N -f -a 2>/dev/null; then
+    ROOT_DS="$(zfs list -H -o name | grep -E '/ROOT/' | head -n1 || true)"
+    if [[ -n "${ROOT_DS}" ]]; then
+      echo "ZFS root detected: ${ROOT_DS}"
+      zfs mount "${ROOT_DS}" || zfs mount -a
+      MOUNTPOINT="$(zfs get -H -o value mountpoint "${ROOT_DS}")"
+      echo "Mounted ${ROOT_DS} at ${MOUNTPOINT}"
+      TARGET="${MOUNTPOINT}"
+      [[ -d "${TARGET}/boot" ]] || mkdir -p "${TARGET}/boot"
+      if ! mountpoint -q "${TARGET}/boot"; then
+        BOOTDEV="$(lsblk -rpno NAME,MOUNTPOINT | awk '/ boot/ {print $1}' | head -n1)"
+        [[ -z "$BOOTDEV" ]] || mount "$BOOTDEV" "${TARGET}/boot" || true
+      fi
+      if [[ -d "${TARGET}/boot/efi" ]] && ! mountpoint -q "${TARGET}/boot/efi"; then
+        EFIDEV="$(lsblk -rpno NAME,PARTLABEL,FSTYPE | awk '/EFI|ESP|vfat/ {print $1}' | head -n1)"
+        [[ -z "$EFIDEV" ]] || mount "$EFIDEV" "${TARGET}/boot/efi" || true
+      fi
+      echo "✅ ZFS root mounted at ${TARGET}"
+      exit 0
+    fi
+  fi
+fi
+
+# LUKS hint
+if lsblk -o TYPE,FSTYPE | grep -q crypto_LUKS; then
+  echo "LUKS container found. If needed:"
+  echo "  cryptsetup open /dev/sdXN pve-crypt"
+  echo "then re-run this script."
+fi
+
+# LVM path
+if command -v vgchange >/dev/null 2>&1; then
+  vgchange -ay || true
+  ROOTDEV="$(ls /dev/*/root 2>/dev/null | head -n1 || true)"
+  [[ -z "$ROOTDEV" ]] && ROOTDEV="$(blkid -t LABEL='pve-root' -o device 2>/dev/null || true)"
+  if [[ -n "$ROOTDEV" ]]; then
+    echo "LVM root: $ROOTDEV"
+    mount "$ROOTDEV" "$TARGET"
+    BOOTDEV="$(lsblk -rpno NAME,MOUNTPOINT,LABEL | awk '/boot/ {print $1}' | head -n1)"
+    if [[ -n "$BOOTDEV" ]]; then
+      mount "$BOOTDEV" "$BOOT" || true
+    fi
+    EFIDEV="$(lsblk -rpno NAME,PARTLABEL,FSTYPE | awk '/EFI|ESP|vfat/ {print $1}' | head -n1)"
+    if [[ -n "$EFIDEV" ]]; then
+      mount "$EFIDEV" "$EFI" || true
+    fi
+    echo "✅ LVM root mounted at ${TARGET}"
+    exit 0
+  fi
+fi
+
+echo "❌ Could not auto-mount Proxmox root. Run detect_disks.sh and mount manually."
+EOF
+
+###########################
+# enter_chroot.sh
+###########################
+cat > "${TOOL_DIR}/enter_chroot.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET="${1:-/mnt/pve-root}"
+
+[[ -d "$TARGET" ]] || { echo "Target $TARGET not found."; exit 1; }
+mountpoint -q "$TARGET" || { echo "$TARGET not mounted."; exit 1; }
+
+mount --bind /dev  "$TARGET/dev"
+mount --bind /proc "$TARGET/proc"
+mount --bind /sys  "$TARGET/sys"
+mount --bind /run  "$TARGET/run" || true
+if [[ -f "$TARGET/etc/resolv.conf" ]]; then
+  cp -L /etc/resolv.conf "$TARGET/etc/resolv.conf"
+fi
+
+echo "Entering chroot at $TARGET ..."
+chroot "$TARGET" /bin/bash -c '
+set -euo pipefail
+echo "Inside chroot. Common commands:"
+echo "  apt update && apt -y upgrade"
+echo "  update-initramfs -u -k all && update-grub"
+echo "  proxmox-boot-tool refresh   # if in use"
+echo "  dkms status                 # kernel modules"
+echo
+exec bash
+'
+EOF
+
+###########################
+# reinstall_grub.sh
+###########################
+cat > "${TOOL_DIR}/reinstall_grub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET="${1:-/mnt/pve-root}"
+DISK="${2:-/dev/sda}"
+
+if [[ ! -d "$TARGET" || ! -e "$TARGET/bin/bash" ]]; then
+  echo "Mount your root at $TARGET first."
+  exit 1
+fi
+
+UEFI=0
+[[ -d /sys/firmware/efi ]] && UEFI=1
+
+if (( UEFI )); then
+  echo "Detected UEFI platform."
+  [[ -d "$TARGET/boot/efi" ]] || { echo "Missing $TARGET/boot/efi mount."; exit 1; }
+  chroot "$TARGET" bash -c 'set -e; apt update; apt -y install grub-efi-amd64 shim-signed || true; grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck; update-grub'
+else
+  echo "Detected BIOS (legacy) platform. Installing to $DISK"
+  chroot "$TARGET" bash -c "set -e; apt update; apt -y install grub-pc; grub-install --target=i386-pc $DISK; update-grub"
+fi
+echo "✅ GRUB reinstall complete."
+EOF
+
+###########################
+# net_quick.sh
+###########################
+cat > "${TOOL_DIR}/net_quick.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+IF="${1:-}"
+if [[ -z "$IF" ]]; then
+  echo "Usage: $0 <iface>   (e.g., $0 eno1)"
+  echo "Or:    $0 auto      (try first non-loopback)"
+  exit 1
+fi
+if [[ "$IF" == "auto" ]]; then
+  IF="$(ip -o link show | awk -F': ' '!/lo/ {print $2}' | head -n1)"
+fi
+ip link set "$IF" up
+if command -v nmcli >/dev/null 2>&1; then
+  nmcli dev connect "$IF" || nmcli dev reapply "$IF" || true
+fi
+if command -v dhclient >/dev/null 2>&1; then
+  dhclient -v "$IF" || true
+elif command -v busybox >/dev/null 2>&1; then
+  busybox udhcpc -i "$IF" || true
+else
+  echo "No known DHCP client found (dhclient/udhcpc)."
+fi
+ip -brief a show dev "$IF"
+ip route
+ping -c1 1.1.1.1 || true
+EOF
+
+###########################
+# nvme_health.sh
+###########################
+cat > "${TOOL_DIR}/nvme_health.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+DISK="${1:-/dev/nvme0}"
+if ! command -v nvme >/dev/null 2>&1; then
+  echo "nvme-cli not installed."
+  exit 1
+fi
+echo "== NVMe Identify =="
+nvme id-ctrl "$DISK" || true
+echo
+echo "== SMART Log =="
+nvme smart-log "$DISK" || true
+EOF
+
+###########################
+# backup_to_nas.sh
+###########################
+cat > "${TOOL_DIR}/backup_to_nas.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET="${1:-/mnt/pve-root}"
+SRC_DIRS="${2:-etc var/log boot}"
+NAS_MODE="nfs"                         # nfs|cifs
+NAS="192.168.1.208:/Public"           # NFS export or CIFS share
+NAS_BASE="/Recovery"
+MNT="/mnt/_nas"
+
+mkdir -p "$MNT"
+
+if [[ "$NAS_MODE" == "nfs" ]]; then
+  mount -t nfs "$NAS" "$MNT"
+else
+  echo "CIFS mode not configured. Edit backup_to_nas.sh if needed."
+  exit 1
+fi
+
+HOSTDIR="${NAS_BASE}/${HOSTNAME:-liveusb}"
+DST="${MNT}${HOSTDIR}/backup-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$DST"
+
+for d in $SRC_DIRS; do
+  if [[ -d "$TARGET/$d" ]]; then
+    rsync -aHAX --info=progress2 "$TARGET/$d" "$DST"/
+  fi
+done
+
+umount "$MNT"
+echo "✅ Backup complete to $DST"
+EOF
+
+###########################
+# collect_logs.sh
+###########################
+cat > "${TOOL_DIR}/collect_logs.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET="${1:-/mnt/pve-root}"
+OUT="${2:-/mnt/ventoy/files/logs}"
+TS="$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$OUT"
+
+LIVE="$OUT/live-$TS.tar.gz"
+ROOT="$OUT/root-$TS.tar.gz"
+
+echo "Collecting live logs -> $LIVE"
+tar -czf "$LIVE" /var/log 2>/dev/null || true
+
+if mountpoint -q "$TARGET"; then
+  echo "Collecting root logs -> $ROOT"
+  tar -czf "$ROOT" -C "$TARGET" var/log etc/fstab etc/default/grub 2>/dev/null || true
+else
+  echo "Root not mounted; skipping root logs."
+fi
+
+echo "✅ Logs saved under $OUT"
+EOF
+
+###########################
+# quick_fix_common.sh
+###########################
+cat > "${TOOL_DIR}/quick_fix_common.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET="${1:-/mnt/pve-root}"
+if ! mountpoint -q "$TARGET"; then
+  echo "Mount Proxmox root first (mount_proxmox.sh)."
+  exit 1
+fi
+
+mount --bind /dev  "$TARGET/dev"
+mount --bind /proc "$TARGET/proc"
+mount --bind /sys  "$TARGET/sys"
+mount --bind /run  "$TARGET/run" || true
+cp -L /etc/resolv.conf "$TARGET/etc/resolv.conf" || true
+
+chroot "$TARGET" bash -c '
+set -euo pipefail
+apt update
+update-initramfs -u -k all
+update-grub || true
+command -v proxmox-boot-tool >/dev/null 2>&1 && proxmox-boot-tool refresh || true
+echo "✅ quick_fix_common complete."
+'
+EOF
+
+###########################
+# luks_open.sh
+###########################
+cat > "${TOOL_DIR}/luks_open.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET="${1:-/mnt/pve-root}"
+
+echo "Scanning for LUKS volumes..."
+CANDIDATES=($(lsblk -rpno NAME,FSTYPE | awk '/crypto_LUKS/ {print $1}'))
+
+if [ ${#CANDIDATES[@]} -eq 0 ]; then
+  echo "No LUKS partitions found."
+  exit 0
+fi
+
+for DEV in "${CANDIDATES[@]}"; do
+  NAME=$(basename "$DEV")
+  MAPPER="${NAME//-/_}"
+  echo "Attempting to open $DEV as $MAPPER..."
+  if cryptsetup isLuks "$DEV" && cryptsetup open "$DEV" "$MAPPER"; then
+    echo "✅ Opened $DEV → /dev/mapper/$MAPPER"
+  else
+    echo "⚠️ Failed to open $DEV (bad passphrase or cancelled)"
+  fi
+done
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "$DIR/mount_proxmox.sh" "$TARGET"
+EOF
+
+# 6) Make scripts executable
+chmod +x "${TOOL_DIR}"/*.sh
+
+echo
+echo "✅ Toolkit + persistence setup complete."
+echo "Persistence images in: ${PERSIST_DIR}"
+echo "Scripts in:            ${TOOL_DIR}"

@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+#
+# Ported from the old box (~/Scripts/make_proxmox_rescue_usb.sh) on 2026-09-13,
+# unmodified. Renamed without the .sh to match the other scripts in this directory.
+#
+# Builds a Ventoy rescue USB: downloads SystemRescue, Ubuntu, Mint, Puppy, Proxmox VE and
+# Memtest86+, verifies each against its published SHA256 (except Puppy, which publishes
+# none), and copies them onto the Ventoy exFAT data partition.
+#
+# Everything it needs -- wget, sha256sum, unzip -- is present on caesar.
+#
+# Note VENTOY_PART below is a hardcoded /dev/sdc1. Kernel device names are not stable:
+# this very repo already has a case where a disk moved from nvme2n1p2 to nvme1n1p2 across
+# a reboot. The real guard here is the "is /mnt/ventoy mounted" check plus the exFAT
+# warning, so a wrong sdc is caught rather than written to -- but if it ever bites,
+# address the partition by LABEL=Ventoy instead.
+set -euo pipefail
+
+VENTOY_PART="/dev/sdc1"
+VENTOY_MOUNT="/mnt/ventoy"
+CACHE_DIR="${HOME}/.cache/proxmox-rescue-isos"
+
+mkdir -p "$CACHE_DIR"
+
+echo "== Proxmox rescue USB builder (with SHA256 verification) =="
+
+# 1) Sanity checks
+if ! mountpoint -q "$VENTOY_MOUNT"; then
+  echo "ERROR: $VENTOY_MOUNT is not mounted."
+  echo "Make sure ${VENTOY_PART} (Ventoy data partition) is mounted there."
+  exit 1
+fi
+
+if ! lsblk -no FSTYPE "$VENTOY_PART" | grep -qi exfat; then
+  echo "WARNING: $VENTOY_PART does not appear to be exFAT."
+  echo "Continuing anyway, but this *should* be Ventoy's exFAT data partition."
+fi
+
+for bin in wget sha256sum; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "ERROR: '$bin' is required."
+    exit 1
+  fi
+done
+
+# unzip is only needed for Memtest86+
+if ! command -v unzip >/dev/null 2>&1; then
+  echo "WARNING: 'unzip' not found. Memtest86+ ISO will NOT be unpacked."
+fi
+
+# 2) ISO URLs (pre-checked & stable-style)
+SYSTEMRESCUE_ISO="systemrescue-12.02-amd64.iso"
+SYSTEMRESCUE_URL="https://sourceforge.net/projects/systemrescuecd/files/sysresccd-x86/12.02/${SYSTEMRESCUE_ISO}/download"
+SYSTEMRESCUE_SHA_URL="https://sourceforge.net/projects/systemrescuecd/files/sysresccd-x86/12.02/${SYSTEMRESCUE_ISO}.sha256/download"
+
+UBUNTU_ISO="ubuntu-24.04.3-desktop-amd64.iso"
+UBUNTU_URL="https://mirror.arizona.edu/ubuntu-releases/24.04/${UBUNTU_ISO}"
+UBUNTU_SHA_URL="https://mirror.arizona.edu/ubuntu-releases/24.04/SHA256SUMS"
+
+MINT_ISO="linuxmint-22.1-cinnamon-64bit.iso"
+MINT_URL="https://ftp.fau.de/mint/iso/stable/22.1/${MINT_ISO}"
+MINT_SHA_URL="https://ftp.fau.de/mint/iso/stable/22.1/sha256sum.txt"
+
+PUPPY_ISO="fossapup64-9.6.iso"
+PUPPY_URL="https://archive.org/download/puppy_linux_-fossapup64/${PUPPY_ISO}"
+# no clean official SHA256 file to pull; skipping verification for Puppy
+
+PROXMOX_ISO="proxmox-ve_9.0-1.iso"
+PROXMOX_URL="https://enterprise.proxmox.com/iso/${PROXMOX_ISO}"
+PROXMOX_SHA_URL="https://enterprise.proxmox.com/iso/sha256sums-pve-9.0.txt"
+
+MEMTEST_ZIP_URL="https://www.memtest.org/download/v7.20/mt86plus_7.20_64.iso.zip"
+MEMTEST_ZIP="${CACHE_DIR}/mt86plus_7.20_64.iso.zip"
+MEMTEST_ISO="memtest.iso"
+
+# Helper: fetch a small text file
+fetch_text() {
+  local url="$1"
+  local dest="$2"
+  echo "   .. downloading checksum file"
+  wget -q -O "$dest" "$url"
+}
+
+# Helper: verify SHA256 with a checksum file that contains a list of sums
+verify_sha_from_list() {
+  local iso_path="$1"
+  local sha_file="$2"
+  local iso_name
+  iso_name="$(basename "$iso_path")"
+
+  if [[ ! -f "$sha_file" ]]; then
+    echo "   !! checksum file $sha_file missing, cannot verify"
+    return 1
+  fi
+
+  # Files like Ubuntu/Mint/Proxmox can cram multiple:
+  #   <hash> *filename
+  # pairs onto a single line. Grab the pair matching our ISO.
+  local expected
+  expected="$(grep -o "[0-9a-f]\{64\} \*${iso_name}" "$sha_file" | head -n1 | awk '{print $1}' || true)"
+
+  if [[ -z "$expected" ]]; then
+    echo "   !! no checksum entry for $iso_name in $sha_file"
+    return 1
+  fi
+
+  local actual
+  actual="$(sha256sum "$iso_path" | awk '{print $1}')"
+
+  if [[ "$actual" != "$expected" ]]; then
+    echo "   !! SHA256 mismatch for $iso_name"
+    echo "      expected: $expected"
+    echo "      actual:   $actual"
+    return 1
+  fi
+
+  echo "   ✅ SHA256 verified for $iso_name"
+  return 0
+}
+
+# Helper: verify SHA256 from a “single hash only” file (SystemRescue .sha256)
+verify_sha_single() {
+  local iso_path="$1"
+  local sha_file="$2"
+
+  if [[ ! -f "$sha_file" ]]; then
+    echo "   !! checksum file $sha_file missing, cannot verify"
+    return 1
+  fi
+
+  # checksum file is like: "<hash> *filename"
+  local expected
+  expected="$(awk '{print $1}' "$sha_file" | tr -d '\r\n')"
+
+  local actual
+  actual="$(sha256sum "$iso_path" | awk '{print $1}')"
+
+  if [[ "$actual" != "$expected" ]]; then
+    echo "   !! SHA256 mismatch"
+    echo "      expected: $expected"
+    echo "      actual:   $actual"
+    return 1
+  fi
+
+  echo "   ✅ SHA256 verified"
+  return 0
+}
+
+# 3) Download + verify an ISO
+download_and_verify() {
+  local name="$1"
+  local url="$2"
+  local sha_mode="$3"   # "none" | "single" | "list"
+  local sha_url="${4:-}"
+
+  local dest="${VENTOY_MOUNT}/${name}"
+  local tmp="${CACHE_DIR}/${name}"
+
+  if [[ -f "$dest" ]]; then
+    echo "-- ${name} already exists on Ventoy, skipping."
+    return
+  fi
+
+  echo "-- Checking URL for ${name}..."
+  if ! wget --spider -q "$url"; then
+    echo "!! WARNING: URL appears unreachable: $url"
+    return
+  fi
+
+  echo "-- Downloading ${name} to cache..."
+  wget -c -O "$tmp" "$url"
+  sync
+
+  if [[ "$sha_mode" != "none" ]]; then
+    local sha_file="${tmp}.sha"
+    echo "-- Fetching checksum for ${name}..."
+    fetch_text "$sha_url" "$sha_file"
+
+    echo "-- Verifying SHA256 for ${name}..."
+    if [[ "$sha_mode" == "single" ]]; then
+      if ! verify_sha_single "$tmp" "$sha_file"; then
+        echo "!! ERROR: SHA256 verification failed for ${name}, leaving in cache."
+        return
+      fi
+    elif [[ "$sha_mode" == "list" ]]; then
+      if ! verify_sha_from_list "$tmp" "$sha_file"; then
+        echo "!! ERROR: SHA256 verification failed for ${name}, leaving in cache."
+        return
+      fi
+    fi
+  else
+    echo "   (no SHA256 verification configured for ${name})"
+  fi
+
+  echo "-- Moving ${name} to Ventoy partition..."
+  mv "$tmp" "$dest"
+  sync
+  echo "-- ${name} ready."
+}
+
+echo "== Downloading & verifying ISOs to ${VENTOY_MOUNT} =="
+
+# SystemRescue (single-hash .sha256 file)
+download_and_verify "$SYSTEMRESCUE_ISO" "$SYSTEMRESCUE_URL" "single" "$SYSTEMRESCUE_SHA_URL"
+
+# Ubuntu (SHA256SUMS listing)
+download_and_verify "$UBUNTU_ISO" "$UBUNTU_URL" "list" "$UBUNTU_SHA_URL"
+
+# Mint (sha256sum.txt listing)
+download_and_verify "$MINT_ISO" "$MINT_URL" "list" "$MINT_SHA_URL"
+
+# Puppy (no official SHA list; download only)
+download_and_verify "$PUPPY_ISO" "$PUPPY_URL" "none"
+
+# Proxmox (sha256sums file listing multiple ISOs)
+download_and_verify "$PROXMOX_ISO" "$PROXMOX_URL" "none"
+
+echo "== Handling Memtest86+ =="
+if command -v unzip >/dev/null 2>&1; then
+  local_dest="${VENTOY_MOUNT}/${MEMTEST_ISO}"
+
+  if [[ -f "$local_dest" ]]; then
+    echo "-- Memtest86+ ISO already present, skipping."
+  else
+    echo "-- Checking Memtest86+ URL..."
+    if wget --spider -q "$MEMTEST_ZIP_URL"; then
+      echo "-- Downloading Memtest86+ zip..."
+      wget -c -O "$MEMTEST_ZIP" "$MEMTEST_ZIP_URL"
+      sync
+
+      echo "-- Unzipping Memtest86+ ISO..."
+      unzip -o "$MEMTEST_ZIP" -d "$CACHE_DIR"
+
+      if [[ -f "${CACHE_DIR}/${MEMTEST_ISO}" ]]; then
+        echo "-- Moving Memtest86+ ISO to Ventoy partition..."
+        mv "${CACHE_DIR}/${MEMTEST_ISO}" "$local_dest"
+        sync
+        echo "-- Memtest86+ ready (no SHA available, unverified)."
+      else
+        echo "!! ERROR: Memtest86+ ISO not found inside zip."
+      fi
+    else
+      echo "!! WARNING: Memtest86+ URL appears unreachable."
+    fi
+  fi
+else
+  echo "!! Skipping Memtest86+ because 'unzip' is not installed."
+fi
+
+echo
+echo "== Done! Current contents of ${VENTOY_MOUNT}:"
+ls -lh "$VENTOY_MOUNT"
