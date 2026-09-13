@@ -1,0 +1,36 @@
+# Nightly .srt sidecar sync. Ported from the old box on 2026-09-13.
+#
+# ExecStart moved into the checkout; ~/.local/bin/subget is a symlink to the same file, so
+# the interactive command and the timer run identical code. Everything else, including the
+# reasoning below, is the original's.
+
+[Unit]
+Description=Sync .srt sidecars across the Plex library
+# Only meaningful when the NAS is actually mounted.
+#
+# Caveat on this box, which the old one did not have: /mnt/nas is now a systemd automount,
+# so autofs holds the path and this condition is true whether or not NFS is live. It is
+# kept because it costs nothing and stays correct if the automount is ever dropped, but it
+# is not the safety net it reads as. subget itself fails fast on an unreachable NAS.
+ConditionPathIsMountPoint=/mnt/nas
+
+[Service]
+Type=oneshot
+# Extraction reads whole files off the NAS at line rate, so the run is hard-stopped rather
+# than allowed to overrun into the backup window; remaining files are picked up the
+# following night. This must be TimeoutStartSec and not RuntimeMaxSec: systemd ignores the
+# latter for Type=oneshot, which would leave the run unbounded.
+#
+# 9900s from 00:00 lands at 02:45. The original comment said this cleared "the 03:00 NAS
+# backups" -- on this box the heavy one (backup-daily, ~6 GB of ~/code) runs at 05:00 and
+# the 02:20 Legal mirror is 2 MB of rsync, so the window is if anything more generous than
+# it was. Left at the original value.
+TimeoutStartSec=9900
+# Pinned rather than inherited: the user manager's PATH comes from the graphical session,
+# so a headless or early-boot start would not find subliminal in ~/.local/bin.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/home/peter/Projects/nomarchy/common/scripts/subget -l vi -l en
+StandardOutput=append:%h/Logs/subget-sync.log
+StandardError=append:%h/Logs/subget-sync.log

@@ -1,0 +1,734 @@
+#!/usr/bin/env python3
+"""subget - keep .srt sidecars in sync across the Plex library.
+
+The goal is simple: for every video and every language you care about, there
+should be a `.srt` file next to it. There are three ways to get one, and they
+cost wildly different amounts, so subget tries them cheapest-first:
+
+  1. convert  - an .ass/.ssa/.vtt sidecar is already there. Rewriting it as
+                .srt reads a few KB. Effectively free.
+  2. download - ask subliminal. One process for the whole batch; costs a
+                little network, nothing off the NAS.
+  3. extract  - pull an embedded text track out with ffmpeg. This is the
+                expensive one: ffmpeg must demux the whole container, so a
+                3 GB episode costs a 3 GB read to recover 24 KB of text.
+                Use --extract-limit to spread it over several runs.
+
+Everything is backed by an index keyed on size+mtime, so an unchanged file is
+probed exactly once, ever. Files no provider can supply are remembered too, so
+they are not re-queried on every run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DEFAULT_ROOTS = ["/mnt/nas/PlexMedia/Movies", "/mnt/nas/PlexMedia/TV"]
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v"}
+SIDECAR_EXTS = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
+CONVERTIBLE_EXTS = {".ass", ".ssa", ".vtt"}  # .sub is usually bitmap VobSub
+
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "subget"
+INDEX_PATH = CACHE_DIR / "index.json"
+MISSES_PATH = CACHE_DIR / "misses.json"
+INDEX_VERSION = 3
+MISS_TTL_DAYS = int(os.environ.get("SUBGET_MISS_TTL_DAYS", "30"))
+SUBLIMINAL_CONFIG = Path(
+    os.environ.get("SUBLIMINAL_CONFIG",
+                   Path.home() / ".config" / "subliminal" / "subliminal.toml"))
+
+# Subtitle codecs that carry text and can therefore become .srt. Anything not
+# listed here (hdmv_pgs_subtitle, dvd_subtitle, dvb_subtitle, xsub) is a bitmap
+# and would need OCR, so those files fall through to the download path.
+TEXT_CODECS = {
+    "subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text", "subviewer",
+    "subviewer1", "microdvd", "mpl2", "jacosub", "realtext", "sami", "stl",
+    "pjs", "vplayer", "eia_608", "subrip_text",
+}
+
+# Providers that actually carry each language. Asking addic7ed, gestdown and
+# subtitulamos for Vietnamese is nine handshakes for a guaranteed zero.
+LANG_PROVIDERS = {"vi": ["opensubtitlescom", "opensubtitles", "podnapisi"]}
+
+# Path fragments that mark a film rather than an episode. With a daily download
+# quota, ordering decides what actually lands, so films are worked first: they
+# are watched deliberately and there are far fewer of them, whereas an episode
+# backlog is large enough to absorb the entire allowance for weeks.
+MOVIE_HINTS = ("/movies/", "/movie/", "/films/", "/film/")
+
+# Filename components that qualify a language rather than being one. Stripped
+# from the end before parsing, so "Movie.en.hi.srt" reads as English-with-SDH
+# and not as Hindi.
+SIDECAR_MODIFIERS = {
+    "forced", "sdh", "cc", "hi", "hearing", "hearingimpaired", "foreign",
+    "full", "default", "und",
+}
+
+ISO2 = {
+    "eng": "en", "vie": "vi", "spa": "es", "fre": "fr", "fra": "fr",
+    "ger": "de", "deu": "de", "jpn": "ja", "kor": "ko", "chi": "zh",
+    "zho": "zh", "por": "pt", "rus": "ru", "ita": "it", "dut": "nl",
+    "nld": "nl", "swe": "sv", "nor": "no", "nob": "no", "dan": "da",
+    "fin": "fi", "pol": "pl", "tur": "tr", "ara": "ar", "heb": "he",
+    "hin": "hi", "tha": "th", "ind": "id", "cze": "cs", "ces": "cs",
+    "hun": "hu", "gre": "el", "ell": "el", "rum": "ro", "ron": "ro",
+    "ukr": "uk", "bul": "bg", "hrv": "hr", "srp": "sr", "slo": "sk",
+    "slk": "sk", "slv": "sl", "est": "et", "lav": "lv", "lit": "lt",
+    "cat": "ca", "may": "ms", "msa": "ms", "fil": "tl", "tgl": "tl",
+}
+
+
+def is_movie(path: str) -> bool:
+    return any(h in path.lower() for h in MOVIE_HINTS)
+
+
+def norm_lang(code: str) -> str | None:
+    """Normalise a language tag to a 2-letter code, or None if meaningless."""
+    if not code:
+        return None
+    code = code.strip().lower().replace("_", "-").split("-")[0]
+    if code in {"und", "unknown", "mis", "zxx", ""}:
+        return None
+    if len(code) == 2:
+        return code
+    return ISO2.get(code)
+
+
+def human(num_bytes: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(num_bytes) < 1024 or unit == "TB":
+            return f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024
+    return f"{num_bytes:.1f} TB"
+
+
+def provider_fingerprint() -> str:
+    """Fingerprint the provider credentials subliminal will use.
+
+    "No subtitle exists for this file" is only true relative to the providers
+    you were logged in to at the time. When the credentials change, every past
+    negative result becomes untrustworthy, so the cache is dropped rather than
+    quietly suppressing files a new login could now satisfy.
+    """
+    try:
+        text = SUBLIMINAL_CONFIG.read_text()
+    except OSError:
+        return "no-config"
+    lines = [ln.strip() for ln in text.splitlines()]
+    creds = [ln for ln in lines
+             if ln.startswith(("[provider", "username", "password", "apikey"))
+             and not ln.startswith("#")]
+    import hashlib
+    return hashlib.sha256("\n".join(creds).encode()).hexdigest()[:16]
+
+
+def quota_remaining() -> int | None:
+    """How many opensubtitles.com downloads are left today, or None if unknown.
+
+    The free tier allows 20 per day. Without this cap a large backlog burns the
+    quota in the first few seconds and every remaining file comes back empty --
+    which would then be cached as "no subtitle exists" for 30 days, which is a
+    lie. Better to fetch what the quota allows and leave the rest for tomorrow.
+
+    Run inside subliminal's own interpreter: it is typically a pipx venv, so
+    the API key and requests are importable there and not from system python.
+    """
+    script = shutil.which("subliminal")
+    if not script:
+        return None
+    try:
+        with open(script) as fh:
+            shebang = fh.readline().strip()
+        # shlex.split, not strip: pipx writes its shebang with a flag --
+        # `#!/home/.../venvs/subliminal/bin/python -E` -- and treating that whole
+        # string as argv[0] means execve never finds it. The OSError was caught
+        # below and turned into None, i.e. "quota unknown", which the caller reads
+        # as uncapped. The cap then never applied, which is the precise failure this
+        # function exists to prevent: the backlog burns the daily quota in seconds
+        # and every file after it gets cached as permanently unavailable.
+        interpreter = (shlex.split(shebang[2:]) if shebang.startswith("#!")
+                       else [sys.executable])
+    except OSError:
+        return None
+
+    snippet = r"""
+import json, re, sys
+try:
+    import requests
+    from subliminal.providers.opensubtitlescom import OPENSUBTITLESCOM_API_KEY
+except Exception:
+    print(-1); raise SystemExit
+try:
+    text = open(sys.argv[1]).read()
+    user = re.search(r'^username\s*=\s*"(.*)"', text, re.M).group(1)
+    pwd = re.search(r'^password\s*=\s*"(.*)"', text, re.M).group(1)
+    if 'CHANGEME' in (user, pwd):
+        print(-1); raise SystemExit
+    s = requests.Session()
+    s.headers.update({'Api-Key': OPENSUBTITLESCOM_API_KEY,
+                      'Content-Type': 'application/json',
+                      'User-Agent': 'subliminal v2.6.0'})
+    r = s.post('https://api.opensubtitles.com/api/v1/login',
+               json={'username': user, 'password': pwd}, timeout=20)
+    if r.status_code != 200:
+        print(-1); raise SystemExit
+    s.headers['Authorization'] = 'Bearer ' + r.json()['token']
+    info = s.get('https://api.opensubtitles.com/api/v1/infos/user', timeout=20)
+    d = info.json().get('data', {}) if info.status_code == 200 else {}
+    print(max(0, int(d.get('allowed_downloads', 0)) - int(d.get('downloads_count', 0)))
+          if 'allowed_downloads' in d else -1)
+except Exception:
+    print(-1)
+"""
+    try:
+        proc = subprocess.run([*interpreter, "-c", snippet, str(SUBLIMINAL_CONFIG)],
+                              capture_output=True, text=True, timeout=60)
+        value = int(proc.stdout.strip().splitlines()[-1])
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+    return None if value < 0 else value
+
+
+def credentials_look_unset() -> bool:
+    try:
+        return "CHANGEME" in SUBLIMINAL_CONFIG.read_text()
+    except OSError:
+        return False
+
+
+def load_json(path: Path, default):
+    try:
+        with path.open() as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def save_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w") as fh:
+        json.dump(data, fh)
+    tmp.replace(path)
+
+
+# --------------------------------------------------------------- discovery ---
+
+def find_videos(roots, age_seconds):
+    """Return (path, size, mtime) for every video file under roots."""
+    out = []
+    cutoff = time.time() - age_seconds if age_seconds else None
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames.sort()
+            for name in sorted(filenames):
+                if os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
+                    continue
+                full = os.path.join(dirpath, name)
+                try:
+                    st = os.stat(full)
+                except OSError:
+                    continue
+                if cutoff is not None and st.st_mtime < cutoff:
+                    continue
+                out.append((full, st.st_size, int(st.st_mtime)))
+    return out
+
+
+def probe_tracks(path: str) -> list[dict]:
+    """Describe every embedded subtitle track. Reads headers only."""
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "s",
+             "-show_entries",
+             "stream=index,codec_name:stream_tags=language,title"
+             ":stream_disposition=forced,default,hearing_impaired",
+             "-of", "json", "--", path],
+            capture_output=True, text=True, timeout=180,
+        )
+        streams = json.loads(proc.stdout or "{}").get("streams", [])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    tracks = []
+    for stream in streams:
+        disp = stream.get("disposition") or {}
+        tags = stream.get("tags") or {}
+        title = (tags.get("title") or "").lower()
+        tracks.append({
+            "i": stream.get("index"),
+            "codec": stream.get("codec_name") or "",
+            "lang": norm_lang(tags.get("language", "")) or "",
+            "forced": int(bool(disp.get("forced")) or "forced" in title),
+            "default": int(bool(disp.get("default"))),
+            "hi": int(bool(disp.get("hearing_impaired"))
+                      or any(m in title for m in ("sdh", "hearing", "cc"))),
+        })
+    return tracks
+
+
+_DIR_CACHE: dict[str, list[str]] = {}
+_WRITABLE_CACHE: dict[str, bool] = {}
+
+
+def dir_writable(path: str) -> bool:
+    """Can we drop a sidecar next to this video? Cached per directory.
+
+    Checked while planning rather than at write time: extraction reads the
+    whole container first, so discovering the directory is read-only at the
+    end means a 400 MB read thrown away for nothing.
+    """
+    if path not in _WRITABLE_CACHE:
+        _WRITABLE_CACHE[path] = os.access(path, os.W_OK)
+    return _WRITABLE_CACHE[path]
+
+
+def listdir_cached(path: str) -> list[str]:
+    """A season folder is listed once, not once per episode."""
+    if path not in _DIR_CACHE:
+        try:
+            _DIR_CACHE[path] = os.listdir(path)
+        except OSError:
+            _DIR_CACHE[path] = []
+    return _DIR_CACHE[path]
+
+
+def sidecar_map(video: str) -> dict[str, dict[str, str]]:
+    """{lang: {ext: path}} for the subtitle files sitting next to `video`."""
+    directory = os.path.dirname(video) or "."
+    base = os.path.splitext(os.path.basename(video))[0]
+    found: dict[str, dict[str, str]] = {}
+    for name in listdir_cached(directory):
+        stem, ext = os.path.splitext(name)
+        ext = ext.lower()
+        if ext not in SIDECAR_EXTS or not stem.startswith(base + "."):
+            continue
+        parts = stem[len(base) + 1:].split(".")
+        trimmed = list(parts)
+        while trimmed and trimmed[-1].lower() in SIDECAR_MODIFIERS:
+            trimmed.pop()
+        lang = None
+        for candidate in (reversed(trimmed), reversed(parts)):
+            for part in candidate:
+                lang = norm_lang(part)
+                if lang:
+                    break
+            if lang:
+                break
+        if lang:
+            found.setdefault(lang, {}).setdefault(ext, os.path.join(directory, name))
+    return found
+
+
+def parse_age(text: str) -> float:
+    units = {"h": 3600, "d": 86400, "w": 604800}
+    total, number = 0.0, ""
+    for ch in text:
+        if ch.isdigit():
+            number += ch
+        elif ch in units and number:
+            total += int(number) * units[ch]
+            number = ""
+        else:
+            raise argparse.ArgumentTypeError(f"bad age {text!r} (use 12h, 30d, 2w)")
+    if number or not total:
+        raise argparse.ArgumentTypeError(f"bad age {text!r} (use 12h, 30d, 2w)")
+    return total
+
+
+# ------------------------------------------------------------- conversions ---
+
+def run_ffmpeg(args: list[str], dest: str) -> bool:
+    """Write via a temp file so an interrupted run never leaves half an .srt."""
+    tmp = dest + ".subget.tmp.srt"
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", *args, "-f", "srt", tmp],
+            capture_output=True, text=True, timeout=3600,
+        )
+    except (OSError, subprocess.SubprocessError):
+        for leftover in (tmp,):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
+        return False
+    ok = proc.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 32
+    if ok:
+        os.chmod(tmp, 0o664)
+        os.replace(tmp, dest)
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    return ok
+
+
+def convert_sidecar(src: str, dest: str) -> bool:
+    return run_ffmpeg(["-i", src], dest)
+
+
+def extract_tracks(video: str, jobs: list[tuple[int, str]]) -> int:
+    """Pull one or more embedded tracks out in a single pass.
+
+    ffmpeg has to demux the whole container either way, so asking for every
+    language at once turns N full reads of a 6 GB file into one.
+    """
+    if len(jobs) == 1:
+        stream_index, dest = jobs[0]
+        return int(run_ffmpeg(
+            ["-i", video, "-map", f"0:{stream_index}", "-c:s", "srt"], dest))
+
+    args = ["-nostdin", "-v", "error", "-y", "-i", video]
+    tmps = []
+    for stream_index, dest in jobs:
+        tmp = dest + ".subget.tmp.srt"
+        tmps.append((tmp, dest))
+        args += ["-map", f"0:{stream_index}", "-c:s", "srt", "-f", "srt", tmp]
+    try:
+        proc = subprocess.run(["ffmpeg", *args], capture_output=True,
+                              text=True, timeout=7200)
+    except (OSError, subprocess.SubprocessError):
+        proc = None
+    written = 0
+    for tmp, dest in tmps:
+        ok = (proc is not None and proc.returncode == 0
+              and os.path.exists(tmp) and os.path.getsize(tmp) > 32)
+        if ok:
+            os.chmod(tmp, 0o664)
+            os.replace(tmp, dest)
+            written += 1
+        else:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    return written
+
+
+def pick_track(tracks: list[dict], lang: str, forced_ok: bool) -> dict | None:
+    """Best extractable text track for `lang`: full before forced, plain before SDH."""
+    usable = [t for t in tracks
+              if t["lang"] == lang and t["codec"] in TEXT_CODECS
+              and (forced_ok or not t["forced"])]
+    if not usable:
+        return None
+    return sorted(usable, key=lambda t: (t["forced"], t["hi"], -t["default"], t["i"]))[0]
+
+
+def has_bitmap_track(tracks: list[dict], lang: str) -> bool:
+    return any(t["lang"] == lang and t["codec"] not in TEXT_CODECS for t in tracks)
+
+
+# -------------------------------------------------------------------- main ---
+
+def main() -> int:
+    # line-buffer so progress is visible when the output is a log file, not a tty
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, OSError):
+        pass
+
+    ap = argparse.ArgumentParser(prog="subget", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("-l", "--language", action="append", dest="languages",
+                    help="language to ensure, repeatable (default: en)")
+    ap.add_argument("-a", "--age", type=parse_age,
+                    help="only consider files newer than AGE, e.g. 2w")
+    ap.add_argument("-j", "--jobs", type=int, default=8,
+                    help="parallel ffprobe jobs (default: 8)")
+    ap.add_argument("-w", "--workers", type=int, default=8,
+                    help="subliminal download workers (default: 8)")
+    ap.add_argument("-n", "--dry-run", action="store_true",
+                    help="report the plan, change nothing")
+    ap.add_argument("-f", "--retry-missing", action="store_true",
+                    help="ignore the negative cache and retry known-missing files")
+    ap.add_argument("-R", "--rebuild-index", action="store_true",
+                    help="discard the index and re-probe everything")
+    ap.add_argument("-m", "--min-score", type=int, default=0,
+                    help="minimum subliminal match score (0-100)")
+    ap.add_argument("--forced-ok", action="store_true",
+                    help="accept a forced track as satisfying the language")
+    ap.add_argument("--no-convert", action="store_true",
+                    help="do not rewrite .ass/.ssa/.vtt sidecars as .srt")
+    ap.add_argument("--no-download", action="store_true",
+                    help="do not ask subliminal for anything")
+    ap.add_argument("--no-extract", action="store_true",
+                    help="do not pull embedded tracks out with ffmpeg")
+    ap.add_argument("--download-limit", type=int, default=-1, metavar="N",
+                    help="max downloads this run; -1 (default) asks "
+                         "opensubtitles.com how much quota is left, 0 = no cap")
+    ap.add_argument("--extract-limit", type=float, default=0, metavar="GB",
+                    help="stop extracting once this many GB have been read "
+                         "(0 = no limit); the rest is picked up next run")
+    ap.add_argument("roots", nargs="*",
+                    help=f"paths to scan (default: {' '.join(DEFAULT_ROOTS)})")
+    args = ap.parse_args()
+
+    languages = args.languages or ["en"]
+    roots = args.roots or DEFAULT_ROOTS
+
+    for tool in ("ffprobe", "ffmpeg"):
+        if not shutil.which(tool):
+            print(f"subget: {tool} not found in PATH", file=sys.stderr)
+            return 1
+    if not args.no_download and not shutil.which("subliminal"):
+        print("subget: subliminal not found; continuing with --no-download",
+              file=sys.stderr)
+        args.no_download = True
+
+    os.umask(0o002)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    index = {}
+    if not args.rebuild_index:
+        stored = load_json(INDEX_PATH, {})
+        if stored.get("version") == INDEX_VERSION:
+            index = stored.get("entries", {})
+    misses = load_json(MISSES_PATH, {})
+    fingerprint = provider_fingerprint()
+    if misses.pop("__providers__", fingerprint) != fingerprint:
+        verb = "would discard" if args.dry_run else "discarding"
+        print(f"subget: provider credentials changed, {verb} "
+              f"{len(misses)} cached 'unavailable' results so they are retried")
+        misses = {}
+        if not args.dry_run:
+            # persist straight away, so an interrupted run does not repeat this
+            save_json(MISSES_PATH, {"__providers__": fingerprint})
+
+    videos = find_videos(roots, args.age)
+    if not videos:
+        print(f"subget: no video files under {' '.join(roots)}")
+        return 0
+    sizes = {path: size for path, size, _ in videos}
+    print(f"subget: {len(videos)} video files under {', '.join(roots)}")
+
+    # --- probe embedded tracks (headers only), cached on size:mtime
+    keys = {path: f"{size}:{mtime}" for path, size, mtime in videos}
+    stale = [p for p in keys if index.get(p, {}).get("key") != keys[p]]
+    if stale:
+        print(f"subget: probing {len(stale)} new or changed files...")
+        started = time.time()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            for path, tracks in zip(stale, pool.map(probe_tracks, stale)):
+                index[path] = {"key": keys[path], "tracks": tracks}
+        for gone in set(index) - set(keys):
+            if not os.path.exists(gone):
+                del index[gone]
+        save_json(INDEX_PATH, {"version": INDEX_VERSION, "entries": index})
+        print(f"subget: probe finished in {time.time() - started:.1f}s")
+
+    # --- build the plan
+    cutoff = time.time() - MISS_TTL_DAYS * 86400
+    plan_convert, plan_download = [], []
+    plan_extract: dict[str, list[tuple[int, str]]] = {}
+    covered = deferred = bitmap_only = 0
+    blocked = 0
+    blocked_dirs: set[str] = set()
+
+    for path, _size, _mtime in videos:
+        tracks = index.get(path, {}).get("tracks", [])
+        sidecars = sidecar_map(path)
+        base = os.path.splitext(path)[0]
+        writable = dir_writable(os.path.dirname(path) or ".")
+        for lang in languages:
+            have = sidecars.get(lang, {})
+            if ".srt" in have:
+                covered += 1
+                continue
+            if not writable:
+                # nothing can be produced here, whatever the source would be
+                blocked += 1
+                blocked_dirs.add(os.path.dirname(path))
+                continue
+            source = next((have[e] for e in (".ass", ".ssa", ".vtt") if e in have), None)
+            if source and not args.no_convert:
+                plan_convert.append((source, f"{base}.{lang}.srt"))
+                continue
+            track = pick_track(tracks, lang, args.forced_ok)
+            if track and not args.no_extract:
+                plan_extract.setdefault(path, []).append(
+                    (track["i"], f"{base}.{lang}.srt"))
+                continue
+            if track:
+                covered += 1  # extraction disabled, but the text is in there
+                continue
+            if has_bitmap_track(tracks, lang):
+                bitmap_only += 1
+            if not args.retry_missing and misses.get(f"{path}\t{lang}", 0) >= cutoff:
+                deferred += 1
+                continue
+            if not args.no_download:
+                plan_download.append((path, lang))
+
+    budget = args.download_limit
+    if plan_download and budget == -1:
+        budget = quota_remaining()
+        if budget is not None:
+            print(f"subget: opensubtitles.com quota - {budget} downloads left today")
+    if budget in (-1, 0) or budget is None:
+        budget = 10**9  # unknown or uncapped
+    plan_download.sort()
+
+    extract_bytes = sum(sizes.get(p, 0) for p in plan_extract)
+    extract_files = len(plan_extract)
+    extract_tracks_n = sum(len(v) for v in plan_extract.values())
+    print(f"subget: {covered} already have .srt, {deferred} known-unavailable")
+    print(f"subget: plan -> convert {len(plan_convert)}, "
+          f"extract {extract_tracks_n} tracks from {extract_files} files "
+          f"({human(extract_bytes)} to read), "
+          f"download {len(plan_download)}")
+    if bitmap_only:
+        print(f"subget: {bitmap_only} have only bitmap subtitles (PGS/VobSub); "
+              f"these need a download, ffmpeg cannot make .srt from them")
+    if blocked:
+        print(f"subget: {blocked} sidecars cannot be written -- "
+              f"{len(blocked_dirs)} directories are not writable by you:")
+        for directory in sorted(blocked_dirs)[:10]:
+            print(f"    {directory}")
+        if len(blocked_dirs) > 10:
+            print(f"    ... and {len(blocked_dirs) - 10} more")
+        print("  fix with:  chmod g+w <dir>   (needs root on the NAS if they "
+              "are root-owned)")
+
+    if args.dry_run:
+        for src, dest in plan_convert[:20]:
+            print(f"  CONVERT  {src}")
+        for path in list(plan_extract)[:20]:
+            langs = ",".join(sorted(
+                os.path.splitext(d)[0].rsplit(".", 1)[-1] for _, d in plan_extract[path]))
+            print(f"  EXTRACT  [{human(sizes.get(path, 0))}] [{langs}] {path}")
+        for path, lang in plan_download[:20]:
+            print(f"  DOWNLOAD [{lang}] {path}")
+        if len(plan_convert) + extract_files + len(plan_download) > 60:
+            print("  ... (truncated)")
+        return 0
+
+    # --- 1. convert existing sidecars: a few KB each
+    if plan_convert:
+        print(f"\nsubget: converting {len(plan_convert)} sidecars to .srt")
+        done = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            for ok in pool.map(lambda job: convert_sidecar(*job), plan_convert):
+                done += bool(ok)
+        print(f"subget: converted {done}/{len(plan_convert)}")
+        _DIR_CACHE.clear()
+
+    # --- 2. download: one subliminal process per distinct language set
+    if plan_download and credentials_look_unset():
+        print("subget: note - opensubtitles.com credentials in "
+              f"{SUBLIMINAL_CONFIG} are still CHANGEME, so that provider will "
+              "be discarded. Results will be retried automatically once you "
+              "fill them in.")
+    if plan_download:
+        # Films before episodes, then languages in the order given on the
+        # command line. Without this the quota is handed out alphabetically:
+        # "en" sorts before "vi", so English episodes would eat the whole
+        # daily allowance for days on end and the Vietnamese films would
+        # never get a turn.
+        lang_rank = {lang: i for i, lang in enumerate(languages)}
+        buckets: dict[tuple[int, int, str], list[str]] = {}
+        for path, lang in plan_download:
+            key = (1 if not is_movie(path) else 0, lang_rank.get(lang, 99), lang)
+            buckets.setdefault(key, []).append(path)
+
+        # Quota is only consumed by an actual download. A file no provider
+        # carries costs nothing, so the batch is walked in chunks no larger
+        # than the remaining budget: a chunk can never overrun the quota, and
+        # chunks that find nothing leave the budget intact and keep going.
+        # That matters -- it lets the unavailable majority get cached as
+        # misses without ever touching the daily limit.
+        spent = 0
+        exhausted = False
+        for key in sorted(buckets):
+            lang = key[2]
+            paths = buckets[key]
+            queue = sorted(paths)
+            while queue and not exhausted:
+                if budget - spent <= 0:
+                    exhausted = True
+                    break
+                chunk = queue[:max(1, min(len(queue), budget - spent))]
+                queue = queue[len(chunk):]
+
+                cmd = ["subliminal", "download", "-w", str(args.workers),
+                       "-l", lang, "-R", "omdb"]
+                for provider in LANG_PROVIDERS.get(lang, []):
+                    cmd += ["-p", provider]
+                if args.min_score:
+                    cmd += ["-m", str(args.min_score)]
+                cmd += ["--", *chunk]
+                kind = "films" if key[0] == 0 else "episodes"
+                print(f"\nsubget: downloading {lang} for {len(chunk)} {kind} "
+                      f"({spent}/{budget if budget < 10**9 else '?'} quota used)")
+                subprocess.run(cmd)
+
+                # subliminal exits 0 even when it downloads nothing, so the
+                # only trustworthy signal is what appeared on disk
+                _DIR_CACHE.clear()
+                now = time.time()
+                for path in chunk:
+                    key = f"{path}\t{lang}"
+                    if ".srt" in sidecar_map(path).get(lang, {}):
+                        misses.pop(key, None)
+                        spent += 1
+                    else:
+                        misses[key] = now
+                misses = {k: v for k, v in misses.items()
+                          if os.path.exists(k.split("\t")[0])}
+                save_json(MISSES_PATH, {**misses, "__providers__": fingerprint})
+
+        if exhausted:
+            print(f"\nsubget: daily download quota reached after {spent} "
+                  f"subtitles; the rest is untouched and retried on the next run")
+        else:
+            print(f"\nsubget: {spent} subtitles downloaded")
+
+    # --- 3. extract: the expensive one, so it goes last and can be capped
+    if plan_extract:
+        budget = args.extract_limit * 2**30 if args.extract_limit else float("inf")
+        # cheapest first, so a capped run gets through the most files, and an
+        # 80 GB 4K remux never blocks a hundred episodes behind it
+        order = sorted(plan_extract, key=lambda path: sizes.get(path, 0))
+        print(f"\nsubget: extracting {extract_tracks_n} tracks from "
+              f"{extract_files} files ({human(extract_bytes)} to read"
+              + (f", capped at {args.extract_limit} GB" if args.extract_limit else "")
+              + ")")
+        read = 0.0
+        written = attempted = 0
+        started = time.time()
+        for path in order:
+            size = sizes.get(path, 0)
+            if read + size > budget and read > 0:
+                break
+            written += extract_tracks(path, plan_extract[path])
+            attempted += 1
+            read += size
+            if attempted % 25 == 0:
+                rate = read / max(time.time() - started, 1)
+                eta = (extract_bytes - read) / max(rate, 1)
+                print(f"  {attempted}/{extract_files}  {human(read)} read  "
+                      f"{human(rate)}/s  eta {eta / 60:.0f}m")
+        left = extract_files - attempted
+        print(f"subget: wrote {written} .srt from {attempted} files, "
+              f"{left} files left for next run "
+              f"({human(read)} read in {time.time() - started:.0f}s)")
+
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nsubget: interrupted", file=sys.stderr)
+        sys.exit(130)

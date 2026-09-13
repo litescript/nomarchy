@@ -1,0 +1,15 @@
+# Carried over unchanged from the old box.
+
+[Unit]
+Description=Nightly .srt sidecar sync
+
+[Timer]
+OnCalendar=*-*-* 00:00:00
+# Do not fire a missed run at login; the window before the nightly backups is the whole
+# point of the schedule. This is deliberately the opposite of the backup timers, where a
+# missed run should still happen.
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
