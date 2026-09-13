@@ -36,6 +36,7 @@ immediately:
 | `~/.config/systemd/user/ssh-agent.service` | `common/systemd/ssh-agent.service` |
 | `~/.bashrc` | `common/bash/bashrc` |
 | `~/.bash_profile` | `common/bash/bash_profile` |
+| `~/.config/fuzzel/fuzzel.conf` | `common/fuzzel/fuzzel.conf` |
 
 Some things are **copies, not symlinks**, and drift silently:
 

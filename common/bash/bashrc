@@ -9,6 +9,26 @@
 # If not running interactively, don't do anything
 [[ $- != *i* ]] && return
 
+# --- ssh agent ---
+# Also set in .bash_profile, and deliberately duplicated here rather than left there.
+# .bash_profile covers the login chain -- tty1, start-umbriel, and everything the
+# compositor spawns by inheritance. But kitty does not start login shells, so a terminal
+# reads only this file, and until the next relogin the compositor itself has no
+# SSH_AUTH_SOCK to pass down: umbriel has been running since before the variable existed.
+# The result was `ssh-add` answering "Could not open a connection to your authentication
+# agent" in a brand new terminal while the agent was up and healthy.
+#
+# Safe to repeat: it is a fixed path and a plain assignment, so unlike the PATH loop it
+# cannot compound.
+export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ssh-agent.socket"
+
+# Same argument for the askpass pair -- they are set in .bash_profile too, and a terminal
+# reads neither. REQUIRE=prefer is what makes ssh use the prompt even when a TTY exists;
+# without these two here, `ssh-add` in a kitty window falls back to asking on the terminal
+# and it looks like the askpass helper is broken when it has simply never been consulted.
+export SSH_ASKPASS="/home/peter/Projects/nomarchy/common/scripts/askpass-fuzzel"
+export SSH_ASKPASS_REQUIRE=prefer
+
 # --- Navigation ---
 alias ..='cd ..'
 alias ...='cd ../..'
