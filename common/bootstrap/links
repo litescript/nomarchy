@@ -7,3 +7,4 @@ common/bash/bash_profile	~/.bash_profile
 common/fuzzel/fuzzel.conf	~/.config/fuzzel/fuzzel.conf
 common/browse_alias		~/code/browse_alias
 common/systemd/ssh-agent.service	~/.config/systemd/user/ssh-agent.service
+common/ssh/config		~/.ssh/config

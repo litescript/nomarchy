@@ -1,0 +1,47 @@
+# ssh client config  ->  ~/.ssh/config
+#
+# In the repo because it is real config: AddKeysToAgent is what makes the key passphrase a
+# once-per-boot event rather than once per push, and losing it would be a silent
+# regression in ergonomics with no obvious cause.
+#
+# Nothing secret lives here -- host names, LAN addresses and key *paths*. The keys
+# themselves stay in ~/.ssh and are not in this repo and never will be.
+#
+# AddKeysToAgent sits before the first Host block deliberately: ssh applies the first
+# value it obtains for a keyword, and settings outside any Host block apply globally. Move
+# it below a Host block and it silently applies to that host alone.
+
+AddKeysToAgent yes
+
+Host waylab
+    HostName 192.168.1.209
+    User peter
+    IdentityFile ~/.ssh/id_ed25519_waylab
+    IdentitiesOnly yes
+
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_github
+    IdentitiesOnly yes
+
+# Carried from the old box's config and left commented on purpose: both entries referenced
+# ~/.ssh/id_ed25519, a key that does not exist on this machine -- caesar's keys are named
+# per-destination. Uncomment with the right IdentityFile when the host is next needed.
+#
+# `Host caesar` becomes useful the moment there is a second machine to reach it from; it
+# is meaningless on caesar itself, which is why it stays commented for now.
+#
+# Host caesar
+#     HostName 192.168.1.200
+#     User peter
+#     AddressFamily inet
+#     IdentityFile ~/.ssh/<key>
+#     IdentitiesOnly yes
+#
+# Host kitchen-box
+#     HostName 192.168.1.56
+#     User litescript
+#     AddressFamily inet
+#     IdentityFile ~/.ssh/<key>
+#     IdentitiesOnly yes
