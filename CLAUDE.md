@@ -76,6 +76,12 @@ Two things deliberately live **outside** the repo because they hold credentials:
 (`auth.txt` and `linux_token.txt`). Scripts that read them are tracked; the secrets are
 not, and must not be.
 
+`~/.ssh/authorized_keys` is outside the repo for a different reason: it is not a secret, it
+is an access grant. Symlinked into a public repo, anything pushed to GitHub would become a
+login on the machine. caesar's copy holds rigel's `id_ed25519_caesar` public key, and
+`PasswordAuthentication no` means that key is the only way in for peter, so
+`ssh-copy-id` cannot bootstrap it. Add keys by hand.
+
 The firewall is not a file copy at all: `hosts/caesar/ufw/apply-rules` is a script that
 issues `ufw` commands, because the live rules in `/etc/ufw/user.rules` are generated and
 owned by `ufw` itself.

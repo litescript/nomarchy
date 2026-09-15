@@ -25,19 +25,23 @@ Host github.com
     IdentityFile ~/.ssh/id_ed25519_github
     IdentitiesOnly yes
 
-# Carried from the old box's config and left commented on purpose: both entries referenced
-# ~/.ssh/id_ed25519, a key that does not exist on this machine -- caesar's keys are named
-# per-destination. Uncomment with the right IdentityFile when the host is next needed.
+# rigel -> caesar. caesar is keys-only for peter (hosts/caesar/ssh/10-nomarchy.conf), and
+# its ~/.ssh/authorized_keys is deliberately NOT in this repo: a symlink into a public repo
+# would make a push to GitHub a login grant on caesar. The key named here exists on rigel
+# only; on caesar this block is inert.
 #
-# `Host caesar` becomes useful the moment there is a second machine to reach it from; it
-# is meaningless on caesar itself, which is why it stays commented for now.
-#
-# Host caesar
-#     HostName 192.168.1.200
-#     User peter
-#     AddressFamily inet
-#     IdentityFile ~/.ssh/<key>
-#     IdentitiesOnly yes
+# Off-site this still resolves: rigel reaches the home LAN over Tailscale. caesar's address
+# is DHCP, so it holds only as long as the router keeps reserving it.
+Host caesar
+    HostName 192.168.1.200
+    User peter
+    AddressFamily inet
+    IdentityFile ~/.ssh/id_ed25519_caesar
+    IdentitiesOnly yes
+
+# Carried from the old box's config and left commented: it referenced ~/.ssh/id_ed25519,
+# and keys here are named per-destination. Uncomment with the right IdentityFile when the
+# host is next needed.
 #
 # Host kitchen-box
 #     HostName 192.168.1.56

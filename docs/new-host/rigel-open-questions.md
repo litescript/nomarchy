@@ -250,3 +250,26 @@ reaches umbriel's PATH, and without it every script bind goes quiet. So "no sddm
 required, not just tidier. And btrfs snapshots were already noted as the better backup
 story for these machines. Dropping snapper just because Omarchy chose it is the
 copy-don't-copy rule inverted. Choose it, or choose something else, on its own merits.
+
+---
+
+## caesar, 2026-09-14: rigel can ssh into caesar, and one GitHub trap for rigel
+
+**rigel → caesar is set up.** Pete generated `~/.ssh/id_ed25519_caesar` on rigel. Its
+public half is in caesar's `~/.ssh/authorized_keys`, fingerprint
+`SHA256:q/ro2LDYiw5JREaNKJki7U6z5qCNYOd+sXjYp/JLWiE`. `Host caesar` is now live in
+`common/ssh/config`, so after a pull `ssh caesar` works. That file is deliberately not in
+the repo; see `CLAUDE.md`. On first connect, caesar's host key must be ED25519
+`SHA256:+EL8pQRd9rOoi1hwsXdc6GjqnstDlpx33SE1ps5NtH4` (or MLDSA44-ED25519
+`SHA256:sn6Yhz9txRtrjo3THbI5FLdlSfvtna1YfU+WDhK3lgs`). caesar's ufw allows 22/tcp from
+`192.168.1.0/24` only. That covers rigel off-site too, if the Tailscale subnet route SNATs
+as the default does; `ip route get 192.168.1.200` on rigel should show `dev tailscale0`.
+
+**The trap: pushes to GitHub from rigel break the moment the bootstrap links
+`common/ssh/config`.** Its `github.com` block offers only `~/.ssh/id_ed25519_github`, with
+`IdentitiesOnly yes`, and rigel's GitHub key is `~/.ssh/id_ed25519` (registered as
+"laptop"). The failure is `Permission denied (publickey)`, which looks like a revoked key.
+The fix is to rename both halves to `id_ed25519_github`; GitHub does not care about
+filenames. If rigel is already wiped and that key did not survive, generate a new one
+under that name and register it. `gh auth setup-git` is the no-ssh fallback, per
+`rigel-status.md`.
