@@ -293,3 +293,48 @@ correct facts that were folded into `docs/new-host/README.md` from the old OS.
   guide's phase-4 list now says so. Bootloader is systemd-boot, not limine.
 - **Your point 5 is live, not hypothetical**: no logind drop-in, lid hooks commented, so a
   lid close suspends and resumes unlocked today.
+
+---
+
+## caesar, 2026-09-14: review of the post-install push, and readiness for travel
+
+Pete leaves for Canada tomorrow with rigel. The goal is `ssh caesar` from there. Ranked by
+how likely each is to fail:
+
+**1. Subnet routes are probably not accepted on the fresh install.** Off-site `ssh caesar`
+depends on the same Tailscale subnet route that reached the NAS from another house. On
+Linux, `tailscale up` does **not** accept subnet routes unless told to (other platforms
+default the other way). The old install must have had it; root step §4 is a plain
+`tailscale up`. Check with `ip route show table 52 | grep 192.168.1`; empty means not
+accepted. Fix with `sudo tailscale set --accept-routes`. The only real proof before leaving
+is off the home network: tether to a phone, then `ip route get 192.168.1.200` must say
+`dev tailscale0`, and `ssh caesar` must connect. That also settles the SNAT question: if
+the subnet router does not SNAT, caesar's ufw (LAN-only 22/tcp) drops the connection and
+it times out.
+
+**2. The lid is probably not a live gap. Test before believing either way.** On caesar,
+Noctalia holds a logind sleep **delay inhibitor, WHY = "Lock before sleep"**, and
+`settings.toml` has no key for it, so it is on by default (the binary's key is
+`lock_before_suspend`). With logind's default `HandleLidSwitch=suspend`, a lid close
+should already lock via `PrepareForSleep`. `rigel-status.md` says nothing locks on
+PrepareForSleep, which looks inferred rather than observed. On rigel,
+`systemd-inhibit --list` should show the noctalia row. Then close the lid for ten
+seconds, open it, and it must be locked. logind's delay budget is 5 s by default
+(`InhibitDelayMaxUSec`), so a slow lock render is the remaining risk, and only the
+physical test covers it. If it passes, the lid decision is made: logind owns the lid,
+Noctalia owns the lock, and the `[events]` hooks stay commented.
+
+**3. rigel's firewall is off, on hotel and airport networks.** Root step §5 is written and
+not run. Nothing rigel needs is inbound; Tailscale and ssh are both outbound.
+
+**caesar's side needs nothing.** Noctalia `lock-and-suspend` is `enabled = false`, logind
+`IdleAction=ignore`, and there have been 0 suspends since boot on 09-10, so it will not
+sleep while Pete is away. The one unguarded case is a power cut: unless the firmware is
+set to power on after AC loss, caesar stays off until someone presses the button.
+
+**Checked in the post-install commits, no action:** the lockfile bump is four plugins
+2–3 commits forward, none backward; caesar still runs the old ones until `:Lazy restore`.
+No MACs, SSIDs, serials or tailnet addresses in the new files; UUIDs are settled policy.
+The guide's `pacman` one-liner parses manifests exactly as `bootstrap` does (same
+`grep -vE`), and no manifest line has an inline comment, so it is safe. The two
+`install/boot/*.conf` snapshots came off vfat with the executable bit; cleared.
