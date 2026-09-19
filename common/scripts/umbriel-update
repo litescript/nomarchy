@@ -1,0 +1,608 @@
+#!/usr/bin/env bash
+# Keep umbriel rolling without losing this repo's config.
+#
+#   umbriel-update                      survey: what upstream has, what it would break
+#   umbriel-update --apply              build, gate on the live config, install
+#   umbriel-update --merge-config       preview upstream's config changes merged into base.toml
+#   umbriel-update --merge-config --apply   write the merge
+#   umbriel-update --merge-accept       promote a resolved base.toml.new
+#   umbriel-update --find-pin           re-derive which upstream rev base.toml forked from
+#   umbriel-update --rollback           reinstall the previous package
+#
+# Dry run is the default, matching bootstrap and merge-show-dirs. Run the bare form as
+# often as you like; it only fetches and reports.
+#
+# WHY THIS EXISTS
+#
+# umbriel is young and moves fast -- 34 commits in the five days after the install that
+# first prompted this script, two of them marked breaking. `feat(config)!: rename
+# layout.scrolling default width to extent` renamed four things base.toml was using.
+# A plain `makepkg -si` would have installed that happily and left a session whose
+# Mod+R did nothing.
+#
+# The protection is one fact, established by testing umbriel 0.1.0 rather than by
+# reading docs: THE BUILT BINARY RUNS BEFORE IT IS INSTALLED, straight out of
+# pkg/umbriel-git/usr/bin/umbriel, and `umbriel validate` exits nonzero on a renamed
+# key AND on a renamed keybind action:
+#
+#   warning: …: unknown key layout.extent_presets                     -> exit 1
+#   warning: …: ignoring keybind 'Mod+R' (unknown action '…')         -> exit 1
+#
+# So this script builds first, points the NEW binary at the LIVE config, and installs
+# only if that passes. A breaking rename is caught while the machine is still running
+# the old, working compositor.
+#
+# The second half is keeping the config current instead of merely discovering it broke.
+# common/umbriel/base.toml is a fork of upstream's examples/config.toml with this repo's
+# divergence on top, so config drift is a three-way merge, not a diff to read by hand:
+#
+#   base   = examples/config.toml at the rev recorded in common/umbriel/UPSTREAM
+#   theirs = examples/config.toml at the rev being installed
+#   ours   = common/umbriel/base.toml
+#
+# Upstream's renames land automatically wherever this repo had not customised the line;
+# what conflicts is exactly what a human should decide. The two mechanisms compose --
+# the merge lands what it can, the validate gate catches what it got wrong.
+#
+# THE PIN HAS TO BE RIGHT, AND A WRONG ONE FAILS QUIETLY
+#
+# A pin that is too late makes the merge read upstream's own changes as this repo's
+# customisations and keep them out, with no conflict and no warning. That is not
+# hypothetical: this pin was first seeded with the rev the machine was installed from
+# (5678f16) and that was two days too late. The tell was base.toml carrying
+# `# left or right master area` when upstream had already said `left, right, or center`.
+# Merging from the real fork point instead turned 8 conflicts into 4 and picked up
+# upstream doc fixes the wrong pin had discarded.
+#
+# --find-pin re-derives it: the rev whose examples/config.toml is closest to base.toml,
+# by changed-line count, is the one it forked from. Run it if a merge produces conflicts
+# in places this repo never touched.
+#
+# ORDER MATTERS, AND THERE IS A SHORT WINDOW EITHER WAY
+#
+# The new binary wants the new vocabulary; the running one wants the old. Whichever you
+# change first is briefly mismatched with the other. Merge the config first: umbriel
+# treats unknown keys as warnings and keeps the last working configuration on a failed
+# reload, so the live session survives it. The reverse -- installing first -- is the
+# case the gate refuses outright. Recommended sequence:
+#
+#   umbriel-update                          # read what is coming
+#   umbriel-update --merge-config           # preview the merge
+#   umbriel-update --merge-config --apply   # resolve conflicts, then --merge-accept
+#   umbriel-update --apply                  # build, gate, install
+#   (log out and back in -- a new binary does not hot-swap into a running session)
+#
+# WHAT IT DOES NOT DO
+#
+# It does not touch a running compositor. Installing a package replaces the file behind
+# a process that has it open; the session keeps running the old code until it restarts.
+# The script reports that state rather than implying an update took effect -- see
+# CLAUDE.md's Verification section, which this is an instance of.
+
+set -uo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+
+BUILDS="${UMBRIEL_BUILDS:-$HOME/builds}"
+ROLLBACK="$BUILDS/.rollback"
+KEEP=3                                   # rollback packages retained per package
+PIN="$repo/common/umbriel/UPSTREAM"
+BASE="$repo/common/umbriel/base.toml"
+LIVE="${XDG_CONFIG_HOME:-$HOME/.config}/umbriel/config.toml"
+
+# Both packages move together: umbriel-git depends on the portal, and upstream releases
+# them from two repos that track each other. Order matters for the pacman -U call.
+PKGS=(xdg-desktop-portal-umbriel-git umbriel-git)
+
+ok=0; todo=0; conflict=0
+say()  { printf '  %s\n' "$*"; }
+good() { printf '  \033[32m✓\033[0m %s\n' "$*"; ((ok++)); }
+want() { printf '  \033[33m→\033[0m %s\n' "$*"; ((todo++)); }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; ((conflict++)); }
+head1() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+die()  { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+apply=0; mode=survey
+for a in "$@"; do
+  case "$a" in
+    --apply)        apply=1 ;;
+    --merge-config) mode=merge ;;
+    --merge-accept) mode=accept ;;
+    --find-pin)     mode=findpin ;;
+    --rollback)     mode=rollback ;;
+    -h|--help)      sed -n '2,/^#$/p' "$(readlink -f "$0")" | sed 's/^# \?//'; exit 0 ;;
+    *)              die "unknown argument: $a  (--help)" ;;
+  esac
+done
+
+# ── Package plumbing ────────────────────────────────────────────────────────
+
+# The directory makepkg keeps its mirror clone in, derived from the PKGBUILD's source=
+# line rather than hardcoded, so a maintainer renaming the upstream repo does not
+# silently break this.
+clone_dir() {
+  local dir=$1 url
+  url=$(grep -oE "git\+https://[^'\"#]+" "$dir/PKGBUILD" | head -1)
+  [[ -n $url ]] || return 1
+  printf '%s/%s' "$dir" "$(basename "$url" .git)"
+}
+
+# pacman's version is <version>.r<count>.<shorthash>-<pkgrel>; the hash is the last
+# dot-separated field before the pkgrel. Works even though umbriel's pkgver() currently
+# yields an empty <version> (its sed does not match upstream's meson.build), which is
+# cosmetic but worth knowing when reading `pacman -Q`.
+installed_rev() {
+  local v
+  v=$(pacman -Q "$1" 2>/dev/null | awk '{print $2}') || return 1
+  [[ -n $v ]] || return 1
+  v=${v%-*}
+  printf '%s' "${v##*.}"
+}
+
+# The clone is a mirror (+refs/*:refs/*), so the branch lives at refs/heads/main, not
+# refs/remotes/origin/main. Fetching here is the same operation makepkg performs during
+# a build, so doing it early costs nothing and disturbs nothing.
+fetch_clone() {
+  git -C "$1" fetch --quiet --prune origin 2>/dev/null
+}
+
+target_rev() { git -C "$1" rev-parse --short=7 refs/heads/main 2>/dev/null; }
+
+pin_rev() { grep -vE '^\s*#|^\s*$' "$PIN" 2>/dev/null | head -1 | tr -d '[:space:]'; }
+
+# ── Survey ──────────────────────────────────────────────────────────────────
+
+umbriel_clone=""     # set by survey, reused by the merge modes
+umbriel_target=""
+behind=0            # packages with an update waiting
+
+survey() {
+  head1 "Upstream"
+  local pkg dir clone inst tgt n
+  for pkg in "${PKGS[@]}"; do
+    dir="$BUILDS/$pkg"
+    if [[ ! -d $dir ]]; then
+      bad "$pkg: no build directory at $dir -- clone https://aur.archlinux.org/$pkg.git there"
+      continue
+    fi
+    clone=$(clone_dir "$dir") || { bad "$pkg: cannot read source URL from PKGBUILD"; continue; }
+    if [[ ! -d $clone ]]; then
+      bad "$pkg: no source clone at $clone -- run makepkg -o in $dir once"
+      continue
+    fi
+    fetch_clone "$clone" || bad "$pkg: fetch failed (offline?)"
+    inst=$(installed_rev "$pkg") || { bad "$pkg: not installed"; continue; }
+    tgt=$(target_rev "$clone")   || { bad "$pkg: cannot resolve refs/heads/main"; continue; }
+
+    [[ $pkg == umbriel-git ]] && { umbriel_clone=$clone; umbriel_target=$tgt; }
+
+    if [[ $inst == "$tgt" ]]; then
+      good "$pkg  $inst (current)"
+      continue
+    fi
+    n=$(git -C "$clone" rev-list --count "$inst..$tgt" 2>/dev/null)
+    want "$pkg  $inst → $tgt  (${n:-?} commits)"
+    ((behind++))
+
+    # Conventional-commit breaking markers. Upstream uses `type(scope)!:` and has not so
+    # far used a BREAKING CHANGE footer, so check both rather than trusting one.
+    local brk
+    brk=$(git -C "$clone" log --format='%h %s' "$inst..$tgt" 2>/dev/null \
+          | grep -E '^[0-9a-f]+ [a-z]+(\([^)]*\))?!:')
+    local ftr
+    ftr=$(git -C "$clone" log --format='%h %s' --grep='BREAKING CHANGE' "$inst..$tgt" 2>/dev/null)
+    if [[ -n $brk || -n $ftr ]]; then
+      printf '    \033[31mbreaking:\033[0m\n'
+      printf '%s\n%s\n' "$brk" "$ftr" | grep -v '^$' | sort -u | while read -r l; do say "      $l"; done
+    fi
+
+    if [[ $pkg == umbriel-git ]]; then
+      local cfg
+      cfg=$(git -C "$clone" log --oneline --abbrev=7 "$inst..$tgt" -- examples/config.toml 2>/dev/null)
+      if [[ -n $cfg ]]; then
+        printf '    config schema touched by:\n'
+        printf '%s\n' "$cfg" | while read -r l; do say "      $l"; done
+      fi
+    fi
+  done
+
+  # ── Config pin ────────────────────────────────────────────────────────────
+  head1 "Config sync"
+  local pin
+  pin=$(pin_rev)
+  if [[ -z $pin ]]; then
+    bad "no pin in $PIN -- cannot three-way merge; write the rev base.toml was authored against"
+  elif [[ -z $umbriel_target ]]; then
+    say "upstream rev unknown; skipping"
+  elif [[ $pin == "$umbriel_target" ]]; then
+    good "base.toml synced to $pin"
+  else
+    local d
+    d=$(git -C "$umbriel_clone" diff --numstat "$pin..$umbriel_target" -- examples/config.toml 2>/dev/null)
+    want "base.toml synced to $pin, upstream example is at $umbriel_target${d:+  (${d%%$'\t'*} added, $(printf '%s' "$d" | cut -f2) removed)}"
+    say  "    umbriel-update --merge-config"
+  fi
+
+  # ── Live config against the installed binary ──────────────────────────────
+  head1 "Live config"
+  if [[ ! -e $LIVE ]]; then
+    bad "$LIVE does not exist"
+  elif out=$(umbriel validate 2>&1); then
+    good "valid against the installed binary"
+  elif (( behind )); then
+    # base.toml has already been merged forward and the binary has not caught up yet.
+    # That is the ordering this script recommends, so it is a step in progress rather
+    # than a fault -- the gate below is the check that matters.
+    want "invalid against the INSTALLED binary, which is expected mid-update:"
+    printf '%s\n' "$out" | grep '^warning:' | head -4 \
+      | sed "s|$repo/||" | while read -r l; do say "    $l"; done
+    local rest
+    rest=$(printf '%s\n' "$out" | grep -c '^warning:')
+    (( rest > 4 )) && say "    ... and $((rest - 4)) more (umbriel validate for the full list)"
+    say "    base.toml is merged to $(pin_rev); the gate below checks it against the NEW binary."
+  else
+    bad "INVALID against the installed binary, and no update is pending:"
+    printf '%s\n' "$out" | grep -v '^config: ok' | head -8 | while read -r l; do say "    $l"; done
+  fi
+
+  # ── Running session ───────────────────────────────────────────────────────
+  head1 "Running session"
+  session_state
+}
+
+# A running compositor keeps the inode it was exec'd from. After an upgrade replaces
+# /usr/bin/umbriel the kernel marks that link "(deleted)", which states outright that the
+# session is older than the installed package -- preferred here over inferring it from
+# timestamps. See CLAUDE.md, Verification.
+session_state() {
+  local pid exe
+  pid=$(pgrep -x umbriel | head -1)
+  if [[ -z $pid ]]; then
+    say "no umbriel process here (remote shell?) -- nothing to report"
+    return
+  fi
+  exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
+  if [[ $exe == *"(deleted)"* ]]; then
+    want "pid $pid is running a REPLACED binary -- log out and back in to pick up the new build"
+  else
+    good "pid $pid is running the installed binary"
+  fi
+}
+
+# ── Three-way config merge ──────────────────────────────────────────────────
+
+merge_config() {
+  local pin=$1 tgt=$2 clone=$3
+  local tmp; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
+
+  git -C "$clone" show "$pin:examples/config.toml"  > "$tmp/base"   2>/dev/null \
+    || die "cannot read examples/config.toml at $pin -- is the pin a real rev?"
+  git -C "$clone" show "$tgt:examples/config.toml"  > "$tmp/theirs" 2>/dev/null \
+    || die "cannot read examples/config.toml at $tgt"
+  cp "$BASE" "$tmp/ours"
+
+  git merge-file -L 'nomarchy base.toml' -L "upstream $pin" -L "upstream $tgt" \
+      "$tmp/ours" "$tmp/base" "$tmp/theirs"
+  local n=$?
+  (( n > 127 )) && die "git merge-file failed"
+
+  head1 "Merge"
+  say "base   examples/config.toml @ $pin"
+  say "theirs examples/config.toml @ $tgt"
+  say "ours   common/umbriel/base.toml"
+  echo
+
+  if (( n == 0 )); then
+    good "merged cleanly, no conflicts"
+  else
+    want "$n conflict$( ((n!=1)) && echo s) -- upstream changed a line this repo had customised:"
+    grep -n '^<<<<<<<' "$tmp/ours" | while IFS=: read -r ln _; do
+      # Name the section each conflict sits in, so the report is readable without opening
+      # the file.
+      local sec
+      sec=$(head -n "$ln" "$tmp/ours" | grep -E '^\[' | tail -1)
+      say "    line $ln  ${sec:-(before first section)}"
+    done
+  fi
+
+  if (( ! apply )); then
+    cp "$tmp/ours" "${TMPDIR:-/tmp}/base.toml.merged"
+    echo
+    say "dry run. Preview written to ${TMPDIR:-/tmp}/base.toml.merged"
+    say "re-run with --apply to write it into the repo."
+    return 0
+  fi
+
+  if (( n == 0 )); then
+    cp "$tmp/ours" "$BASE"
+    write_pin "$tgt"
+    echo
+    good "base.toml updated and pinned to $tgt"
+    say  "The live session reloads base.toml on write. Unknown keys are warnings there, so"
+    say  "the old compositor keeps its last working configuration -- expected until you install."
+    say  "Next: umbriel-update --apply"
+  else
+    cp "$tmp/ours" "$BASE.new"
+    printf '%s\n' "$tgt" > "$PIN.pending"
+    echo
+    want "wrote $BASE.new with conflict markers. base.toml is UNTOUCHED, pin unchanged."
+    say  "    nvim ${BASE#"$repo"/}.new     # resolve the $n conflict$( ((n!=1)) && echo s)"
+    say  "    umbriel-update --merge-accept  # promote it and move the pin"
+  fi
+}
+
+write_pin() {
+  cat > "$PIN" <<PINFILE
+# The upstream umbriel rev that common/umbriel/base.toml is synced to.
+#
+# base.toml is a fork of upstream's examples/config.toml. This records which revision it
+# was last merged against, which is the "base" leg of the three-way merge in
+# common/scripts/umbriel-update. Wrong value here means a wrong merge, silently -- it is
+# written by --merge-config/--merge-accept rather than by hand for that reason.
+
+$1
+PINFILE
+}
+
+merge_accept() {
+  [[ -f $BASE.new ]] || die "no $BASE.new to promote"
+  [[ -f $PIN.pending ]] || die "no $PIN.pending -- re-run --merge-config --apply"
+  if grep -qE '^(<<<<<<<|=======|>>>>>>>)' "$BASE.new"; then
+    bad "$BASE.new still has conflict markers -- resolve them first"
+    grep -nE '^(<<<<<<<|>>>>>>>)' "$BASE.new" | head -10 | while read -r l; do say "    $l"; done
+    exit 1
+  fi
+  local tgt; tgt=$(tr -d '[:space:]' < "$PIN.pending")
+  mv "$BASE.new" "$BASE"
+  write_pin "$tgt"
+  rm -f "$PIN.pending"
+  head1 "Merge accepted"
+  good "base.toml promoted, pinned to $tgt"
+  say  "Validate against the binary you are about to install, not the one running now:"
+  say  "    umbriel-update --apply"
+}
+
+# ── Pin derivation ──────────────────────────────────────────────────────────
+
+# base.toml is a fork of examples/config.toml, so the rev it forked from is the one whose
+# example is closest to it. Scan backwards and report the minimum. It is a heuristic, not
+# a recorded fact -- but a real fork point shows up as a clear local minimum, and a flat
+# or noisy result means base.toml has drifted far enough that the answer needs a human.
+find_pin() {
+  local clone=$1 n=${2:-40} rev best_rev="" best_n=999999 d
+  head1 "Pin search"
+  say "changed lines between base.toml and examples/config.toml at each rev:"
+  echo
+  while read -r rev; do
+    d=$(git -C "$clone" show "$rev:examples/config.toml" 2>/dev/null \
+        | diff - "$BASE" 2>/dev/null | grep -c '^[<>]')
+    [[ -z $d ]] && continue
+    printf '    %-9s %5s  %s\n' "$rev" "$d" \
+      "$(git -C "$clone" log -1 --format='%ad %s' --date=short "$rev" | cut -c1-58)"
+    if (( d < best_n )); then best_n=$d; best_rev=$rev; fi
+  done < <(git -C "$clone" log --format=%h --abbrev=7 -"$n" refs/heads/main -- examples/config.toml)
+
+  echo
+  if [[ -z $best_rev ]]; then
+    bad "no candidate revs -- is examples/config.toml still in the tree?"
+    return 1
+  fi
+  local cur; cur=$(pin_rev)
+  if [[ $best_rev == "$cur" ]]; then
+    good "closest rev is $best_rev ($best_n lines), which is what $PIN already says"
+  else
+    want "closest rev is $best_rev ($best_n lines); $PIN currently says ${cur:-nothing}"
+    say  "If the merge has been conflicting in places this repo never touched, that is why."
+    say  "Set it by hand only after reading the table above -- a flat minimum means the"
+    say  "answer is not trustworthy and base.toml needs a human eye instead."
+  fi
+}
+
+# ── Build, gate, install ────────────────────────────────────────────────────
+
+# Preserve the package that is installed right now before makepkg overwrites it. pacman
+# does NOT cache packages installed with -U (verified: no umbriel in /var/cache/pacman/pkg
+# despite 600+ packages there), so this directory is the only rollback that exists.
+# Debug packages are skipped: 22 MB each, and common/packages/aur.txt documents that they
+# are deliberately not installed.
+stash_current() {
+  local pkg=$1 dir=$2 f
+  mkdir -p "$ROLLBACK/$pkg"
+  while IFS= read -r f; do
+    [[ -f $f ]] && mv -f "$f" "$ROLLBACK/$pkg/"
+  done < <(find "$dir" -maxdepth 1 -name "$pkg-*.pkg.tar.zst" ! -name '*-debug-*' 2>/dev/null)
+  # Debug packages are makepkg byproducts -- 22 MB apiece, one per update, and
+  # common/packages/aur.txt documents that they are deliberately never installed.
+  # Left alone they are the largest thing this script would grow on disk.
+  local dbg
+  dbg=$(find "$dir" -maxdepth 1 -name "$pkg-debug-*.pkg.tar.zst" 2>/dev/null)
+  if [[ -n $dbg ]]; then
+    say "removing $(printf '%s\n' "$dbg" | wc -l) debug byproduct(s) from $dir"
+    printf '%s\n' "$dbg" | xargs -r rm -f
+  fi
+
+  # prune to the newest $KEEP
+  local old
+  old=$(ls -1t "$ROLLBACK/$pkg"/*.pkg.tar.zst 2>/dev/null | tail -n +$((KEEP+1)))
+  [[ -n $old ]] && printf '%s\n' "$old" | xargs -r rm -f
+  return 0
+}
+
+built_package() {
+  local pkg=$1 dir=$2
+  find "$dir" -maxdepth 1 -name "$pkg-*.pkg.tar.zst" ! -name '*-debug-*' 2>/dev/null \
+    | sort | tail -1
+}
+
+do_apply() {
+  local -a to_install=()
+  local pkg dir clone inst tgt
+
+  head1 "Build"
+  for pkg in "${PKGS[@]}"; do
+    dir="$BUILDS/$pkg"
+    [[ -d $dir ]] || { bad "$pkg: no build directory"; continue; }
+    clone=$(clone_dir "$dir")
+    inst=$(installed_rev "$pkg")
+    tgt=$(target_rev "$clone")
+    if [[ $inst == "$tgt" ]]; then
+      good "$pkg $inst already current, not rebuilding"
+      continue
+    fi
+
+    # An --apply that got as far as building and then stopped -- a refused sudo, most
+    # likely, since sudo cannot read a password without a terminal -- leaves a good
+    # package sitting in the build directory. Re-running should install it, not spend
+    # several minutes producing it again, and must not stash it as if it were the
+    # version being replaced.
+    local existing; existing=$(built_package "$pkg" "$dir")
+    if [[ -n $existing && $existing == *".$tgt-"* ]]; then
+      good "$pkg $tgt already built: $(basename "$existing")"
+      to_install+=("$existing")
+      continue
+    fi
+
+    stash_current "$pkg" "$dir"
+    say "building $pkg ($inst → $tgt) ..."
+    if ! ( cd "$dir" && makepkg -f --noconfirm ); then
+      bad "$pkg: makepkg failed"
+      say "    If it stopped on a missing dependency, install it and re-run:"
+      say "    sudo pacman -S --needed <pkg>"
+      exit 1
+    fi
+    local built; built=$(built_package "$pkg" "$dir")
+    [[ -n $built ]] || { bad "$pkg: built, but no package file found"; exit 1; }
+    good "$pkg → $(basename "$built")"
+    to_install+=("$built")
+  done
+
+  if (( ${#to_install[@]} == 0 )); then
+    head1 "Nothing to install"
+    session_state
+    return 0
+  fi
+
+  # ── The gate ──────────────────────────────────────────────────────────────
+  # The whole point of the script. The new compositor validates the live config while the
+  # old one is still the installed, running one -- so a breaking rename costs a refused
+  # install rather than a broken session.
+  head1 "Gate — live config against the NEW binary"
+  local staged="$BUILDS/umbriel-git/pkg/umbriel-git/usr/bin/umbriel"
+  if [[ ! -x $staged ]]; then
+    if [[ -n $(built_package umbriel-git "$BUILDS/umbriel-git") ]]; then
+      bad "no staged binary at $staged -- cannot gate; refusing to install"
+      exit 1
+    fi
+    say "umbriel itself was not rebuilt; nothing to gate"
+  else
+    local out rc
+    out=$("$staged" validate -c "$LIVE" 2>&1); rc=$?
+    if (( rc == 0 )); then
+      good "$(printf '%s' "$out" | tail -1)"
+    else
+      bad "the new binary REJECTS the live config. Nothing installed."
+      printf '%s\n' "$out" | while read -r l; do say "    $l"; done
+      echo
+      say "This is the breaking-change case. Bring the config forward first:"
+      say "    umbriel-update --merge-config --apply"
+      say "Then re-run --apply. The built package is kept, so the rebuild is cheap."
+      exit 1
+    fi
+  fi
+
+  # ── Install ───────────────────────────────────────────────────────────────
+  head1 "Install"
+  say "sudo pacman -U ${to_install[*]##*/}"
+  if ! sudo pacman -U "${to_install[@]}"; then
+    bad "pacman refused. Nothing changed; roll forward or back at your leisure."
+    exit 1
+  fi
+  good "installed"
+
+  head1 "After"
+  if out=$(umbriel validate 2>&1); then
+    good "live config valid against the newly installed binary"
+  else
+    bad "live config invalid against the binary just installed:"
+    printf '%s\n' "$out" | while read -r l; do say "    $l"; done
+    say "    umbriel-update --rollback"
+  fi
+  session_state
+  say 'A new binary does not hot-swap. `umbriel msg config-reload` reloads CONFIG, not code.'
+}
+
+# ── Rollback ────────────────────────────────────────────────────────────────
+
+do_rollback() {
+  head1 "Rollback"
+  local -a pkgs=()
+  local pkg f
+  for pkg in "${PKGS[@]}"; do
+    f=$(ls -1t "$ROLLBACK/$pkg"/*.pkg.tar.zst 2>/dev/null | head -1)
+    [[ -n $f ]] && { say "$pkg → $(basename "$f")"; pkgs+=("$f"); }
+  done
+  if (( ${#pkgs[@]} == 0 )); then
+    bad "nothing in $ROLLBACK -- no previous package was ever stashed"
+    say "A first update has to succeed before there is anything to go back to."
+    exit 1
+  fi
+  if (( ! apply )); then
+    echo; say "dry run. Re-run with --apply to reinstall the above."
+    return 0
+  fi
+  sudo pacman -U "${pkgs[@]}" || { bad "pacman refused"; exit 1; }
+  good "rolled back"
+
+  # Rolling the binary back does not roll the config back. If base.toml was merged
+  # forward for the version just removed, it now speaks a vocabulary this binary does
+  # not know -- the same mismatch as an update, pointing the other way. Say so plainly
+  # rather than leaving it to be discovered as keybinds that quietly do nothing.
+  if ! out=$(umbriel validate 2>&1); then
+    want "base.toml is still merged forward and this binary does not understand it:"
+    printf '%s\n' "$out" | grep '^warning:' | head -4 | sed "s|$repo/||" \
+      | while read -r l; do say "    $l"; done
+    say "    The config is versioned, so git is the way back:"
+    say "        git -C $repo checkout -- common/umbriel/base.toml common/umbriel/UPSTREAM"
+    say "    Uncommitted? Then the merge only exists in the working tree -- undo it there."
+  else
+    good "live config valid against the restored binary"
+  fi
+  session_state
+}
+
+# ── Main ────────────────────────────────────────────────────────────────────
+
+printf '\n\033[1mumbriel-update — %s\033[0m\n' \
+  "$( ((apply)) && echo 'APPLYING' || echo 'dry run, nothing will change')"
+
+case $mode in
+  survey)
+    survey
+    if (( apply )); then do_apply; fi
+    ;;
+  merge)
+    dir="$BUILDS/umbriel-git"
+    [[ -d $dir ]] || die "no build directory at $dir"
+    clone=$(clone_dir "$dir") || die "cannot read source URL from PKGBUILD"
+    fetch_clone "$clone"
+    pin=$(pin_rev) || true
+    [[ -n ${pin:-} ]] || die "no pin in $PIN -- write the rev base.toml was authored against"
+    tgt=$(target_rev "$clone") || die "cannot resolve refs/heads/main"
+    if [[ $pin == "$tgt" ]]; then
+      head1 "Merge"; good "base.toml already synced to $tgt -- nothing to merge"; exit 0
+    fi
+    merge_config "$pin" "$tgt" "$clone"
+    ;;
+  findpin)
+    dir="$BUILDS/umbriel-git"
+    clone=$(clone_dir "$dir") || die "cannot read source URL from PKGBUILD"
+    fetch_clone "$clone"
+    find_pin "$clone"
+    ;;
+  accept)   merge_accept ;;
+  rollback) do_rollback ;;
+esac
+
+printf '\n\033[1m%d ok, %d to do, %d problem%s\033[0m\n\n' \
+  "$ok" "$todo" "$conflict" "$( ((conflict!=1)) && echo s)"
+((conflict == 0))

@@ -159,6 +159,79 @@ bootstrap. `common/scripts/host-survey` captures what only exists while the old 
 alive: connected outputs and their modes, CPU vendor, GPU, lid and battery, wifi profile
 names, enabled services. It prints no secrets, by design.
 
+## Updating umbriel
+
+Umbriel is a young project on `main`, packaged here as an AUR **git** build. It moves
+fast enough that this is a real hazard rather than a theoretical one: in the five days
+after the install, upstream landed 34 commits, two of them marked breaking, and one of
+those renamed four things `common/umbriel/base.toml` was using. A plain `makepkg -si`
+would have installed it happily and left a session whose `Mod+R` silently did nothing.
+
+`common/scripts/umbriel-update` exists for that. Dry run by default, like `bootstrap`.
+
+```bash
+umbriel-update                        # what upstream has, and what it would break
+umbriel-update --merge-config         # preview upstream's config changes, merged
+umbriel-update --merge-config --apply # write it; resolve conflicts; --merge-accept
+umbriel-update --apply                # build, gate on the live config, install
+umbriel-update --rollback             # reinstall the previous package
+umbriel-update --find-pin             # re-derive which rev base.toml forked from
+```
+
+It rests on three things, each established by testing umbriel 0.1.0 rather than by
+reading docs:
+
+- **`umbriel validate` exits nonzero on a renamed key AND on a renamed keybind action.**
+  Both are only *warnings* at runtime, so a stale config yields a compositor that starts
+  clean and quietly drops the affected binds — but validate calls it `configuration
+  invalid` and exits 1. That is the difference between catching this and not.
+- **The built binary runs before it is installed**, out of `pkg/umbriel-git/usr/bin/`.
+  So the script builds, points the *new* binary at the *live* config, and installs only
+  if that passes. A breaking rename costs a refused install, not a broken session.
+- **`base.toml` is a fork of upstream's `examples/config.toml`**, so config drift is a
+  three-way merge, not a diff to read by hand. Upstream's renames land automatically
+  wherever this repo had not customised the line; what conflicts is what a human should
+  decide. The 2026-09-18 update produced four conflicts, all four genuine.
+
+**The pin in `common/umbriel/UPSTREAM` has to be right, and a wrong one fails quietly.**
+It records the rev `base.toml` was forked from — the base leg of that merge. A pin set
+too late makes the merge read upstream's own changes as this repo's customisations and
+keep them out, with no conflict and no warning. That happened on the first run: the pin
+was seeded with the installed rev, which was two days too late, and the tell was
+`base.toml` carrying `# left or right master area` when upstream had said
+`left, right, or center` since before the fork. Merging from the real fork point turned
+8 conflicts into 4 and recovered doc fixes the wrong pin had discarded. `--find-pin`
+re-derives it; run it whenever a merge conflicts somewhere this repo never touched.
+
+**A merge that applies cleanly is not a merge that is correct.** The same update renamed
+`default_size = [W, H]` to `default_floating_size_px = { width = W, height = H }`.
+Upstream's own example rules were renamed by the merge; the two rules nomarchy had
+customised — btop/lazydocker and shelf — kept the old spelling, because a customised line
+is exactly what a three-way merge preserves. Left alone, those two windows would have
+opened at the wrong size with nothing at runtime saying why. The validate gate is what
+caught it. Expect this class of leftover after any rename, and grep for the old spelling.
+
+**Ordering: merge the config first, then install.** The new binary wants the new
+vocabulary and the running one wants the old, so whichever moves first is briefly
+mismatched. Writing `base.toml` is the survivable direction — umbriel treats unknown keys
+as warnings and keeps its last working configuration, and the live session was verified
+to keep serving IPC and keybinds through exactly that state. Installing first is the case
+the gate refuses outright.
+
+**Installing does not update the running compositor.** `umbriel msg config-reload`
+reloads config, not code; the session keeps the replaced binary until it restarts. The
+script reports this from `/proc/<pid>/exe`, which reads `(deleted)` once the file behind
+a running process has been replaced — a signal that states what happened rather than
+implying it. Log out and back in to actually land a new build.
+
+Rollback packages live in `~/builds/.rollback/`, three deep. That directory is the only
+rollback that exists: pacman does **not** cache packages installed with `-U`, verified
+here against a cache holding 600+ downloaded ones. **`--rollback` restores the binary,
+not the config** — a `base.toml` already merged forward then speaks a vocabulary the
+restored binary does not know, which is the update mismatch pointing the other way. The
+script says so and names the `git checkout` that undoes the merge; that only works if the
+merge was committed, which is the argument for committing it alongside the update.
+
 ## Verification — read this before changing any config
 
 **Config changes do not reach running processes, and the failure is silent.** This has

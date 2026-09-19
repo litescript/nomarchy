@@ -29,4 +29,5 @@ common/scripts/proxmox-rescue-usb	~/.local/bin/proxmox-rescue-usb
 common/scripts/screenshot-region		~/.local/bin/screenshot-region
 common/scripts/spotify-limited		~/.local/bin/spotify-limited
 common/scripts/subget			~/.local/bin/subget
+common/scripts/umbriel-update		~/.local/bin/umbriel-update
 common/scripts/universal-clipboard	~/.local/bin/universal-clipboard

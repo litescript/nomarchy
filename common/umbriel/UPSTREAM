@@ -1,0 +1,8 @@
+# The upstream umbriel rev that common/umbriel/base.toml is synced to.
+#
+# base.toml is a fork of upstream's examples/config.toml. This records which revision it
+# was last merged against, which is the "base" leg of the three-way merge in
+# common/scripts/umbriel-update. Wrong value here means a wrong merge, silently -- it is
+# written by --merge-config/--merge-accept rather than by hand for that reason.
+
+178f68f
