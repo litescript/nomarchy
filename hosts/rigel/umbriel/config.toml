@@ -20,10 +20,10 @@
 # clones, and the user is `peter` -- so this resolves identically on caesar and rigel.
 # rigel's PRE-wipe checkout was ~/nomarchy under a different user; that is gone with the
 # disk. Being a required include, a wrong path here fails loudly rather than silently.
-files = ["~/Projects/nomarchy/common/umbriel/base.toml"]
+files = ["~/Projects/nomarchy/common/umbriel/base.toml", "noctalia.toml"]
 
 [include.optional]
-files = ["~/.config/umbriel/noctalia.toml"]
+# files = ["~/.config/umbriel/noctalia.toml"]
 
 # ─────────────────────────────── Outputs ────────────────────────────────────
 # One internal panel, a BOE 0x0AD5. Name and modes are from `umbriel outputs` on the new
@@ -66,7 +66,7 @@ scale = 1.5                                     # Carried from the old install, 
 
 [input.touchpad]
 tap = true
-scroll_factor = 0.4                             # Carried from the old install; its default felt fast
+scroll_factor = 1.0                             # Carried from the old install; its default felt fast
 
 # The base sets options = "caps:swapescape", which is the setting that matters most and is
 # already shared. The old install ALSO had compose:ralt, which the base does not carry.
