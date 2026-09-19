@@ -25,6 +25,18 @@ Host github.com
     IdentityFile ~/.ssh/id_ed25519_github
     IdentitiesOnly yes
 
+Host omada
+    HostName 192.168.1.49
+    User peter
+    IdentityFile ~/.ssh/id_ed25519_homelab
+    IdentitiesOnly yes
+
+Host proxmox
+    HostName 192.168.1.50
+    User root
+    IdentityFile ~/.ssh/id_ed25519_homelab
+    IdentitiesOnly yes
+
 # rigel -> caesar. caesar is keys-only for peter (hosts/caesar/ssh/10-nomarchy.conf), and
 # its ~/.ssh/authorized_keys is deliberately NOT in this repo: a symlink into a public repo
 # would make a push to GitHub a login grant on caesar. The key named here exists on rigel
