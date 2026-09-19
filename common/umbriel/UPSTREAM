@@ -5,4 +5,4 @@
 # common/scripts/umbriel-update. Wrong value here means a wrong merge, silently -- it is
 # written by --merge-config/--merge-accept rather than by hand for that reason.
 
-178f68f
+31601e0
