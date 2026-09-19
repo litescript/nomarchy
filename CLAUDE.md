@@ -17,11 +17,17 @@ There is no build system, no test suite, and no lint step. "Testing a change" me
 applying it to the live session and observing the machine — see **Verification** below,
 which is the single most important section in this file.
 
+**Session start ritual:** read `CLAUDE_NOTES.md` (gitignored session-to-session
+scratchpad — may be absent in fresh clones) before working, and leave a dated note there
+when a session ends with anything in flight or anything the next session would otherwise
+have to rediscover. Same convention as `~/code/revline` and `~/code/shelf` on caesar.
+Durable policy stays here; finished investigations go to `docs/`.
+
 ## Layout and how files reach the system
 
 ```
 common/          shared across hosts   (nvim, kitty, scripts, udev)
-hosts/<host>/    per-machine           (currently only caesar)
+hosts/<host>/    per-machine           (caesar desktop, rigel laptop)
 docs/migration/  audit + investigation records
 ```
 
@@ -343,7 +349,7 @@ If a git operation fails with `Permission denied (publickey)`, the key is almost
 fine. Two different causes look identical:
 
 ```bash
-export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/ssh-agent.socket"   # tool shell has no agent
+export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/ssh-agent.socket"   # bashrc sets it; harmless to repeat
 ssh-add -l                                                  # "no identities" = the real cause
 ```
 
@@ -352,11 +358,28 @@ binds it to that fixed path; `~/.bash_profile` exports the variable for the logi
 so the compositor and everything it spawns inherit it. A **tool shell** started outside
 that chain still has to export it by hand.
 
-The second cause is that the agent is running but **empty**: `~/.ssh/id_ed25519_github` is
-passphrase-protected, and the passphrase must be entered once per boot. `AddKeysToAgent
-yes` in `~/.ssh/config` makes the first ssh of the session prompt for it, but no askpass
-helper is installed, so that prompt only works in a real terminal — ask the owner to run
-the push, or `ssh-add ~/.ssh/id_ed25519_github`, rather than retrying from here.
+The second cause is that the agent is running but **empty**: every key here
+(`id_ed25519_github`, `id_ed25519_caesar`, `id_ed25519_homelab`) is passphrase-protected,
+and the passphrase must be entered once per boot. `AddKeysToAgent yes` in `~/.ssh/config`
+makes the first ssh of the session prompt for it.
+
+**A tool shell can serve that prompt itself** — it does not have to be handed back to the
+owner. `common/scripts/askpass-fuzzel` is installed, and a tool shell sources
+`common/bash/bashrc`, so `SSH_AUTH_SOCK`, `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE=prefer`,
+`WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` are **already set** — verified on rigel
+2026-09-18, where a bare `ssh-add ~/.ssh/id_ed25519_caesar` put a fuzzel prompt on the
+owner's screen and loaded the key. Nothing needs exporting. The owner still types the
+passphrase; this moves the prompt somewhere they can answer it rather than bypassing it.
+With no compositor to draw on, ask them to run the command instead.
+
+**The trap is `BatchMode=yes`.** It disables every interactive prompt, askpass included,
+so `ssh -o BatchMode=yes` fails `Permission denied (publickey)` against an empty agent and
+looks exactly like a broken key. Use it to *test* whether the agent is already loaded;
+drop it when you want the prompt.
+
+`SSH_ASKPASS_REQUIRE=force` is not needed and was tested rather than assumed: a tool shell
+has no controlling terminal (`{ : < /dev/tty; }` fails), so `prefer` — and even leaving the
+variable unset — consults the helper anyway. `force` only matters where a TTY exists.
 
 Do not reintroduce the old `ls ~/.ssh/agent/s.* | head -1` glob. It sorts alphabetically,
 and a reboot leaves the previous session's dead socket in that directory.
