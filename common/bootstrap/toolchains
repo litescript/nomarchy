@@ -1,0 +1,24 @@
+# Language toolchains every nomarchy host needs: <manager>  <toolchain>
+#
+# These are the gap between "the package is installed" and "the thing works". Arch's
+# `rustup` package installs only SHIMS -- /usr/bin/cargo and /usr/bin/rustc exist and are
+# on PATH, so every probe for a Rust toolchain passes, and then the first build fails with
+#
+#   error: rustup could not choose a version of cargo to run, because one wasn't
+#          specified explicitly, and no default is configured
+#
+# Verified on rigel 2026-09-20: `rustup` present, `rustup toolchain list` empty, ~/.rustup
+# 0 bytes. The packages manifest was satisfied and nothing could compile. That is the same
+# shape as the silent failures CLAUDE.md's Verification section is about -- a check that
+# passes while the capability is absent -- so it gets its own declaration rather than being
+# left implicit in `rustup` appearing in packages/repo.txt.
+#
+# The probe is `rustup show active-toolchain`, which exits nonzero with no default set and
+# prints the resolved toolchain when there is one. Checking for a NON-EMPTY toolchain list
+# would not do: a toolchain can be installed without being default, which is exactly the
+# state that still fails to build.
+#
+# Installed user-local into ~/.rustup, so this needs no root.
+
+# Needed by common/bootstrap/builds: shelf is Rust, edition 2024, rust-version 1.85.
+rustup	stable

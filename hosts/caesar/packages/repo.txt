@@ -17,9 +17,13 @@ nfs-utils
 
 # Docker, rootless. See CLAUDE.md: there is no rootful socket, and the ufw-docker
 # workaround deliberately is not carried because rootless does not bypass the firewall.
+#
+# `lazydocker` moved to common/packages/repo.txt on 2026-09-20 -- it is bound to Mod+D on
+# every host, so it is the CLIENT that is universal. The daemon below is still caesar-only,
+# which means Mod+D on rigel opens a TUI with no socket to talk to. That is a real open
+# question about rigel, not a mistake in either file: see docs/new-host/rigel-status.md.
 docker
 docker-compose
-lazydocker
 rootlesskit
 slirp4netns
 fuse-overlayfs

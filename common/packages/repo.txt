@@ -22,6 +22,12 @@ ufw
 noctalia
 xwayland-satellite
 
+# GTK4, for shelf. Present on both hosts already, but only ever as a dependency of
+# xdg-desktop-portal-umbriel-git -- so nothing declared it and nothing guaranteed the
+# version. shelf needs 4.10+ and common/bootstrap/builds compiles against it, which makes
+# it a real requirement rather than something that happens to be there.
+gtk4
+
 # Terminal and editor
 kitty
 kitty-terminfo
@@ -69,6 +75,14 @@ libva-utils
 
 # Applications
 firefox
+obsidian
+
+# Mod+M runs common/scripts/spotify-limited, which wraps spotify-LAUNCHER, not `spotify`.
+# Arch ships the launcher in [extra] and it fetches the real binary into
+# ~/.local/share/spotify-launcher/ on first run, so the AUR `spotify` package is not wanted
+# here and would be a second copy. The launched processes still report as `spotify`, which
+# is what the script's already-running guard and the Mod+M window match both key on.
+spotify-launcher
 
 # Development
 python-pip
@@ -83,4 +97,5 @@ tree-sitter-cli
 eslint
 github-cli
 lazygit
+lazydocker
 btop

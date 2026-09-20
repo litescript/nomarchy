@@ -146,11 +146,40 @@ It is data-driven, and the data is the spec:
 | `common/bootstrap/links`, `hosts/<host>/bootstrap/links` | symlinks to lay |
 | `hosts/<host>/bootstrap/copies` | root-owned copies, **diffed** so their drift is reported rather than silent |
 | `common/bootstrap/units`, `hosts/<host>/bootstrap/units` | `systemd --user` units to enable |
+| `common/bootstrap/toolchains`, `hosts/<host>/bootstrap/toolchains` | language toolchains — the gap between *package installed* and *thing works* |
+| `common/bootstrap/builds`, `hosts/<host>/bootstrap/builds` | source builds that are not packages; **run** on `--apply`, unlike the AUR list |
 | `hosts/<host>/bootstrap/root-steps` | printed, never run |
 
 A file living in `common/` means it is *available* to any host; a host's `links` list is
 what that machine actually installs. The NAS units are the example — general-purpose files
 that only make sense on a machine that can reach that NAS.
+
+**Two of those rows exist because a package manifest cannot express everything a working
+machine needs, and both gaps were found the same way — by something being silently
+absent.**
+
+`builds` is for what has no PKGBUILD and no AUR entry. `shelf` — Peter's own GTK4 file
+manager, bound to `Mod+F` — is the case that created the file. Before it, nothing in the
+repo mentioned shelf at all, and on rigel 2026-09-20 the result was a dead key that every
+check called healthy: `umbriel validate` said `config: ok`, the bind registered, and
+`bootstrap rigel` reported *25 ok, 0 to do, 0 conflicts*, while `launch-or-focus` died on
+`exec shelf` with status 127. Nothing in the repo could have reported it, because nothing in
+the repo knew shelf should be there. **A bind whose target is undeclared is a bind that can
+fail while the drift audit says the machine is clean.**
+
+Unlike the AUR list, these actually **run** on `--apply`. The boundary the bootstrap holds
+is `sudo`, not effort: `makepkg -si` needs root to install what it built, so the script can
+only print it, whereas `make install` here is `PREFIX=$HOME/.local` and needs no root at
+all. Ordering follows the dependency chain — Packages, then Toolchains, then Source builds —
+because the build needs `gtk4` from one and a Rust toolchain from the other.
+
+`toolchains` is the subtler one. Arch's `rustup` package installs **shims only**:
+`/usr/bin/cargo` and `/usr/bin/rustc` exist and answer `command -v`, so `rustup` appearing
+in `packages/repo.txt` was satisfied on rigel while `~/.rustup` was 0 bytes and every build
+failed with *"could not choose a version of cargo to run"*. The probe is
+`rustup show active-toolchain`, which exits nonzero when no default is set. Checking that
+the toolchain *list* is non-empty would not do — a toolchain can be installed without being
+default, and that state still fails to build.
 
 **A new host is a `hosts/<name>/` somebody wrote on purpose.** The bootstrap refuses a
 host directory that does not exist rather than defaulting to another machine's. `hosts/`

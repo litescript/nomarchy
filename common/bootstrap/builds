@@ -1,0 +1,36 @@
+# Source builds every nomarchy host gets: <command>  <checkout>  <url>  <install command...>
+#
+# The fourth field is the REST of the line, so it may contain spaces. It runs with the
+# checkout as the working directory.
+#
+# Why this file exists. shelf is Peter's own file manager and belongs on every nomarchy
+# host, but it is not a package: there is no PKGBUILD and no AUR entry, so neither
+# packages/repo.txt nor packages/aur.txt can express it. Before this file, nothing in the
+# repo mentioned shelf at all -- and the failure that produced was precisely the kind this
+# repo is built to prevent. On rigel 2026-09-20 `Mod+F` was dead because the binary was
+# absent, while `umbriel validate` said `config: ok`, the keybind registered, and
+# `bootstrap rigel` reported 25 ok / 0 to do / 0 conflicts. Every check passed and the key
+# did nothing. A declared build turns that into one line of reported drift.
+#
+# The PROBE is the command name, looked for at ~/.local/bin/<command> and then on PATH.
+# Both, deliberately: on a fresh host the bootstrap may run from a shell that predates the
+# ~/.bash_profile symlink it is laying down, so ~/.local/bin is not necessarily on PATH yet,
+# and a PATH-only probe would rebuild something already installed.
+#
+# UNLIKE the AUR list, the bootstrap will actually run these on --apply. The distinction is
+# sudo, which is the script's one hard boundary: `makepkg -si` needs root to install the
+# package it built, so the bootstrap can only print it, whereas these install user-local
+# into ~/.local/bin and need no root at all. Dry run still shows the commands first.
+#
+# ORDERING: these need packages/repo.txt (gtk4) and bootstrap/toolchains (a Rust toolchain)
+# already satisfied, which is why the bootstrap runs Packages, then Toolchains, then this.
+#
+# SSH remotes, matching how the nomarchy repo itself is cloned in docs/new-host/README.md
+# phase 5 -- so a bootstrap already depends on the GitHub key being loaded, and these
+# checkouts stay pushable rather than being read-only https copies of Peter's own work.
+
+# shelf -- GTK4 file manager, bound to Mod+F in common/umbriel/base.toml, which matches its
+# app_id ^dev\.shelf\.Shelf$. `make install` is user-local by design (PREFIX=$HOME/.local):
+# it lays down ~/.local/bin/shelf, the desktop entry, and a user-level
+# org.freedesktop.FileManager1 D-Bus service that takes precedence over a system one.
+shelf	~/code/shelf	git@github.com:litescript/shelf.git	make install

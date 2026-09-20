@@ -63,6 +63,78 @@ else
   for p in $aur_missing; do say "    https://aur.archlinux.org/$p.git"; done
 fi
 
+# ── Toolchains ──────────────────────────────────────────────────────────────
+# The gap between "the package is installed" and "the thing works". Arch's rustup package
+# ships shims only: cargo and rustc are on PATH with no toolchain behind them, so a package
+# check passes and every build fails. See common/bootstrap/toolchains.
+printf '\n\033[1mToolchains\033[0m\n'
+toolchains=$(cat <(manifest common/bootstrap/toolchains) <(manifest "hosts/$host/bootstrap/toolchains") 2>/dev/null)
+if [[ -z $toolchains ]]; then
+  say "none declared"
+else
+  while read -r mgr chain; do
+    [[ -n ${mgr:-} && -n ${chain:-} ]] || continue
+    case "$mgr" in
+      rustup)
+        if ! command -v rustup >/dev/null 2>&1; then
+          want "rustup is not installed yet -- install the repo packages above, then re-run"
+        elif active="$(rustup show active-toolchain 2>/dev/null)" && [[ -n $active ]]; then
+          good "rustup: ${active%% *}"
+        elif ((apply)); then
+          if rustup default "$chain" >/dev/null 2>&1; then
+            good "rustup: $chain (installed)"
+          else
+            bad "rustup default $chain failed -- run it by hand to see why"
+          fi
+        else
+          want "rustup has no default toolchain: rustup default $chain"
+        fi
+        ;;
+      *)
+        bad "unknown toolchain manager '$mgr' -- teach ${0##*/} about it or fix the file"
+        ;;
+    esac
+  done < <(printf '%s\n' "$toolchains")
+fi
+
+# ── Source builds ───────────────────────────────────────────────────────────
+# Things that belong on every host but are not packages -- no PKGBUILD, no AUR entry, so
+# the package manifests cannot express them. These DO run on --apply, unlike the AUR list:
+# the boundary this script holds is sudo, and these install user-local into ~/.local/bin.
+printf '\n\033[1mSource builds\033[0m\n'
+builds=$(cat <(manifest common/bootstrap/builds) <(manifest "hosts/$host/bootstrap/builds") 2>/dev/null)
+if [[ -z $builds ]]; then
+  say "none declared"
+else
+  while read -r cmd dest url install; do
+    [[ -n ${cmd:-} && -n ${dest:-} && -n ${url:-} && -n ${install:-} ]] || continue
+    dir="${dest/#\~/$HOME}"
+    # Probe ~/.local/bin explicitly as well as PATH: on a fresh host this may run from a
+    # shell older than the ~/.bash_profile this script is laying down.
+    if [[ -x $HOME/.local/bin/$cmd ]] || command -v "$cmd" >/dev/null 2>&1; then
+      good "$cmd"
+    elif ((apply)); then
+      if [[ ! -d $dir/.git ]]; then
+        mkdir -p "$(dirname "$dir")"
+        if ! git clone "$url" "$dir" >/dev/null 2>&1; then
+          bad "$cmd: git clone failed -- $url (is the GitHub key loaded? ssh-add -l)"
+          continue
+        fi
+      fi
+      if (cd "$dir" && eval "$install") >/dev/null 2>&1 \
+         && { [[ -x $HOME/.local/bin/$cmd ]] || command -v "$cmd" >/dev/null 2>&1; }; then
+        good "$cmd (built and installed)"
+      else
+        bad "$cmd: '$install' failed in $dest -- run it there by hand to see why"
+      fi
+    else
+      want "$cmd is missing. Clone and build:"
+      say  "    git clone $url $dest"
+      say  "    cd $dest && $install"
+    fi
+  done < <(printf '%s\n' "$builds")
+fi
+
 # ── Symlinks ────────────────────────────────────────────────────────────────
 printf '\n\033[1mSymlinks\033[0m\n'
 while read -r src dst; do
