@@ -13,6 +13,24 @@
 
 AddKeysToAgent yes
 
+# Local-only overrides and hosts that must not be in a PUBLIC repo: ~/.ssh/config.local.
+# Relative Include paths resolve against ~/.ssh. Nothing secret belongs in this file OR in
+# that one -- keys stay in ~/.ssh either way. What that file is for is the other category:
+# real config that is simply nobody else's business, such as a Host block naming a routable
+# address and User root, which in a public repo advertises a login target.
+#
+# Placed HERE deliberately, and the position is load-bearing in both directions. AFTER
+# AddKeysToAgent, so that global value is obtained first and still applies to every host
+# (ssh keeps the FIRST value it obtains for a keyword). BEFORE the first Host block, so a
+# block in config.local can override one below rather than losing to it.
+#
+# A MISSING INCLUDE IS SILENT. ssh does not error on an absent included file, so on a host
+# that has no config.local this simply defines nothing -- and the failure surfaces later as
+# `Could not resolve hostname vps`. That is survivable because these are hosts reached by
+# hand, but do not put anything load-bearing here expecting to be told when it is absent.
+# Same hazard the umbriel include layering has, and for the same reason. See CLAUDE.md.
+Include config.local
+
 Host waylab
     HostName 192.168.1.209
     User peter

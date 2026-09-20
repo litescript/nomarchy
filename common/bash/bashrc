@@ -79,7 +79,6 @@ alias pilog='ssh root@192.168.1.178'
 alias glog='ssh peter@192.168.1.209'
 alias genbin='sudo docker exec -it gentoo-builder bash'
 alias eink='cd ~/code/pi_display/eink_dev && source .venv/bin/activate'
-alias lnlog='ssh root@82.180.173.155'
 alias netfield='sudo ~/code/ls-netfield/.venv/bin/python ~/code/ls-netfield/main.py'
 alias opnlog='ssh root@192.168.1.1'
 alias giflog='ssh litescript@192.168.1.116'
@@ -266,6 +265,15 @@ fi
 
 # Alias browser: `ba` lists and searches everything defined above.
 [[ -f ~/code/browse_alias/ba ]] && source ~/code/browse_alias/ba
+
+# Local-only, and last so it wins: hosts and aliases that must not be in a PUBLIC repo.
+# The `ssh user@192.168.x.x` aliases above are fine here -- a private address is unreachable
+# from the internet and tells a reader nothing. A ROUTABLE address is different in kind, so
+# it lives in ~/.bashrc.local alongside the matching `Host` block in ~/.ssh/config.local.
+#
+# Absent on a host that has none, and silently so, exactly like that ssh include. Nothing
+# load-bearing belongs here. See CLAUDE.md.
+[[ -f ~/.bashrc.local ]] && source ~/.bashrc.local
 
 # Prompt. Starship replaces PS1 wholesale, so setting PS1 above it would be dead code --
 # the old config did exactly that.

@@ -88,6 +88,37 @@ login on the machine. caesar's copy holds rigel's `id_ed25519_caesar` public key
 `PasswordAuthentication no` means that key is the only way in for peter, so
 `ssh-copy-id` cannot bootstrap it. Add keys by hand.
 
+`~/.ssh/config.local` and `~/.bashrc.local` are a third category again: not secrets, not
+access grants, just real config that is **nobody else's business in a public repo**. The
+tracked files carry host names, **private** addresses and key *paths* quite happily — the
+dozen `ssh user@192.168.x.x` aliases in `common/bash/bashrc` are fine, because an
+unroutable address tells a reader nothing. A **routable** address is different in kind: with
+`User root` it advertises a login target to anyone reading GitHub. So the `vps` machine is
+named in those two local files — a `Host` block in one, `alias lnlog='ssh vps'` in the
+other — and the tracked files pull them in:
+
+| tracked file | pulls in | placement |
+|---|---|---|
+| `common/ssh/config` | `Include config.local` | after `AddKeysToAgent`, before the first `Host` |
+| `common/bash/bashrc` | `[[ -f ~/.bashrc.local ]] && source ~/.bashrc.local` | last, so it wins |
+
+The address is written **once**, in `~/.ssh/config.local`; the alias is just `ssh vps`. The
+trade is explicit: neither file is **backed up by the repo**, so if one is lost, it is lost.
+
+Two things about that include were verified with `ssh -G`, not assumed:
+
+- **Its position is load-bearing in both directions.** It sits *after* `AddKeysToAgent yes`
+  so that global value is obtained first and still reaches every host including `vps`
+  (`ssh -G vps` reports `addkeystoagent true`), and *before* the first `Host` block so a
+  local block can override a tracked one rather than losing to it. ssh keeps the **first**
+  value it obtains for a keyword, which is the same rule the `AddKeysToAgent` comment in
+  that file already turns on.
+- **A missing include is silent.** ssh does not error on an absent included file, so a host
+  without `config.local` defines nothing and says nothing; the failure surfaces much later
+  as `Could not resolve hostname vps`. Survivable only because these are hosts reached by
+  hand. This is the same hazard as umbriel's `[include.optional]`, and the reason the
+  umbriel base is a *required* include instead.
+
 The firewall is not a file copy at all: `hosts/caesar/ufw/apply-rules` is a script that
 issues `ufw` commands, because the live rules in `/etc/ufw/user.rules` are generated and
 owned by `ufw` itself.
