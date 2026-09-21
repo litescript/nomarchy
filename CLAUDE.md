@@ -141,9 +141,24 @@ Four things about it that were established by testing umbriel 0.1.0, not by read
 - **`[[window_rule]]` and `[[layer_rule]]` entries accumulate across files**; every other
   value is replaced by the last file to set it. A host can add rules but cannot remove one
   the base defines, so anything a host might need to *not* have belongs in the host file.
-- `~/.config/umbriel/noctalia.toml` is Noctalia's generated palette, pulled in as an
-  optional include. It is genuinely optional — Noctalia rewrites it on every theme change
-  and it does not exist until that template has run once.
+- **`~/.config/umbriel/noctalia.toml` is pulled in by the *required* include, and that
+  entry is not ours to manage.** Noctalia's umbriel template has a `post_hook`,
+  `/usr/share/noctalia/assets/templates/umbriel/apply.sh`, which rewrites the host's
+  **main config file** on every theme change to append `"noctalia.toml"` to
+  `[include].files`. It is idempotent, and it writes with `cp` rather than renaming over
+  the path — so the edit lands in the repo instead of silently detaching the symlink,
+  which is the one way this could have gone badly. Verified 2026-09-21.
+
+  The consequence is a rule: **never also list that file under `[include.optional]`.**
+  Naming it twice makes umbriel log `include cycle or duplicate skipped` and report
+  `configuration invalid`, exit 1 — and since `umbriel-update`'s install gate is
+  `validate -c` against the live config, a duplicate blocks updates of a compositor that
+  is otherwise fine. That is how it was found, on caesar's first reboot after the
+  `5eb49b6` merge. Both hosts now keep the optional entry commented out.
+
+  A required include naming a file that does not exist is `configuration invalid` too,
+  and on a rebuilt machine the palette does not exist until Noctalia's template has run
+  once. `common/bootstrap/seeds` plants it before first login to close that gap.
 
 A new host is a deliberately written `hosts/<name>/`, never a copy of another host's.
 `hosts/` is not a template directory.
@@ -176,6 +191,7 @@ It is data-driven, and the data is the spec:
 | `hosts/<host>/packages/{repo,aur}.txt` | packages only that machine gets |
 | `common/bootstrap/links`, `hosts/<host>/bootstrap/links` | symlinks to lay |
 | `hosts/<host>/bootstrap/copies` | root-owned copies, **diffed** so their drift is reported rather than silent |
+| `common/bootstrap/seeds`, `hosts/<host>/bootstrap/seeds` | files an app owns but that must **exist** before it first runs; copied once if absent, never overwritten, deliberately **not** diffed |
 | `common/bootstrap/units`, `hosts/<host>/bootstrap/units` | `systemd --user` units to enable |
 | `common/bootstrap/toolchains`, `hosts/<host>/bootstrap/toolchains` | language toolchains — the gap between *package installed* and *thing works* |
 | `common/bootstrap/builds`, `hosts/<host>/bootstrap/builds` | source builds that are not packages; **run** on `--apply`, unlike the AUR list |

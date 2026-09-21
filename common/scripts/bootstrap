@@ -156,6 +156,34 @@ while read -r src dst; do
   fi
 done < <(cat common/bootstrap/links "hosts/$host/bootstrap/links" 2>/dev/null | grep -vE '^\s*#|^\s*$')
 
+# ── Seeded files ────────────────────────────────────────────────────────────
+# Files an application owns and rewrites, but which must EXIST before it has ever run.
+# Copied once if absent, then left alone forever. Deliberately not diffed: their drift is
+# the application working, and reporting it every run would train the eye to skip this
+# section. See common/bootstrap/seeds for the full argument.
+printf '\n\033[1mSeeded files\033[0m\n'
+seeds=$(cat <(manifest common/bootstrap/seeds) <(manifest "hosts/$host/bootstrap/seeds") 2>/dev/null)
+if [[ -z $seeds ]]; then
+  say "none declared"
+else
+  while read -r src dst; do
+    [[ -n ${src:-} && -n ${dst:-} ]] || continue
+    target="${dst/#\~/$HOME}"
+    if [[ ! -e $repo/$src ]]; then bad "$src does not exist in the repo"; continue; fi
+    if [[ -e $target ]]; then
+      good "$dst (present -- owned by the app, drift expected)"
+    elif ((apply)); then
+      if mkdir -p "$(dirname "$target")" && cp "$repo/$src" "$target"; then
+        good "$dst (seeded from $src)"
+      else
+        bad "$dst could not be seeded from $src"
+      fi
+    else
+      want "$dst <- $src (seed; absent)"
+    fi
+  done < <(printf '%s\n' "$seeds")
+fi
+
 # ── Root-owned copies ───────────────────────────────────────────────────────
 # Cannot be symlinks, so they drift silently. Diffing them is the whole point of listing
 # them: this turns "the repo and the machine quietly disagree" into a reported conflict.

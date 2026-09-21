@@ -16,15 +16,26 @@
 # the file as umbriel was given it, and that is ~/.config/umbriel (a symlink), not this
 # directory. Verified, not assumed.
 #
-# The optional include is Noctalia's generated palette. It is genuinely optional: Noctalia
-# rewrites it on every theme change and it is absent until the umbriel template has run
-# once. It lands after the base, so it supplies the colours the base leaves commented.
+# Noctalia's generated palette is pulled in by the REQUIRED include below, and that entry
+# is not ours. Noctalia's umbriel template has a post_hook --
+# /usr/share/noctalia/assets/templates/umbriel/apply.sh -- which rewrites THIS file on
+# every theme change to append "noctalia.toml" to [include].files. It writes with cp
+# rather than renaming over the path, so the edit lands in the repo instead of silently
+# detaching the symlink. Verified 2026-09-21.
+#
+# The optional entry therefore stays COMMENTED. Naming the same file in both [include]
+# and [include.optional] makes umbriel log "include cycle or duplicate skipped" and report
+# `configuration invalid`, exit 1 -- which in turn blocks umbriel-update, whose install
+# gate is `validate -c` against this live config. That is how it was found.
+#
+# The required entry is safe on a fresh machine because common/bootstrap/seeds plants the
+# palette before first login. See the header of common/umbriel/noctalia.toml.
 
 [include]
-files = ["~/Projects/nomarchy/common/umbriel/base.toml"]
+files = ["~/Projects/nomarchy/common/umbriel/base.toml", "noctalia.toml"]
 
 [include.optional]
-files = ["~/.config/umbriel/noctalia.toml"]
+# files = ["~/.config/umbriel/noctalia.toml"]
 
 # ─────────────────────────────── Outputs ────────────────────────────────────
 # Configure monitor identity, mode, logical placement, scaling, HDR, VRR, and

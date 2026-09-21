@@ -23,6 +23,12 @@
 files = ["~/Projects/nomarchy/common/umbriel/base.toml", "noctalia.toml"]
 
 [include.optional]
+# DO NOT UNCOMMENT. Noctalia appends "noctalia.toml" to the REQUIRED [include] above by
+# itself, on every theme change, via its umbriel template post_hook. Naming the same file
+# here as well makes umbriel report `configuration invalid` (exit 1) on a duplicate
+# include -- which also blocks umbriel-update, whose install gate validates this file.
+# caesar hit exactly that on 2026-09-21. The palette is seeded by common/bootstrap/seeds
+# so the required entry is satisfied on a fresh machine.
 # files = ["~/.config/umbriel/noctalia.toml"]
 
 # ─────────────────────────────── Outputs ────────────────────────────────────

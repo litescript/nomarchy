@@ -1,0 +1,20 @@
+# Seeded files: <repo path>  <system path>
+#
+# Files an application OWNS and rewrites, which nonetheless have to exist before that
+# application has ever run. Copied once if the destination is absent, and never touched
+# again.
+#
+# This is a third category, and the distinction from the other two is the point:
+#
+#   links   the repo owns the file; the system points at it; edits are live
+#   copies  root owns the path; the repo cannot write it, so drift is DIFFED and reported
+#   seeds   the app owns the file; the repo supplies a starting point and then lets go
+#
+# Seeds are deliberately NOT diffed. Their drift is the application working as intended,
+# and flagging it every run would train the eye to skip the section -- the same argument
+# hosts/caesar/bootstrap/copies makes for leaving Noctalia's settings.toml out.
+#
+# The bar for adding a row here: something must FAIL if the file is missing at first
+# login. If nothing fails, the file does not need seeding and this is just a stale copy
+# nobody asked for.
+common/umbriel/noctalia.toml	~/.config/umbriel/noctalia.toml

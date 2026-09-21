@@ -1,0 +1,37 @@
+# Noctalia's generated umbriel palette -- a SEED, not a tracked config file.
+#
+# Noctalia owns this file at runtime: its umbriel template rewrites it on every theme
+# change, so the copy here is a snapshot and is EXPECTED to fall behind. It is not diffed
+# by the bootstrap, which is why it lives in common/bootstrap/seeds rather than a copies
+# manifest -- reporting its drift would be reporting that Noctalia is working.
+#
+# It exists because the include that pulls it in is REQUIRED, not optional (Noctalia
+# appends "noctalia.toml" to [include] itself -- see hosts/<host>/umbriel/config.toml).
+# A required include naming a file that does not exist makes umbriel report
+# `configuration invalid` and exit 1. On a freshly rebuilt machine this file does not
+# exist until Noctalia's template has run once, so without a seed the first login is a
+# race between the compositor starting and the shell generating its palette. Seeding it
+# means a new host comes up in Tokyo Night rather than in that race.
+#
+# To change the theme, change it in Noctalia and let it regenerate. Do not hand-edit.
+
+[colors]
+background = "#24283bFF"
+text_primary = "#c0caf5FF"
+text_muted = "#9aa5ceFF"
+accent_primary = "#7aa2f7FF"
+accent_secondary = "#bb9af7FF"
+warning = "#9ece6aFF"
+error = "#f7768eFF"
+insert_hint = "#9ece6a80"
+backdrop = "#24283bFF"
+
+[colors.border]
+focused = "#7aa2f7FF"
+unfocused = "#24283bFF"
+scratchpad_focused = "#9ece6aFF"
+scratchpad_unfocused = "#44691cFF"
+outer = "#1a1b26FF"
+
+[colors.overview]
+background_tint = "#1a1b2688"
