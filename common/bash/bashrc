@@ -96,6 +96,7 @@ alias clamps='cliamp --provider spotify'
 alias clampr='cliamp --provider radio'
 alias netconpx='tail -50 /var/log/netconsole-proxmox.log'
 alias mikeasm='qemu-system-i386 -drive file=disk_images/mikeos-4.7-asm4mo.flp,format=raw,if=floppy'
+alias nomarchy='cd ~/Projects/nomarchy/'
 
 # --- Functions ---
 
@@ -251,7 +252,10 @@ else
 fi
 
 # Edit the file picked with ff.
-eff() { local f; f="$(ff)" && [[ -n $f ]] && "$EDITOR" "$f"; }
+eff() {
+  local f
+  f="$(ff)" && [[ -n $f ]] && "$EDITOR" "$f"
+}
 
 # --- Backup status summary (auto-print on login) ---
 if [[ -f "$HOME/Logs/code-backup.log" ]]; then
