@@ -104,7 +104,7 @@ empty_above = false                             # Keep one empty workspace above
 # ────────────────────────────────────────────────────────────────────────────
 
 [colors]
-# background = "#141419FF"                      # Internal panels and banners
+# background = "#141419FF"                      # Umbriel panels and banners
 # text_primary = "#E8E8EAFF"                    # Primary text
 # text_muted = "#8A8A92FF"                      # Secondary help and status text
 # accent_primary = "#7AA3FFFF"                  # Titles, key chords, and primary emphasis
@@ -141,10 +141,9 @@ corner_radius = 10                              # Radius of the final decorated 
 drag_opacity = 0.75                             # Window opacity during a tiled or floating drag
 
 [appearance.blur]
-# This is the global blur engine. A matching window or layer rule must still
-# opt a surface into blur.
-enabled = true                                  # Disable blur and release per-output effect buffers
-optimized = true                                # Reuse one cached background blur per output
+# Matching window and layer rules choose which surfaces are blurred.
+enabled = true                                  # Master blur switch
+optimized = true                                # Blur the background instead of overlapping windows
 passes = 3                                      # Blur passes, 0-8
 radius = 3                                      # Blur radius, 0-100
 noise = 0.02                                    # Noise overlay, 0.0-1.0
@@ -153,8 +152,8 @@ contrast = 0.9                                  # 0.0-2.0
 saturation = 1.1                                # 0.0-2.0
 
 [appearance.shadow]
-# Custom window shaders automatically shape the shadow from their output alpha.
-# Shadows stay beneath windows and follow closing snapshots as well.
+# Shadows follow custom window shader shapes and remain visible while windows
+# close.
 enabled = true                                  # Draw shadows behind non-fullscreen windows
 softness = 10                                   # Gaussian softness, 0-200; 0 is a hard edge
 offset_x = 2                                    # Horizontal offset, -200 to 200
@@ -167,7 +166,7 @@ offset_y = 2                                    # Vertical offset, -200 to 200
 
 [input]
 middle_click_paste = true                       # Primary-selection paste; applies on reload
-window_drag_toggle = "none"                     # Retarget a window drag: "none", "floating", or "pinned"
+window_drag_toggle = "none"                     # none, floating, or pinned when pressing the other drag button
 
 [input.keyboard]
 # Physical keyboard XKB settings. Virtual keyboards provide their own keymaps.
@@ -177,7 +176,7 @@ options = "caps:swapescape"                                    # Example: "grp:a
 repeat_rate = 50                                # Key repeats per second, 0-1000
 repeat_delay = 200                              # Delay before repeating, 0-10000 ms
 numlock_toggle = true                           # Enable on connect; false preserves the current state
-track_layout = "global"                         # global, or window for per-surface layout memory
+track_layout = "global"                         # global, or window to remember each window's keyboard layout
 
 [input.touchpad]
 tap = true                                      # Tap-to-click
@@ -628,7 +627,7 @@ match.app_id = "^dev.noctalia.UmbrielSharePicker$"
 default_floating = true
 default_floating_size_px = { width = 800, height = 600 }
 
-# Browsers expose no semantic PiP role or global position control.
+# Float common browser Picture-in-Picture windows near the bottom-right corner.
 [[window_rule]]
 match.title = "^(Picture-in-Picture|Picture in picture)$"
 default_floating = true
@@ -700,8 +699,7 @@ default_pinned = true
 # match.xdg_tag = "^proton-game$"
 # default_fullscreen = true
 
-# Seed a new horizontal scrolling column with a pixel width. The layout controls
-# its tiled height, and existing named columns keep their established width.
+# Start matching windows in a 1200-pixel scrolling column.
 
 # [[window_rule]]
 # match.app_id = "^org[.]example[.]Wide$"
@@ -783,8 +781,6 @@ blur_optimized = false
 # Every event accepts shader = "path/to/effect.glsl". Inline GLSL is not supported.
 # File paths are relative to this config, including configs loaded via include.
 # Bundled reveal.glsl and squash.glsl can be referenced by their installed absolute paths.
-# Shaders can use umbriel_sample_previous(uv) for target-local feedback.
-# umbriel_random_seed is a stable vec4 that changes for each transition.
 # Copy examples/shaders beside your config only if you want editable local versions.
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -793,29 +789,30 @@ enabled = true                                  # Master animation switch
 duration_ms = 250                               # Shared duration, 1-10000 ms
 curve = "easeout"                               # Built-in or registered bezier/spring curve name
 
-# Window opening
+# Window opening animation
 [animation.windows_in]
 enabled = true
 duration_ms = 150
-curve = "easeout"
+curve = "spring:1,1000"
 style = "popin"                                 # popin, zoom, slide, fade, or none
 scale = 0.85                                    # Popin start scale, 0.1-1.0
 # shader = "shaders/reveal.glsl"      # Replaces the built-in opening style
 
-# Window closing
+# Window closing animation
 [animation.windows_out]
 enabled = true
 duration_ms = 150
-curve = "easeout"
-style = "fade"                                  # fade or slide
+curve = "spring:1,1000"
+style = "fade"                                  # fade, slide, popin, or zoom
+scale = 0.8                                     # Popin end scale, 0.1-1.0
 # shader = "shaders/reveal.glsl"
 
-# Window movement, resizing, and floating maximize. Visible scratchpad keybind
-# resizing uses this event too.
+# Window movement, resizing, layout changes, maximize and restore, and visible
+# scratchpad resizing
 [animation.windows_move]
 enabled = true
-duration_ms = 250
-curve = "snappy"
+duration_ms = 150
+curve = "spring:1,1000"
 # shader = "shaders/squash.glsl"      # Subtle compression and settle during move/resize
 
 # Workspace switching
@@ -824,14 +821,12 @@ enabled = true
 duration_ms = 250
 curve = "easeout"
 
-# Overview opening and closing
+# Entering and leaving overview
 [animation.overview]
 enabled = true
 duration_ms = 250
 curve = "easeout"
-# Filmstrip movement between workspace previews: wheel, keyboard, and touchpad
-# release alike. A spring curve keeps the release velocity and follows its
-# physics until every possible remaining movement is subpixel.
+# Filmstrip movement from wheel, keyboard, and touchpad navigation
 workspace_curve = "spring:1,1000"
 
 # Scratchpad show, hide, and backdrop
