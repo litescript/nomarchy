@@ -8,6 +8,7 @@ common/fuzzel/fuzzel.conf	~/.config/fuzzel/fuzzel.conf
 common/browse_alias		~/code/browse_alias
 common/systemd/ssh-agent.service	~/.config/systemd/user/ssh-agent.service
 common/ssh/config		~/.ssh/config
+common/themer/blueprints	~/.config/themer/blueprints
 
 # common/scripts on PATH. The umbriel binds and the systemd units call these by BARE NAME
 # so that neither file carries a home directory -- umbriel's spawn: resolves through PATH,
