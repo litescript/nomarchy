@@ -9,5 +9,8 @@ sudo sshd -t && sudo systemctl reload sshd
 sudo hosts/caesar/ufw/apply-rules
 sudo install -m 0644 common/udev/99-streamdeck-no-keyboard.rules /etc/udev/rules.d/99-streamdeck-no-keyboard.rules
 sudo udevadm control --reload-rules
+sudo install -m 0644 hosts/caesar/netconsole/netconsole-listener.service /etc/systemd/system/netconsole-listener.service
+sudo install -m 0644 hosts/caesar/netconsole/netconsole-proxmox.logrotate /etc/logrotate.d/netconsole-proxmox
+sudo systemctl daemon-reload && sudo systemctl enable --now netconsole-listener.service logrotate.timer
 # The second user, only if this machine is meant to be a staging point for meanpete.
 # Read hosts/caesar/meanpete/README.md first -- it explains why there is no sudo grant.

@@ -1,0 +1,36 @@
+# Receiver for the Proxmox host's netconsole (192.168.1.50 -> 192.168.1.200:6666).
+#
+# Proxmox streams its kernel log here over UDP straight out of kernel memory, so it keeps
+# talking when its own disk -- and with it journald -- is gone. That is the only reason
+# the 2026-09-02 NVMe controller death has a record at all. This is permanent
+# infrastructure, not debugging scaffolding: do not drop it in a cleanup.
+#
+# Ported from the Omarchy install, where it lived only in /etc and so was silently lost
+# in the 2026-09-09 reinstall. Proxmox kept sending into nothing for 17 nights.
+#
+# Changes from the Omarchy unit, each deliberate:
+#   range=192.168.1.50/32  ufw already admits only .50 (hosts/caesar/ufw/apply-rules);
+#                          this keeps the log from accepting injected lines if the
+#                          firewall is ever down.
+#   RestartSec=5           Restart=always with the 100 ms default trips the start-rate
+#                          limit within a second and leaves the unit dead.
+#   no network-online      UDP-RECV binds the wildcard address, which needs no
+#                          configured interface, and After= without Wants= ordered
+#                          against nothing anyway.
+#
+# Timestamps are Caesar's local time, one-second resolution, the same format as the
+# archived logs. Heartbeat lines carry their own epoch for anything finer.
+#
+# Rotated by hosts/caesar/netconsole/netconsole-proxmox.logrotate (copytruncate: socat
+# holds the file open). Read it with the `netconpx` alias.
+
+[Unit]
+Description=netconsole receiver for the Proxmox host
+
+[Service]
+ExecStart=/bin/sh -c '/usr/bin/socat -u UDP-RECV:6666,range=192.168.1.50/32 STDOUT | /usr/bin/ts "%%Y-%%m-%%d %%H:%%M:%%S" >> /var/log/netconsole-proxmox.log'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

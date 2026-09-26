@@ -68,6 +68,9 @@ Some things are **copies, not symlinks**, and drift silently:
   routinely ahead of `hosts/caesar/noctalia/settings.toml`.
 - `/etc/udev/rules.d/99-streamdeck-no-keyboard.rules` — root-owned, installed with
   `sudo install`.
+- `/etc/systemd/system/netconsole-listener.service` and `/etc/logrotate.d/netconsole-proxmox`
+  — root-owned, from `hosts/caesar/netconsole/`. Receives the Proxmox host's kernel log;
+  permanent, and lost once already by living only in `/etc` on Omarchy.
 - `/etc/ssh/sshd_config.d/10-nomarchy.conf` — root-owned. Validate with `sshd -t` and
   apply with `systemctl reload sshd`, never restart.
 - `/etc/systemd/system/mnt-nas.{mount,automount}` — root-owned, and necessarily so: a

@@ -31,3 +31,9 @@ fuse-overlayfs
 # Desktop applications. Easy to promote to common/ if the laptop wants them too.
 obsidian
 spotify-launcher
+
+# netconsole receiver for the Proxmox host -- hosts/caesar/netconsole/. socat receives,
+# ts (moreutils) timestamps, logrotate keeps the log bounded.
+socat
+moreutils
+logrotate

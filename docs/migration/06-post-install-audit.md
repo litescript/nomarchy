@@ -147,6 +147,7 @@ rule survives whatever compositor comes next.
 | **Audio completeness** | `pipewire`, `pipewire-pulse`, `pipewire-jack`, `wireplumber` present. Missing `pipewire-alsa` and `gst-plugin-pipewire`. |
 | **Terminal config** | Ported deliberately — see §9. `common/kitty/kitty.conf` is symlinked to `~/.config/kitty/kitty.conf`. Two behaviours were dropped on purpose and one is blocked: the custom kitty fork at `~/.local/opt/kitty-pete` is not rebuilt, so `mouse_selection_from_gutter` is unavailable. |
 | **Multilib** | Disabled, so no `lib32-nvidia-utils` and no Steam. |
+| **Proxmox netconsole receiver** | **Restored 2026-09-26.** Missed by the migration: `netconsole-listener.service` and `/etc/logrotate.d/netconsole-proxmox` lived only in the old `/etc`, and `socat`/`moreutils`/`logrotate` were not installed, so the Proxmox host sent its kernel log into nothing from 09-09 to 09-26. The ufw rule and `netconpx` alias had come over, which made the gap easy to miss. Now `hosts/caesar/netconsole/`, listed in `bootstrap/copies`; verified end to end with a `/dev/kmsg` line from the host. The old logs and `~/Notes` (also unmigrated) were copied from the old home, checksum-verified. |
 
 ---
 

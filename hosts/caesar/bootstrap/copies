@@ -13,3 +13,5 @@ common/systemd/mnt-nas.mount		/etc/systemd/system/mnt-nas.mount
 common/systemd/mnt-nas.automount	/etc/systemd/system/mnt-nas.automount
 hosts/caesar/ssh/10-nomarchy.conf	/etc/ssh/sshd_config.d/10-nomarchy.conf
 common/udev/99-streamdeck-no-keyboard.rules	/etc/udev/rules.d/99-streamdeck-no-keyboard.rules
+hosts/caesar/netconsole/netconsole-listener.service	/etc/systemd/system/netconsole-listener.service
+hosts/caesar/netconsole/netconsole-proxmox.logrotate	/etc/logrotate.d/netconsole-proxmox

@@ -1,0 +1,17 @@
+# Installed as /etc/logrotate.d/netconsole-proxmox. Needs logrotate.timer enabled -- Arch
+# ships the timer but does not enable it.
+#
+# copytruncate, not create: netconsole-listener.service holds the file open, so a
+# rename would leave it writing to an unlinked inode and the live log would stop growing.
+#
+# Nightly heartbeat is ~1.2 MB, so eight weeks is well under 100 MB even with an incident
+# dump in it (the 2026-09-02 one was ~80 MB uncompressed).
+/var/log/netconsole-proxmox.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
