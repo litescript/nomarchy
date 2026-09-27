@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+#
+# Image a block device to the NAS byte for byte, then prove the image is usable.
+#
+#   disk-image send   <device> <name>               read the device once, write <name>.img
+#   disk-image verify <name> [--read-back] [--scrub]
+#
+# Written 2026-09-27 to archive caesar's old Omarchy NVMe before it is wiped and becomes
+# nomarchy's root. The file-level rescue (~/.gnupg, ~/Legal/Personal, ~/Notes/homelab-archive,
+# ~/Archive/omarchy-rescue) got out what was known to matter; this is what makes it safe to
+# be wrong about that. A raw image of the LUKS partition cannot miss a root-only file or a
+# snapper snapshot, and it stays encrypted under the passphrase that already protects it --
+# which matters, because every directory under Backups/ on that share is world-writable.
+#
+# Run it yourself, from a real terminal. It uses sudo for exactly the steps that need root
+# (reading the device, and the loop/cryptsetup/mount test) and nothing else: the image is
+# written as you, so it does not land on the NAS as a root-squashed file.
+#
+# Output, one directory per image:  $DEST_ROOT/<name>/
+#   <name>.img       the image
+#   <name>.sha256    digest of the bytes read FROM THE DEVICE, computed in the same pass
+#   <name>.info      size, partition table, blkid, LUKS header dump -- enough to put it back
+#
+# send refuses a device, or anything stacked on it, that is mounted read-write: an image of
+# a filesystem changing underneath dd is not an image of anything. A read-only mount is fine.
+
+set -euo pipefail
+
+DEST_ROOT=${NOMARCHY_IMAGE_DEST:-/mnt/nas/Public/Backups/images}
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+usage() { die "usage: ${0##*/} send <device> <name> | verify <name> [--read-back] [--scrub]"; }
+
+send() {
+  local dev=${1:-} name=${2:-}
+  [[ -n $dev && -n $name ]] || usage
+  [[ -b $dev ]] || die "'$dev' is not a block device"
+  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || die "name may only contain letters, digits, . _ -"
+
+  local p opts
+  for p in $(lsblk -nrpo PATH "$dev"); do
+    while read -r opts; do
+      [[ ,$opts, == *,rw,* ]] && die "'$p' is mounted read-write ($(findmnt -rno TARGET -S "$p" | head -1)) -- unmount it or remount it ro first"
+    done < <(findmnt -rno OPTIONS -S "$p")
+  done
+
+  # Touching the path is what triggers the automount; fail here, not three hours in.
+  mkdir -p "$DEST_ROOT" 2>/dev/null || true
+  [[ -d $DEST_ROOT ]] || die "'$DEST_ROOT' unavailable -- is the NAS up?"
+  local dir=$DEST_ROOT/$name
+  [[ ! -e $dir/$name.img ]] || die "'$dir/$name.img' already exists -- pick another name or remove it"
+
+  echo "==> sudo, for reading $dev (asked once, up front)"
+  sudo -v
+  mkdir -p "$dir"
+  local size parent
+  size=$(sudo blockdev --getsize64 "$dev")
+  parent=$(lsblk -nrpo PKNAME "$dev" | head -1)
+
+  {
+    printf 'name:    %s\nsource:  %s\nsize:    %s\ntaken:   %s\nhost:    %s\n\n' \
+      "$name" "$dev" "$size" "$(date -Is)" "$(cat /etc/hostname)"
+    lsblk -o NAME,SIZE,TYPE,FSTYPE,UUID,PARTUUID,MODEL,SERIAL ${parent:+"$parent"} "$dev" 2>/dev/null
+    echo
+    [[ -n $parent ]] && sudo sfdisk -d "$parent" && echo
+    sudo blkid "$dev"
+    echo
+    sudo cryptsetup luksDump "$dev" 2>/dev/null || echo "(not LUKS)"
+  } > "$dir/$name.info"
+
+  printf '==> imaging %s (%s bytes) -> %s\n' "$dev" "$size" "$dir/$name.img"
+  local meter=(cat)
+  command -v pv >/dev/null && meter=(pv -s "$size")
+  # One read of the device feeds both the file and the digest, so the .sha256 describes
+  # what came OFF THE DISK -- not a re-read of what landed, which is what verify is for.
+  sudo dd if="$dev" bs=16M iflag=fullblock status=none \
+    | "${meter[@]}" \
+    | tee "$dir/$name.img.partial" \
+    | sha256sum | cut -d' ' -f1 > "$dir/$name.sha256.partial"
+  local st=("${PIPESTATUS[@]}")
+  for s in "${st[@]}"; do ((s == 0)) || die "pipeline failed (exit codes: ${st[*]}) -- partial files left in $dir"; done
+
+  local got
+  got=$(stat -c%s "$dir/$name.img.partial")
+  [[ $got == "$size" ]] || die "wrote $got bytes, device is $size -- partial files left in $dir"
+  mv "$dir/$name.img.partial" "$dir/$name.img"
+  mv "$dir/$name.sha256.partial" "$dir/$name.sha256"
+  echo "==> done: $(cat "$dir/$name.sha256")"
+  echo "    now: ${0##*/} verify $name"
+}
+
+verify() {
+  local name='' read_back=0 scrub=0 a
+  for a in "$@"; do
+    case $a in
+      --read-back) read_back=1 ;;
+      --scrub) scrub=1 ;;
+      -*) usage ;;
+      *) name=$a ;;
+    esac
+  done
+  [[ -n $name ]] || usage
+  local dir=$DEST_ROOT/$name img=$DEST_ROOT/$name/$name.img
+  [[ -f $img && -f $dir/$name.sha256 && -f $dir/$name.info ]] || die "'$dir' is missing the .img, .sha256 or .info"
+
+  echo "==> size"
+  local want_size got_size
+  want_size=$(sed -n 's/^size: *//p' "$dir/$name.info")
+  got_size=$(stat -c%s "$img")
+  printf '    device %s, image %s\n' "$want_size" "$got_size"
+  [[ $want_size == "$got_size" ]] || die "size mismatch -- the image is incomplete"
+
+  local want got
+  want=$(cat "$dir/$name.sha256")
+  echo "==> digest of the device at send time"
+  printf '    %s\n' "$want"
+  if [[ -n ${NOMARCHY_NAS_SSH:-} && $read_back == 0 ]]; then
+    # Only the digest crosses the link. NOMARCHY_NAS_DEST_PATH is the image directory as
+    # the NAS sees it; see pre-wipe-verify for why guessing that path costs ssh attempts,
+    # and why failed attempts get you blocked.
+    [[ -n ${NOMARCHY_NAS_DEST_PATH:-} ]] || die "set NOMARCHY_NAS_DEST_PATH to '$dir' as the NAS sees it, or use --read-back"
+    echo "==> digest computed on the NAS (only 64 characters cross the link)"
+    got=$(ssh -o ConnectTimeout=10 -o NumberOfPasswordPrompts=1 "$NOMARCHY_NAS_SSH" \
+            "sha256sum '$NOMARCHY_NAS_DEST_PATH/$name.img'" | grep -oE '^[0-9a-f]{64}') \
+      || die "ssh or sha256sum on the NAS failed -- do not retry blindly (Auto Block)"
+  else
+    # Reading back is acceptable HERE and was not for the laptop archive: caesar reaches
+    # the NAS over NFS on the LAN, not cifs through a relayed Tailscale route, so it costs
+    # time (roughly as long as the send) rather than freezing every other user of the mount.
+    echo "==> digest read back through $DEST_ROOT (as long as the send took)"
+    local meter=(cat)
+    command -v pv >/dev/null && meter=(pv -s "$got_size")
+    got=$("${meter[@]}" < "$img" | sha256sum | cut -d' ' -f1)
+  fi
+  printf '    %s\n' "$got"
+  [[ $got == "$want" ]] || die "MISMATCH -- the image on the NAS is not what was read off the device"
+  echo "==> MATCH: the image is byte-identical to the device"
+
+  # The digest proves the bytes; this proves the bytes are a disk you can get back into.
+  echo "==> mount test (sudo)"
+  sudo -v
+  # Globals, not locals: the EXIT trap runs after verify has returned, when its locals are
+  # already gone, and a cleanup that sees empty variables leaves the loop device, the
+  # mapping and the mount all in place.
+  loop='' mapper='' mnt=''
+  cleanup() {
+    [[ -n $mnt ]] && { sudo umount "$mnt" 2>/dev/null; rmdir "$mnt" 2>/dev/null; }
+    [[ -n $mapper ]] && sudo cryptsetup close "$mapper" 2>/dev/null
+    [[ -n $loop ]] && sudo losetup -d "$loop" 2>/dev/null
+    return 0
+  }
+  trap cleanup EXIT
+  loop=$(sudo losetup -r -f --show "$img")
+  printf '    loop  %s (read-only)\n' "$loop"
+  local fsdev=$loop
+  if sudo cryptsetup isLuks "$loop"; then
+    # The original container is very likely still open. Two mappings of one LUKS volume
+    # would then expose two block devices carrying the same btrfs fsid, and btrfs treats
+    # those as one multi-device filesystem. Close the original first.
+    local luuid
+    luuid=$(sudo cryptsetup luksUUID "$loop" | tr -d -)
+    if sudo dmsetup info -c --noheadings -o uuid 2>/dev/null | grep -qi "$luuid"; then
+      die "this LUKS volume is already open (the original disk?) -- unmount and close it first, e.g.
+       sudo umount /mnt/omarchy-old && sudo cryptsetup close omarchy-old"
+    fi
+    mapper=disk-image-verify
+    echo "    LUKS: enter the passphrase for the imaged volume"
+    sudo cryptsetup open --readonly "$loop" "$mapper"
+    fsdev=/dev/mapper/$mapper
+  fi
+  local fstype
+  fstype=$(sudo blkid -s TYPE -o value "$fsdev")
+  printf '    fs    %s\n' "${fstype:-unknown}"
+  mnt=$(mktemp -d /tmp/disk-image-verify.XXXXXX)
+  local mopts=ro
+  [[ $fstype == btrfs ]] && mopts=ro,subvolid=5
+  sudo mount -o "$mopts" "$fsdev" "$mnt"
+  echo "    mounted read-only at $mnt; top level:"
+  sudo ls -la "$mnt" | sed 's/^/      /'
+  if [[ $fstype == btrfs ]]; then
+    echo "    subvolumes:"
+    sudo btrfs subvolume list "$mnt" | sed 's/^/      /'
+    if ((scrub)); then
+      # Reads every allocated block and checks it against btrfs's own checksums: proof
+      # that the filesystem inside is intact, not merely that the copy matches the source.
+      echo "==> scrub (read-only; reads all allocated data over the NAS link)"
+      sudo btrfs scrub start -B -r "$mnt"
+    fi
+  fi
+  echo "==> image verified: digest matches, and it opens and mounts"
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+  send) send "$@" ;;
+  verify) verify "$@" ;;
+  *) usage ;;
+esac
