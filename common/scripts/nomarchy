@@ -373,6 +373,46 @@ root_steps() {
 summary() { printf '\n\033[1m%d ok, %d to do, %d conflicts\033[0m\n\n' "$ok" "$todo" "$conflict"; }
 
 # ── Commands ────────────────────────────────────────────────────────────────────────────
+usage() {
+  cat <<'HELP'
+nomarchy -- turn a bare Arch install into a nomarchy host, or say how far one already is.
+
+Usage:
+  nomarchy status  [host]                audit everything; change nothing; never sudo
+  nomarchy link    [host]  [--yes]       user level: toolchains, builds, symlinks,
+                                         seeds, user units, user checks; never sudo
+  nomarchy install base    [--yes]       packages, root-owned files, units and checks
+                                         every host needs
+  nomarchy install desktop [--yes]       the graphical session; umbriel built from AUR
+  nomarchy install host [host] [--yes]   this machine's own packages, files, units, checks
+  nomarchy help                          this text (also -h, --help, after any command)
+
+  host defaults to /etc/hostname. install prints the whole plan -- every package, diff
+  and command -- asks once, then runs it, with sudo prompting you; --yes skips the
+  question. status and link never call sudo, so they are safe to run any time.
+
+A fresh machine, in order (common/scripts/nomarchy until link has put it on PATH):
+  nomarchy install base
+  nomarchy install desktop
+  nomarchy install host
+  nomarchy link              and again after the first graphical login, for the
+                             checks that need Noctalia running
+
+Keeping a machine current:
+  git -C ~/Projects/nomarchy pull --ff-only
+  nomarchy status            what is new or missing since last time
+  nomarchy link              lay new links, enable new user units
+  umbriel config validate && umbriel msg config-reload
+                             running programs do not reread config on their own
+                             (umbriel builds before f66d6a8: `umbriel validate`;
+                             kitty: Ctrl+Shift+F5 in open windows)
+  umbriel-update             now and then: is upstream umbriel ahead?
+
+Details: CLAUDE.md, "Bootstrapping a host".
+HELP
+}
+
+for a in "$@"; do case $a in -h|--help|help) usage; exit 0 ;; esac; done
 cmd=${1:-}; shift || true
 yes=0; args=()
 for a in "$@"; do case $a in --yes|-y) yes=1 ;; -*) die "unknown option '$a'" ;; *) args+=("$a") ;; esac; done
@@ -412,8 +452,13 @@ case $cmd in
     [[ $stage == host ]] && root_steps
     exit $rc
     ;;
+  '')
+    usage
+    exit 1
+    ;;
   *)
-    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    printf "%s: unknown command '%s'\n\n" "${0##*/}" "$cmd" >&2
+    usage >&2
     exit 1
     ;;
 esac
