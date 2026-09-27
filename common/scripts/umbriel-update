@@ -287,6 +287,47 @@ session_state() {
 
 # ── Three-way config merge ──────────────────────────────────────────────────
 
+# ── What a merge does to the LIVE config ──────────────────────────────────
+# A three-way merge lets upstream's edits through wherever this repo's line still matched
+# upstream's old one -- deletions included. When upstream cut examples/config.toml from 836
+# lines to 258 (12f4123, 2026-09), the clean part of the merge would have removed 74 of
+# base.toml's 220 live settings: every animation, blur and shadow value, the hot corners,
+# the master/dwindle layout. No conflict, nothing for validate to notice (a missing key is
+# valid), each silently reverting to a built-in default -- in a range that changed those
+# defaults. It was caught only because someone went looking. So the merge now says, for
+# every live setting, what it removed, changed or added outside the conflicts.
+
+# Live settings as "section|key = value", comments and spacing normalised. A multiset,
+# not a set: [[window_rule]] repeats its keys, so duplicates are kept.
+live_settings() {
+  awk '
+    /^[[:space:]]*\[/ { sec=$0; sub(/[[:space:]]*#.*$/,"",sec); gsub(/[[:space:]]/,"",sec); next }
+    /^[[:space:]]*(#|$)/ { next }
+    /=/ { l=$0; sub(/[[:space:]]+#.*$/,"",l); gsub(/[[:space:]]+/," ",l); sub(/^ /,"",l); print sec "|" l }
+  ' "$1" | LC_ALL=C sort
+}
+
+# A merged file with every conflict resolved to OUR side: what the clean part alone did.
+ours_side() {
+  awk '/^<<<<<<< /{m=1; next} /^=======$/ && m==1 {m=2; next} /^>>>>>>> / && m {m=0; next} m!=2' "$1"
+}
+
+# setting_changes <before> <after> <tmpdir> -> lines "removed<TAB>old", "changed<TAB>old<TAB>new",
+# "added<TAB>new". A setting whose key survives with another value is changed; a rename is
+# a removed key beside an added one.
+setting_changes() {
+  local before=$1 after=$2 t=$3
+  live_settings "$before" > "$t/s-before"
+  live_settings "$after"  > "$t/s-after"
+  LC_ALL=C comm -23 "$t/s-before" "$t/s-after" > "$t/s-gone"
+  LC_ALL=C comm -13 "$t/s-before" "$t/s-after" > "$t/s-came"
+  awk -F' = ' '
+    FILENAME==ARGV[1] { came[$1]=$0; next }
+    FILENAME==ARGV[2] { gone[$1]=1; if ($1 in came) print "changed\t" $0 "\t" came[$1]; else print "removed\t" $0; next }
+    !($1 in gone) { print "added\t" $0 }
+  ' "$t/s-came" "$t/s-gone" "$t/s-came"
+}
+
 merge_config() {
   local pin=$1 tgt=$2 clone=$3
   local tmp; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
@@ -309,7 +350,7 @@ merge_config() {
   echo
 
   if (( n == 0 )); then
-    good "merged cleanly, no conflicts"
+    good "merged with no conflicts"
   else
     want "$n conflict$( ((n!=1)) && echo s) -- upstream changed a line this repo had customised:"
     grep -n '^<<<<<<<' "$tmp/ours" | while IFS=: read -r ln _; do
@@ -321,6 +362,28 @@ merge_config() {
     done
   fi
 
+  # What the merge does to live settings OUTSIDE the conflicts -- see live_settings.
+  ours_side "$tmp/ours" > "$tmp/clean"
+  local changes nrem nchg nadd
+  changes=$(setting_changes "$BASE" "$tmp/clean" "$tmp")
+  nrem=$(grep -c '^removed' <<<"$changes"); nchg=$(grep -c '^changed' <<<"$changes"); nadd=$(grep -c '^added' <<<"$changes")
+  echo
+  if [[ -z $changes ]]; then
+    good "outside the conflicts, no live setting is removed, changed or added -- only comments"
+  else
+    want "outside the conflicts, the merge REMOVES $nrem, CHANGES $nchg and ADDS $nadd live setting(s)."
+    say  "  No conflict marks these and validate cannot see a removal. Each removed line falls back"
+    say  "  to umbriel's built-in default. Read them; re-add what this repo still wants:"
+    local kind a b
+    while IFS=$'\t' read -r kind a b; do
+      case $kind in
+        removed) say "    - ${a/|/ }" ;;
+        changed) say "    ~ ${a/|/ }"; say "        -> ${b#*|}" ;;
+        added)   say "    + ${a/|/ }" ;;
+      esac
+    done <<<"$changes"
+  fi
+
   if (( ! apply )); then
     cp "$tmp/ours" "${TMPDIR:-/tmp}/base.toml.merged"
     echo
@@ -329,7 +392,8 @@ merge_config() {
     return 0
   fi
 
-  if (( n == 0 )); then
+  if (( n == 0 )) && [[ -z $changes ]]; then
+    # Nothing but comments moved: safe to promote without a human.
     cp "$tmp/ours" "$BASE"
     write_pin "$tgt"
     echo
@@ -338,11 +402,13 @@ merge_config() {
     say  "the old compositor keeps its last working configuration -- expected until you install."
     say  "Next: umbriel-update --apply"
   else
+    # Conflicts, or live settings the merge would change: either way a human reads it first.
     cp "$tmp/ours" "$BASE.new"
     printf '%s\n' "$tgt" > "$PIN.pending"
     echo
-    want "wrote $BASE.new with conflict markers. base.toml is UNTOUCHED, pin unchanged."
-    say  "    nvim ${BASE#"$repo"/}.new     # resolve the $n conflict$( ((n!=1)) && echo s)"
+    want "wrote $BASE.new for review. base.toml is UNTOUCHED, pin unchanged."
+    (( n > 0 )) && say "    nvim ${BASE#"$repo"/}.new     # resolve the $n conflict$( ((n!=1)) && echo s)"
+    [[ -n $changes ]] && say "    re-add to ${BASE#"$repo"/}.new any removed or changed setting listed above that this repo wants"
     say  "    umbriel-update --merge-accept  # promote it and move the pin"
   fi
 }

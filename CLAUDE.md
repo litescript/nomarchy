@@ -297,6 +297,25 @@ is exactly what a three-way merge preserves. Left alone, those two windows would
 opened at the wrong size with nothing at runtime saying why. The validate gate is what
 caught it. Expect this class of leftover after any rename, and grep for the old spelling.
 
+**The worse case is a clean merge that deletes.** Upstream `12f4123` (2026-09) cut its
+example from 836 lines to 258, dropping ~30 whole sections. Wherever `base.toml` still
+carried a line unchanged from the old example, the three-way merge deleted it: 74 of 220
+live settings — all animation, blur, shadow, hot-corner and master/dwindle values — with no
+conflict, and nothing for validate to catch, because a missing key is valid. Each would have
+reverted to a built-in default, in the same range that changed those defaults. Upstream
+shrinking its *sample* is not a reason to shrink this config; that update was taken by
+keeping `base.toml` whole and changing only what the new binary rejected. `--merge-config`
+now lists every live setting the clean part of a merge removes, changes or adds, and only
+auto-promotes a merge that touches nothing but comments; anything else goes to
+`base.toml.new` and `--merge-accept`, the same path conflicts take.
+
+**Validate is `umbriel config validate` from upstream `f66d6a8` on.** A binary asked the
+old way prints its usage and exits nonzero, which by exit code reads as "configuration
+invalid" — the gate refused a good build on rigel that way before `validate_with` asked each
+binary which spelling it speaks. The commands elsewhere in this file still say `umbriel
+validate`, which is right for the builds installed on 2026-09-27 (caesar `5eb49b6`, rigel
+`31601e0`); once a host runs a newer build, the same checks are `umbriel config validate`.
+
 **Ordering: merge the config first, then install.** The new binary wants the new
 vocabulary and the running one wants the old, so whichever moves first is briefly
 mismatched. Writing `base.toml` is the survivable direction — umbriel treats unknown keys
