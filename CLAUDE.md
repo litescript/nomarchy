@@ -43,7 +43,7 @@ immediately:
 | `~/.bashrc` | `common/bash/bashrc` |
 | `~/.bash_profile` | `common/bash/bash_profile` |
 | `~/.config/fuzzel/fuzzel.conf` | `common/fuzzel/fuzzel.conf` |
-| `~/.config/themer/blueprints` | `common/themer/blueprints` (whole dir; themer's theme intent — generated Noctalia palettes are derived, never versioned) |
+| `~/.config/irides/blueprints` | `common/irides/blueprints` (whole dir; Irides' theme intent — generated Noctalia palettes are derived, never versioned) |
 | `~/code/browse_alias` | `common/browse_alias` (whole dir) |
 | `~/.ssh/config` | `common/ssh/config` |
 

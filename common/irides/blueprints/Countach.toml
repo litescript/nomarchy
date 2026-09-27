@@ -1,0 +1,18 @@
+# irides blueprint: the theme's intent. `irides apply` compiles it into a Noctalia
+# palette. Hand edits are fine; unknown keys and out-of-range values are errors.
+# `irides lock/adjust/wallpaper` rewrite this file and do not keep comments.
+
+schema = 1
+generator = 1
+
+[source]
+kind = "wallpaper"
+path = "~/Pictures/cyberpunk-countach.jpg"
+sha256 = "5af4d9406fd371d0c416bf507fec64b9ccddab71d96a6b0e1b477908de9175c7"
+
+[adjustments]
+hue_shift = 0.0
+saturation = 1.0
+brightness = 0.0
+contrast = 0.0
+temperature = 0.0

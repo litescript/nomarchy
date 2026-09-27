@@ -335,6 +335,8 @@ follows_mouse = true                            # Focus on motion after scene ch
 # both and looking at them.
 "Mod+Shift+V" = "spawn:noctalia msg panel-toggle clipboard"
 "Mod+Ctrl+E" = "spawn:noctalia msg panel-open launcher /emo"
+# Irides theme switcher (its Noctalia plugin panel; ~/code/irides/noctalia-plugins).
+"Mod+Alt+T" = "spawn:noctalia msg panel-toggle litescript/irides:panel"
 
 # Focus navigation. In overview, Mod+Up/Down retain normal layout focus, so they
 # traverse stacks in the default horizontal layout. Bare Up/Down move between
