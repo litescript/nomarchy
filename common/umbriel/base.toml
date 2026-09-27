@@ -316,7 +316,7 @@ follows_mouse = true                            # Focus on motion after scene ch
 # Wayland may report plain `obsidian`; `obsidian$` matches either. Getting this
 # wrong is not costly — Obsidian's own single-instance lock raises the existing
 # window — but a match that works is better than a fallback that hides a typo.
-"Mod+Return" = "spawn:kitty"
+"Mod+Return" = { action = "spawn:kitty", repeat = false }
 "Mod+T" = "spawn:launch-or-focus ^btop$ kitty --app-id=btop btop"
 "Mod+D" = "spawn:launch-or-focus ^lazydocker$ kitty --app-id=lazydocker lazydocker"
 "Mod+O" = "spawn:launch-or-focus obsidian$ obsidian"
@@ -327,7 +327,7 @@ follows_mouse = true                            # Focus on motion after scene ch
 "Mod+Shift+B" = "spawn:firefox --private-window"
 "Mod+M" = "spawn:launch-or-focus ^Spotify$ spotify-limited"
 "Mod+N" = "spawn:kitty --app-id=nvim -e nvim"
-"Mod+W" = "window-close"
+"Mod+W" = { action = "window-close", repeat = false }
 
 # Shell panels. Clipboard is its own panel id, not a launcher mode — `launcher
 # /clipboard` looks plausible and silently returns "No results found", because
@@ -345,9 +345,9 @@ follows_mouse = true                            # Focus on motion after scene ch
 "Mod+Right" = "window-focus-right"
 
 # Window state and layout. Floating moved off Mod+T so T can hold btop.
-"Mod+Ctrl+T" = "window-toggle-floating"
-"Mod+Shift+T" = "window-focus-switch-floating"
-"Mod+P" = "window-toggle-pinned"
+"Mod+Ctrl+T" = { action = "window-toggle-floating", repeat = false }
+"Mod+Shift+T" = { action = "window-focus-switch-floating", repeat = false }
+"Mod+P" = { action = "window-toggle-pinned", repeat = false }
 
 # Overview lives on the top-left hot corner; Mod+O is reserved for obsidian.
 # window-toggle-maximize-to-edges and window-toggle-maximize are both unbound:
@@ -383,7 +383,7 @@ follows_mouse = true                            # Focus on motion after scene ch
 "Mod+Shift+Up" = "window-move-up"
 "Mod+Shift+Right" = "column-move-right"
 # Fullscreen on Shift+F, matching the old box, so Mod+F can hold shelf.
-"Mod+Shift+F" = "window-toggle-fullscreen"       # Exit restores the previous layout size immediately
+"Mod+Shift+F" = { action = "window-toggle-fullscreen", repeat = false }  # Exit restores the previous layout size immediately
 # window-toggle-maximize stays unbound -- see the note above; fullscreen covers it.
 # Renamed upstream in 2f2e4e3, "extent-based sizing vocabulary": width -> primary extent.
 "Mod+R" = "window-cycle-primary-extent"
@@ -434,8 +434,8 @@ follows_mouse = true                            # Focus on motion after scene ch
 # Single implicit `default` scratchpad — no named definitions, so bare actions
 # work and no name suffix is required.
 "Mod+S" = "scratchpad-toggle"
-"Mod+Shift+S" = "window-move-to-scratchpad"
-"Mod+Ctrl+S" = "window-restore-from-scratchpad"
+"Mod+Shift+S" = { action = "window-move-to-scratchpad", repeat = false }
+"Mod+Ctrl+S" = { action = "window-restore-from-scratchpad", repeat = false }
 # scratchpad-focus-next is unbound: Mod+Tab is reclaimed for workspace-next.
 # If several windows end up stashed at once, put it on Mod+Alt+S.
 
@@ -550,6 +550,11 @@ follows_mouse = true                            # Focus on motion after scene ch
 mode = "dwindle"                              # scrolling, dwindle, or master
 gap = 8                                         # Logical pixels between tiles, 0-500
 extent_presets = [0.333, 0.5, 0.667]             # Primary and secondary extent fractions
+# Which windows arriving on a workspace make its fullscreen window exit fullscreen:
+# "tiled", "floating", "pinned", "all", or a list. Upstream bb63da2f replaced the
+# per-layout booleans ([layout.dwindle] and [layout.master] new_exits_fullscreen) with this
+# one shared scope; both were false here, which is this empty list.
+new_exits_fullscreen = []
 
 [layout.struts]
 # Signed logical pixels reserved after panel exclusive zones. Negative values
@@ -567,14 +572,12 @@ center_focused = "never"                        # never, always, or on_overflow
 
 [layout.dwindle]
 # preserve_split = false                        # Keep every split direction fixed after creation
-new_exits_fullscreen = false                    # Exits fullscreen when a new window is opened in the workspace
 
 [layout.master]
 position = "left"                               # left, right, or center master area
 default_width_fraction = 0.55                   # Initial master area fraction, 0.1-0.9
 new_on_top = true                               # Put new windows at the top of the stack
 new_becomes_master = false                      # New windows take the master slot
-new_exits_fullscreen = false                    # Exits fullscreen when a new window is opened in the workspace
 
 # ───────────────────────────── Window Rules ─────────────────────────────────
 # Match windows by application ID, title, XDG tag, content type, or focus state.
@@ -792,7 +795,8 @@ curve = "easeout"                               # Built-in or registered bezier/
 # Window opening animation
 [animation.windows_in]
 enabled = true
-duration_ms = 150
+# duration_ms is not set: since upstream 7869dab a spring curve is solved as real
+# physics and owns its own length, and the new binary warns that a duration here has no effect.
 curve = "spring:1,1000"
 style = "popin"                                 # popin, zoom, slide, fade, or none
 scale = 0.85                                    # Popin start scale, 0.1-1.0
@@ -801,8 +805,7 @@ scale = 0.85                                    # Popin start scale, 0.1-1.0
 # Window closing animation
 [animation.windows_out]
 enabled = true
-duration_ms = 150
-curve = "spring:1,1000"
+curve = "spring:1,1000"                         # A spring owns its duration -- see windows_in
 style = "fade"                                  # fade, slide, popin, or zoom
 scale = 0.8                                     # Popin end scale, 0.1-1.0
 # shader = "shaders/reveal.glsl"
@@ -811,8 +814,7 @@ scale = 0.8                                     # Popin end scale, 0.1-1.0
 # scratchpad resizing
 [animation.windows_move]
 enabled = true
-duration_ms = 150
-curve = "spring:1,1000"
+curve = "spring:1,1000"                         # A spring owns its duration -- see windows_in
 # shader = "shaders/squash.glsl"      # Subtle compression and settle during move/resize
 
 # Workspace switching
