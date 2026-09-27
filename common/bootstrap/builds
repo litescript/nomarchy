@@ -41,11 +41,8 @@ shelf	~/code/shelf	git@github.com:litescript/shelf.git	make install
 # >= 1.7 (packages/repo.txt) and a rustup toolchain: rust-toolchain.toml pins 1.98, which
 # rustup fetches on first cargo run -- Arch's plain `rust` package would ignore the pin.
 #
-# NOT covered here, both per host and by hand for now:
-#   - the Noctalia plugin behind Mod+Alt+T, which lives in Noctalia's own settings.toml and
-#     needs Noctalia running -- a first-login step:
-#       noctalia msg plugins source add irides path ~/code/irides/noctalia-plugins
-#       noctalia msg plugins enable litescript/irides
+# The Noctalia plugin behind Mod+Alt+T is a check in ./user-checks: it needs Noctalia
+# running, so it passes from the first graphical login on. Still by hand:
 #   - the lighting template link (~/.config/noctalia/irides-lighting.toml), only on hosts
 #     with the RGB hardware, and only after this build (it runs irides-lighting).
 irides	~/code/irides	git@github.com:litescript/irides.git	make install

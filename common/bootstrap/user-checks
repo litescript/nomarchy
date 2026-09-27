@@ -1,0 +1,12 @@
+# User-level state every host needs that is not a link, seed or unit. Run by `nomarchy
+# link` after the source builds. Format: see common/stages/base/checks -- `probe` runs
+# with no sudo and must be read-only; `fix` must not sudo either at this level.
+
+# Irides' Noctalia plugin, behind Mod+Alt+T. It lives in Noctalia's own settings.toml,
+# which nothing here may write, and it can only be registered while Noctalia is RUNNING --
+# so on a fresh host this fails until the first graphical login, and passes on the `link`
+# after it. The source is only added when absent: whether `source add` is safe to repeat
+# has not been verified (the Irides session's caveat, 2026-09-27).
+check Irides Noctalia plugin enabled (Mod+Alt+T)
+  probe noctalia msg plugins list 2>/dev/null | grep -qE '^litescript/irides .* enabled'
+  fix   { noctalia msg plugins source list | grep -qE '^irides ' || noctalia msg plugins source add irides path ~/code/irides/noctalia-plugins; } && noctalia msg plugins enable litescript/irides

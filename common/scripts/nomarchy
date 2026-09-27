@@ -355,7 +355,10 @@ user_level() {
   head1 "[user] symlinks"; sec_links
   head1 "[user] seeded files"; sec_seeds
   head1 "[user] systemd --user units"; sec_user_units
-  if [[ -f hosts/$host/bootstrap/user-checks ]]; then head1 "[user] checks"; sec_checks "hosts/$host/bootstrap/user-checks"; fi
+  local uc
+  for uc in common/bootstrap/user-checks "hosts/$host/bootstrap/user-checks"; do
+    if [[ -f $uc ]]; then head1 "[user] checks (${uc%/bootstrap/user-checks})"; sec_checks "$uc"; fi
+  done
 }
 
 root_steps() {
