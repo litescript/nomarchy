@@ -12,6 +12,10 @@ xdg-utils
 # it a real requirement rather than something that happens to be there.
 gtk4
 
+# libadwaita, for Irides' GTK app (common/bootstrap/builds), which needs 1.7+. Like gtk4
+# above: present on caesar only as some other package's dependency until declared here.
+libadwaita
+
 # Terminal
 kitty
 

@@ -34,3 +34,19 @@
 # it lays down ~/.local/bin/shelf, the desktop entry, and a user-level
 # org.freedesktop.FileManager1 D-Bus service that takes precedence over a system one.
 shelf	~/code/shelf	git@github.com:litescript/shelf.git	make install
+
+# Irides -- palette designer; blueprints -> Noctalia palettes (common/irides/blueprints).
+# `make install` is user-local (PREFIX=$HOME/.local): irides, irides-gtk, irides-lighting,
+# the desktop entry, and ~/.local/share/irides/lighting.colors. Needs gtk4 and libadwaita
+# >= 1.7 (packages/repo.txt) and a rustup toolchain: rust-toolchain.toml pins 1.98, which
+# rustup fetches on first cargo run -- Arch's plain `rust` package would ignore the pin.
+#
+# NOT covered here, both per host and by hand for now:
+#   - the Noctalia plugin behind Mod+Alt+T, which lives in Noctalia's own settings.toml and
+#     needs Noctalia running -- a first-login step:
+#       noctalia msg plugins source add irides path ~/code/irides/noctalia-plugins
+#       noctalia msg plugins enable litescript/irides
+#   - the lighting template link (~/.config/noctalia/irides-lighting.toml), only on hosts
+#     with the RGB hardware, and only after this build (it runs irides-lighting).
+irides	~/code/irides	git@github.com:litescript/irides.git	make install
+

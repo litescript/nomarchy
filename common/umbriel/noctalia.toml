@@ -29,9 +29,16 @@ backdrop = "#24283bFF"
 [colors.border]
 focused = "#7aa2f7FF"
 unfocused = "#24283bFF"
-scratchpad_focused = "#9ece6aFF"
-scratchpad_unfocused = "#44691cFF"
 outer = "#1a1b26FF"
 
 [colors.overview]
 background_tint = "#1a1b2688"
+
+# Scratchpad borders are a window rule since umbriel f227e20; [colors.border] no longer
+# accepts scratchpad_focused/unfocused. Mirrors Noctalia's own template fix, caaad47
+# (in noctalia v5.2.0). A fresh host gets the newest umbriel from AUR, so the seed speaks
+# its vocabulary -- the older form fails `umbriel config validate` there.
+[[window_rule]]
+match.is_scratchpad = true
+border_color_focused = "#9ece6aFF"
+border_color_unfocused = "#44691cFF"
