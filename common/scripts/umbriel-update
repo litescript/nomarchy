@@ -102,6 +102,22 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; ((conflict++)); }
 head1() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die()  { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
 
+# Validate a config with a given umbriel binary, in whichever spelling THAT binary speaks.
+# Upstream f66d6a8 moved `umbriel validate` to `umbriel config validate`. A binary asked in
+# the wrong spelling prints its usage and exits nonzero -- indistinguishable, by exit code,
+# from "configuration invalid". On rigel 2026-09-27 that made the gate refuse a good build
+# without validating anything: the new binary did not know `validate`, and the script read
+# its help text as a rejection. Mid-update the installed and staged binaries disagree, so
+# each is asked separately; the help text is the signal that states which one it is.
+validate_with() {  # validate_with <binary> [config]
+  local bin=$1 cfg=${2:-}
+  if "$bin" --help 2>&1 | grep -qE '^[[:space:]]*umbriel config validate'; then
+    "$bin" config validate ${cfg:+-c "$cfg"}
+  else
+    "$bin" validate ${cfg:+-c "$cfg"}
+  fi
+}
+
 apply=0; mode=survey
 for a in "$@"; do
   case "$a" in
@@ -227,7 +243,7 @@ survey() {
   head1 "Live config"
   if [[ ! -e $LIVE ]]; then
     bad "$LIVE does not exist"
-  elif out=$(umbriel validate 2>&1); then
+  elif out=$(validate_with umbriel 2>&1); then
     good "valid against the installed binary"
   elif (( behind )); then
     # base.toml has already been merged forward and the binary has not caught up yet.
@@ -238,7 +254,7 @@ survey() {
       | sed "s|$repo/||" | while read -r l; do say "    $l"; done
     local rest
     rest=$(printf '%s\n' "$out" | grep -c '^warning:')
-    (( rest > 4 )) && say "    ... and $((rest - 4)) more (umbriel validate for the full list)"
+    (( rest > 4 )) && say "    ... and $((rest - 4)) more (umbriel config validate for the full list)"
     say "    base.toml is merged to $(pin_rev); the gate below checks it against the NEW binary."
   else
     bad "INVALID against the installed binary, and no update is pending:"
@@ -496,9 +512,16 @@ do_apply() {
     say "umbriel itself was not rebuilt; nothing to gate"
   else
     local out rc
-    out=$("$staged" validate -c "$LIVE" 2>&1); rc=$?
+    out=$(validate_with "$staged" "$LIVE" 2>&1); rc=$?
     if (( rc == 0 )); then
       good "$(printf '%s' "$out" | tail -1)"
+    elif grep -q '^Usage:' <<<"$out"; then
+      # Not a verdict on the config at all: the binary did not understand how it was asked.
+      # Refuse, but say THAT -- the next CLI rename should not read as a broken config.
+      bad "the new binary did not understand the validate command -- no verdict on the config."
+      say "    umbriel-update needs teaching the new CLI (see validate_with). Nothing installed."
+      printf '%s\n' "$out" | head -3 | while read -r l; do say "    $l"; done
+      exit 1
     else
       bad "the new binary REJECTS the live config. Nothing installed."
       printf '%s\n' "$out" | while read -r l; do say "    $l"; done
@@ -520,7 +543,7 @@ do_apply() {
   good "installed"
 
   head1 "After"
-  if out=$(umbriel validate 2>&1); then
+  if out=$(validate_with umbriel 2>&1); then
     good "live config valid against the newly installed binary"
   else
     bad "live config invalid against the binary just installed:"
@@ -557,7 +580,7 @@ do_rollback() {
   # forward for the version just removed, it now speaks a vocabulary this binary does
   # not know -- the same mismatch as an update, pointing the other way. Say so plainly
   # rather than leaving it to be discovered as keybinds that quietly do nothing.
-  if ! out=$(umbriel validate 2>&1); then
+  if ! out=$(validate_with umbriel 2>&1); then
     want "base.toml is still merged forward and this binary does not understand it:"
     printf '%s\n' "$out" | grep '^warning:' | head -4 | sed "s|$repo/||" \
       | while read -r l; do say "    $l"; done
