@@ -1,0 +1,9 @@
+# User-level caesar state that is not a link or a unit. Same format as ./checks, but run by
+# `nomarchy link`, so `fix` must NOT use sudo.
+
+# Rootless docker. There is no rootful socket on caesar (see CLAUDE.md), so plain `docker`
+# only works when the rootless context is current. The setup tool creates that context and
+# the user unit; it needs the subuid/subgid ranges useradd already assigns.
+check rootless docker context
+  probe [[ $(docker context show 2>/dev/null) == rootless ]]
+  fix   dockerd-rootless-setuptool.sh install && docker context use rootless

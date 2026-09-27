@@ -1,0 +1,17 @@
+# caesar state that is not a file or a unit. Format: see common/stages/base/checks --
+# `probe` runs with no sudo and exits 0 when right; `fix` may use sudo.
+
+# The ufw rules themselves live in /etc/ufw/user.rules, generated and root-only, so the
+# probe can only see that the firewall is on. apply-rules is idempotent; rerun it by hand
+# after editing it.
+check firewall enabled (hosts/caesar/ufw/apply-rules)
+  probe grep -q '^ENABLED=yes' /etc/ufw/ufw.conf && systemctl is-enabled -q ufw.service
+  fix   sudo hosts/caesar/ufw/apply-rules
+
+# The monuser password lives in upsmon.conf, so the file is created by hand and never
+# committed. Its EXISTENCE proves nothing -- the nut package ships a stock upsmon.conf, with
+# no MONITOR line -- so the probe is the monitor itself: upsmon refuses to start with no
+# supplies configured, and stays up once it has one.
+check UPS monitor (NUT) configured and running
+  probe systemctl is-active -q nut-monitor.service
+  manual sudo install -m 0640 -o root -g nut hosts/caesar/nut/upsmon.conf.example /etc/nut/upsmon.conf && sudoedit /etc/nut/upsmon.conf (replace <password>), then sudo systemctl restart nut-monitor

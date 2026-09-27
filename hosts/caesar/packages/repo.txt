@@ -18,7 +18,7 @@ nfs-utils
 # Docker, rootless. See CLAUDE.md: there is no rootful socket, and the ufw-docker
 # workaround deliberately is not carried because rootless does not bypass the firewall.
 #
-# `lazydocker` moved to common/packages/repo.txt on 2026-09-20 -- it is bound to Mod+D on
+# `lazydocker` moved to common/stages/desktop/repo.txt on 2026-09-20 -- it is bound to Mod+D on
 # every host, so it is the CLIENT that is universal. The daemon below is still caesar-only,
 # which means Mod+D on rigel opens a TUI with no socket to talk to. That is a real open
 # question about rigel, not a mistake in either file: see docs/new-host/rigel-status.md.
@@ -28,9 +28,12 @@ rootlesskit
 slirp4netns
 fuse-overlayfs
 
-# Desktop applications. Easy to promote to common/ if the laptop wants them too.
-obsidian
-spotify-launcher
+# Always-on desktop services, restored 2026-09-27 after the old-disk scan found the
+# migration had dropped them. Their config is in ../nut, ../systemd, ../nss.
+nut
+zram-generator
+avahi
+nss-mdns
 
 # netconsole receiver for the Proxmox host -- hosts/caesar/netconsole/. socat receives,
 # ts (moreutils) timestamps, logrotate keeps the log bounded.

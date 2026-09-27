@@ -1,0 +1,24 @@
+# /etc/nut/upsmon.conf for caesar -- EXAMPLE. The real file holds the monuser password, so
+# it is NOT installed from here and must never be committed with the password in it. It is
+# checked by the NUT check in hosts/caesar/bootstrap/checks; create it once by hand:
+#
+#   sudo install -m 0640 -o root -g nut hosts/caesar/nut/upsmon.conf.example /etc/nut/upsmon.conf
+#   sudoedit /etc/nut/upsmon.conf          # replace <password>
+#   sudo systemctl restart nut-monitor
+#
+# The password is on Proxmox, in /etc/nut/upsd.users, and in the old Omarchy disk image at
+# @/etc/ups/upsmon.conf.
+#
+# Found missing 2026-09-27: the old install shut caesar down cleanly on low battery, and the
+# migration dropped it with nothing to say so -- nut was not installed and /etc/ups was gone.
+# `slave` from the old file is `secondary` in NUT 2.8; POWERDOWNFLAG is omitted because only
+# the primary (the machine the UPS is cabled to) powers the UPS off.
+
+MONITOR cyberups@192.168.1.50 1 monuser <password> secondary
+MINSUPPLIES 1
+SHUTDOWNCMD "/usr/bin/systemctl poweroff"
+NOTIFYCMD /usr/bin/logger
+NOTIFYFLAG ONLINE   SYSLOG
+NOTIFYFLAG ONBATT   SYSLOG+WALL
+NOTIFYFLAG LOWBATT  SYSLOG+WALL
+NOTIFYFLAG FSD      SYSLOG+WALL

@@ -1,10 +1,10 @@
-# Root-owned copies: <repo path>  <system path>
+# Root-owned copies: <repo path>  <system path>  [mode, default 0644]
 #
 # These cannot be symlinks -- a mount unit for /mnt/nas has to be a system unit, and
 # /etc is not ours to link into. So they are copies, and copies drift silently, which is
-# the failure mode this repo keeps warning about. The bootstrap cannot fix them without
-# root, but it CAN diff them and say so, which turns silent drift into a reported
-# conflict.
+# the failure mode this repo keeps warning about. `nomarchy status` diffs them and reports
+# drift as a conflict; `nomarchy install host` installs what is missing or different,
+# showing the diff first, and runs whatever reload each path needs.
 #
 # Deliberately absent: hosts/caesar/noctalia/settings.toml. Noctalia rewrites that file
 # itself, so the repo copy is a snapshot and is EXPECTED to be behind. Flagging it would
@@ -15,3 +15,9 @@ hosts/caesar/ssh/10-nomarchy.conf	/etc/ssh/sshd_config.d/10-nomarchy.conf
 common/udev/99-streamdeck-no-keyboard.rules	/etc/udev/rules.d/99-streamdeck-no-keyboard.rules
 hosts/caesar/netconsole/netconsole-listener.service	/etc/systemd/system/netconsole-listener.service
 hosts/caesar/netconsole/netconsole-proxmox.logrotate	/etc/logrotate.d/netconsole-proxmox
+hosts/caesar/modprobe/nvidia.conf	/etc/modprobe.d/nvidia.conf
+hosts/caesar/udev/70-logitech-g213.rules	/etc/udev/rules.d/70-logitech-g213.rules
+hosts/caesar/systemd/zram-generator.conf	/etc/systemd/zram-generator.conf
+hosts/caesar/systemd/logind-nomarchy.conf	/etc/systemd/logind.conf.d/10-nomarchy.conf
+hosts/caesar/nss/nsswitch.conf	/etc/nsswitch.conf
+hosts/caesar/nut/nut.conf	/etc/nut/nut.conf

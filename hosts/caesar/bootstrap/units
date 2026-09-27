@@ -3,3 +3,5 @@
 backup-daily.timer
 backup-legal-to-nas.timer
 subget-sync.timer
+# Socket-activated rootless docker daemon -- see ./user-checks.
+docker.socket

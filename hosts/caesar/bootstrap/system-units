@@ -1,0 +1,18 @@
+# System units on caesar: `enable <unit>` (enabled and started) or `mask <unit>`.
+# Applied by `nomarchy install host`, after this host's copies, so a unit file shipped as a
+# copy exists before it is enabled.
+enable sshd.service
+enable mnt-nas.automount
+enable netconsole-listener.service
+enable logrotate.timer
+# mDNS: nss-mdns resolves *.local through avahi (see ../nss/nsswitch.conf). Used by hand
+# for smartspeaker.local, raspberrypi.local, jetson.local.
+enable avahi-daemon.service
+# UPS client. Starts only once upsmon.conf has the password -- see the NUT check in ./checks.
+enable nut-monitor.service
+# An always-on desktop: the old install masked every sleep target, and so does this.
+# The power button half is ../systemd/logind-nomarchy.conf.
+mask sleep.target
+mask suspend.target
+mask hibernate.target
+mask hybrid-sleep.target
