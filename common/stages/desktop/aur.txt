@@ -1,0 +1,14 @@
+# Stage `desktop`, AUR. Built in ~/builds/<pkg> with makepkg, in this order -- see
+# ../base/aur.txt for why not paru.
+#
+# Deliberately NOT listed: umbriel-git-debug and xdg-desktop-portal-umbriel-git-debug.
+# Those are makepkg byproducts that arrive alongside the real package when debug packaging
+# is enabled; they show up in `pacman -Qqe` but must not be installed on their own.
+#
+# After the first install, umbriel is updated by `umbriel-update`, never by rebuilding it
+# here: that script gates the new binary against the live config before installing it.
+
+umbriel-git
+xdg-desktop-portal-umbriel-git
+herdr-bin
+ai-usagebar

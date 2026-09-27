@@ -6,5 +6,5 @@
 # applications, and applications are a deliberate pass after the machine boots rather
 # than a bulk import. See the 48-package list in docs/new-host/rigel-omarchy-sweep.md.
 #
-# umbriel-git and xdg-desktop-portal-umbriel-git come from common/packages/aur.txt and
+# umbriel-git and xdg-desktop-portal-umbriel-git come from common/stages/desktop/aur.txt and
 # are not repeated here.

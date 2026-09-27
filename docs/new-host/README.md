@@ -8,7 +8,7 @@ afterwards.
 Read `CLAUDE.md` at the repo root first. It is the doctrine; this file is the procedure.
 
 **The machine being stood up next is `rigel`.** Use that name everywhere: `hosts/rigel/`,
-`common/scripts/bootstrap rigel`, `docs/new-host/rigel-survey.txt`. Hosts here are named
+`nomarchy status rigel`, `docs/new-host/rigel-survey.txt`. Hosts here are named
 after stars and Romans — caesar is the desktop, waylab the testbed, rigel the laptop — and
 the name is load-bearing, not decorative: every manifest path keys off it.
 
@@ -48,7 +48,7 @@ A second machine running the same desktop: bare Arch, Umbriel, Noctalia. Install
 the same treatment at its own cutover.
 
 **This is not a caesar clone, and the repo is built to refuse one.** `hosts/` is not a
-template directory and `common/scripts/bootstrap` errors on a host directory that does not
+template directory and `common/scripts/nomarchy` errors on a host directory that does not
 exist, rather than defaulting to another machine's. A laptop has different microcode, a
 hybrid Intel + NVIDIA GPU, one internal panel, a lid, a battery, a touchpad, and Tailscale. caesar has
 three monitors, an NVIDIA card, a NAS, a Stream Deck and a second user account. Almost
@@ -64,7 +64,7 @@ Pete's sequence, which is the right one:
 3. write `hosts/<name>/`
 4. **push** — this is the step that survives the wipe
 5. install Arch, btrfs on LUKS
-6. clone again, bootstrap, follow the acceptance tests
+6. clone again, `nomarchy install` base/desktop/host, `nomarchy link`, follow the acceptance tests
 
 Steps 2 and 3 cannot be done afterwards. Which outputs the panel reports, what the wifi
 networks are called, which services were relied on, what is in `$HOME` — all of it goes
@@ -112,8 +112,10 @@ Minimum contents. This is a checklist, not a template — write each file for th
 | `packages/aur.txt` | AUR packages; there is no AUR helper, they are built with `makepkg -si` |
 | `bootstrap/links` | host-specific symlinks; probably just the umbriel config |
 | `bootstrap/units` | `systemd --user` units this host enables |
-| `bootstrap/copies` | root-owned files, which get **diffed** by the bootstrap so their drift is reported |
-| `bootstrap/root-steps` | printed for Pete to run, never executed |
+| `bootstrap/copies` | root-owned files, `<repo path> <system path> [mode]`: **diffed** by `status`, installed by `install host` |
+| `bootstrap/system-units` | system units to `enable` or `mask` |
+| `bootstrap/checks` | state that is not a file or unit: a `probe` (no sudo) and a `fix`, or `manual` for credentials |
+| `bootstrap/root-steps` | what is left for a human, printed and never run |
 
 Do **not** copy `hosts/caesar/` wholesale. Specifically, these are caesar's and must not
 appear: `meanpete/` (a second user with a NAS staging role — see §11, it carried a
@@ -129,7 +131,7 @@ host that wants them; set them in the host file, which is applied last and wins.
 caesar does not run it, so there is no precedent in this repo. It needs the package, the
 `tailscaled` service enabled, and then `tailscale up` authenticated **interactively** by
 Pete. The node key and auth state are not config: nothing about them goes in the repo.
-Put the package in `packages/repo.txt`, the service in `bootstrap/root-steps`, and the
+Put the package in `packages/repo.txt`, the service in `bootstrap/system-units`, and the
 `tailscale up` step in the post-install checklist with a note that it is interactive.
 
 ## Phase 3 — push, and get `$HOME` off the machine
@@ -193,34 +195,39 @@ days since — CLAUDE.md documents the unlock.
 
 ## Phase 5 — after the install
 
+On the new install's console, as `peter` (the installer refuses root: makepkg does too):
+
 ```bash
-git clone git@github.com:litescript/nomarchy.git ~/Projects/nomarchy
+sudo pacman -S --needed git                  # if the install did not already bring it
+git clone https://github.com/litescript/nomarchy.git ~/Projects/nomarchy
 cd ~/Projects/nomarchy
-common/scripts/bootstrap rigel            # read what it intends to do
-common/scripts/bootstrap rigel --apply    # user-level changes
+common/scripts/nomarchy status <host>        # read the whole picture first; changes nothing
+common/scripts/nomarchy install base <host>
+common/scripts/nomarchy install desktop <host>
+common/scripts/nomarchy install host <host>
+common/scripts/nomarchy link <host>
 ```
 
-Then the root steps it printed, which it will not run itself. Then `tailscale up`.
+Each `install` works out what is not already true, prints the plan — every package, every
+file with its diff, every unit, every command — asks once, and runs it with sudo prompting
+you. Rerunning one is safe; it only plans what is still missing. After `link`, `~/.local/bin`
+holds `nomarchy` and the bare name works from the next login.
 
-**Three things rigel's install tripped on**, all easy to do on a bare TTY with no clipboard:
+Then the credentials, by hand, which nothing in the repo may hold: ssh keys, `~/.gnupg`, the
+host's `manual` checks (`status` lists them at the end), and `tailscale up` on a host that
+has it. Reboot, and tty1 autologin starts umbriel.
 
-- **`--apply` does not install packages.** It never runs sudo, so even with `--apply` the
-  package step only *prints* one long `sudo pacman -S --needed ...` line — which cannot be
-  copied on a console. rigel's install ended up awking names out by hand. Read the
-  manifests directly instead (tested on rigel):
+Three things the old bootstrap tripped on, now handled or still worth knowing:
 
-  ```bash
-  sudo pacman -S --needed $(grep -hvE '^\s*#|^\s*$' common/packages/repo.txt hosts/<host>/packages/repo.txt | sort -u)
-  ```
-
-  AUR packages still build one at a time with `makepkg -si`.
-- **Clone to `~/Projects/nomarchy` before the first `--apply`, not after.** The links point
-  wherever the checkout was when they were made, so cloning to `~` and moving it later
-  leaves every link dangling. The bootstrap will not fix that for you — a dangling link is
-  "exists but is not the expected symlink", reported as a conflict and left alone. Recover
-  by removing the dead links (`find ~ -maxdepth 4 -xtype l` lists them) and rerunning
-  `--apply`. The location is not a preference: the host umbriel config includes
-  `~/Projects/nomarchy/common/umbriel/base.toml` by that literal path.
+- **Clone over https.** The repo is public, so a fresh host needs no key to clone it, and
+  `link` clones source builds over https too, with the ssh URL kept as the push URL. Switch
+  this checkout's own remote to `git@github.com:litescript/nomarchy.git` once a key is in.
+- **Clone to `~/Projects/nomarchy` before the first `link`, not after.** The links point
+  wherever the checkout was when they were made, so moving it later leaves every link
+  dangling — reported as a conflict and left alone. Recover by removing the dead links
+  (`find ~ -maxdepth 4 -xtype l`) and rerunning `link`. The location is not a preference:
+  the host umbriel config includes `~/Projects/nomarchy/common/umbriel/base.toml` by that
+  literal path.
 - **A fresh install has no git identity**, so the first commit fails with
   `empty ident name`. Match the author on the existing history (`git log --format='%an <%ae>'`).
 
@@ -232,7 +239,7 @@ is actually registered rather than what the file says.
 
 Acceptance tests, in order:
 
-1. `common/scripts/bootstrap rigel` → `0 to do, 0 conflicts`
+1. `nomarchy status` → `0 to do, 0 conflicts`
 2. `id` (bare, not `id <user>`) → the groups you expect. The group database is ahead of
    session credentials until the next login, so `id <user>` will look right while the
    session is stale

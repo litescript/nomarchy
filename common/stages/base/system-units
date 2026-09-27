@@ -1,0 +1,10 @@
+# System units for every host: `enable <unit>` (enabled and started) or `mask <unit>`.
+#
+# systemd-timesyncd: found DISABLED on caesar 2026-09-27 with the clock unsynchronised --
+# the old install had it on, the new one never did, and nothing reports a drifting clock.
+enable systemd-timesyncd.service
+enable NetworkManager.service
+# Weekly prune of /var/cache/pacman/pkg to the last three versions (pacman-contrib).
+# caesar's cache was 2.2 GB and 1,295 packages after three weeks without it.
+enable paccache.timer
+enable plocate-updatedb.timer

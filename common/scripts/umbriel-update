@@ -403,7 +403,7 @@ find_pin() {
 # Preserve the package that is installed right now before makepkg overwrites it. pacman
 # does NOT cache packages installed with -U (verified: no umbriel in /var/cache/pacman/pkg
 # despite 600+ packages there), so this directory is the only rollback that exists.
-# Debug packages are skipped: 22 MB each, and common/packages/aur.txt documents that they
+# Debug packages are skipped: 22 MB each, and common/stages/desktop/aur.txt documents that they
 # are deliberately not installed.
 stash_current() {
   local pkg=$1 dir=$2 f
@@ -412,7 +412,7 @@ stash_current() {
     [[ -f $f ]] && mv -f "$f" "$ROLLBACK/$pkg/"
   done < <(find "$dir" -maxdepth 1 -name "$pkg-*.pkg.tar.zst" ! -name '*-debug-*' 2>/dev/null)
   # Debug packages are makepkg byproducts -- 22 MB apiece, one per update, and
-  # common/packages/aur.txt documents that they are deliberately never installed.
+  # common/stages/desktop/aur.txt documents that they are deliberately never installed.
   # Left alone they are the largest thing this script would grow on disk.
   local dbg
   dbg=$(find "$dir" -maxdepth 1 -name "$pkg-debug-*.pkg.tar.zst" 2>/dev/null)

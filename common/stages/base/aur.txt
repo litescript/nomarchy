@@ -1,0 +1,8 @@
+# Stage `base`, AUR. Built by `nomarchy install` in ~/builds/<pkg> with makepkg -- the
+# layout umbriel-update also relies on -- in the order listed, so a package that depends
+# on another AUR package must come after it.
+#
+# paru is here because Pete uses it by hand. The installer deliberately does NOT use it:
+# paru builds in ~/.cache/paru/clone, and umbriel-update expects ~/builds/umbriel-git, so
+# one tool for both would mean two build trees for the same package.
+paru

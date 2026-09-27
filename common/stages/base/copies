@@ -1,0 +1,4 @@
+# Root-owned files every host gets from `nomarchy install base`: <repo path> <system path> [mode]
+# Diffed by `nomarchy status`, so drift is reported rather than silent. Mode defaults to 0644.
+common/stages/base/files/99-sysrq.conf	/etc/sysctl.d/99-sysrq.conf
+common/stages/base/files/faillock.conf	/etc/security/faillock.conf

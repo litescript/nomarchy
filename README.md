@@ -19,8 +19,11 @@ A host is written deliberately, never cloned from another — `hosts/` is not a 
 directory.
 
 ```bash
-common/scripts/bootstrap <host>            # report drift; change nothing
-common/scripts/bootstrap <host> --apply    # apply the user-level changes
+nomarchy status             # report drift; change nothing, never sudo
+nomarchy install base       # then desktop, then host: packages and root-owned state,
+nomarchy install desktop    #   shown as a plan and confirmed before anything runs
+nomarchy install host
+nomarchy link               # the user level: symlinks, builds, user units
 ```
 
 Standing up a new machine: **`docs/new-host/README.md`**.

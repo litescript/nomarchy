@@ -1,0 +1,11 @@
+# State that is not a file or a unit. Each block is a check: `probe` runs as the user with
+# NO sudo (nomarchy status runs it, and so may an agent), and exits 0 when the state is
+# right; `fix` runs from `nomarchy install` when the probe fails, and may use sudo.
+
+check timezone America/Indiana/Indianapolis
+  probe [[ $(timedatectl show -p Timezone --value) == America/Indiana/Indianapolis ]]
+  fix   sudo timedatectl set-timezone America/Indiana/Indianapolis
+
+check locale en_US.UTF-8
+  probe locale -a | grep -qx en_US.utf8 && [[ $(localectl status | sed -n 's/.*LANG=//p' | head -1) == en_US.UTF-8 ]]
+  fix   sudo sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen && sudo locale-gen && sudo localectl set-locale LANG=en_US.UTF-8

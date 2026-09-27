@@ -1,26 +1,10 @@
-# Base packages for any nomarchy host, from the official repositories.
-#   sudo pacman -S --needed - < this file   (comments and blanks stripped by the bootstrap)
-#
-# Curated from caesar's `pacman -Qqe` on 2026-09-13, not copied from it. Anything tied to
-# this machine's hardware or role lives in hosts/<host>/packages/ instead.
+# Stage `desktop`: the graphical session and everything used from it. Installed by
+# `nomarchy install desktop` after `base`.
 
-# System
-base
-base-devel
-linux
-linux-firmware
-linux-headers
-sudo
-git
-openssh
-networkmanager
-efibootmgr
-btrfs-progs
-ufw
-
-# Desktop: compositor, shell, portal
+# Compositor, shell, portal. umbriel itself is AUR -- see ./aur.txt.
 noctalia
 xwayland-satellite
+xdg-utils
 
 # GTK4, for shelf. Present on both hosts already, but only ever as a dependency of
 # xdg-desktop-portal-umbriel-git -- so nothing declared it and nothing guaranteed the
@@ -28,27 +12,8 @@ xwayland-satellite
 # it a real requirement rather than something that happens to be there.
 gtk4
 
-# Terminal and editor
+# Terminal
 kitty
-kitty-terminfo
-neovim
-bash-completion
-less
-man-db
-man-pages
-
-# Shell tooling -- these are what .bashrc assumes exists
-eza
-bat
-fd
-fzf
-ripgrep
-zoxide
-starship
-tmux
-wget
-rsync
-inetutils
 
 # Wayland utilities: the clipboard, screenshot and askpass stack
 fuzzel
@@ -58,7 +23,8 @@ grim
 slurp
 imagemagick
 
-# Audio
+# Audio. pipewire-alsa is deliberately absent: its ALSA routing now ships inside
+# pipewire-audio (pacman -Qo /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf).
 pipewire
 pipewire-pulse
 wireplumber
@@ -76,6 +42,9 @@ libva-utils
 # Applications
 firefox
 obsidian
+thunderbird
+mpv
+yt-dlp
 
 # Mod+M runs common/scripts/spotify-limited, which wraps spotify-LAUNCHER, not `spotify`.
 # Arch ships the launcher in [extra] and it fetches the real binary into
@@ -99,3 +68,6 @@ github-cli
 lazygit
 lazydocker
 btop
+zig
+zls
+cargo-deny

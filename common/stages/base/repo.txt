@@ -1,0 +1,64 @@
+# Stage `base`: what every nomarchy host needs before it has a desktop -- a machine you can
+# log into on a console, reach over ssh, and administer. `nomarchy install base` installs
+# these with `pacman -S --needed`; `nomarchy status` reports any that are missing.
+#
+# Split out of the old common/packages/repo.txt on 2026-09-27, which had been curated from
+# caesar's `pacman -Qqe` on 2026-09-13. Hardware and role belong in hosts/<host>/packages/.
+
+# System
+base
+base-devel
+linux
+linux-firmware
+linux-headers
+sudo
+git
+openssh
+networkmanager
+efibootmgr
+btrfs-progs
+ufw
+
+# Terminal and editor. kitty-terminfo is here, not in desktop, because it is what makes
+# ssh FROM a kitty window INTO this machine work, desktop or not.
+kitty-terminfo
+neovim
+bash-completion
+less
+man-db
+man-pages
+
+# Shell tooling -- what .bashrc assumes exists
+eza
+bat
+fd
+fzf
+ripgrep
+zoxide
+starship
+tmux
+wget
+rsync
+inetutils
+
+# Administration and diagnosis. Added 2026-09-27 from what Pete actually reinstalled after
+# comparing against the old Omarchy disk, not from its package list wholesale.
+# pacman-contrib brings paccache, whose timer (see ./system-units) keeps the package cache
+# from growing forever; pass needs the GPG key, which is migrated by hand, never here.
+pass
+jq
+lsof
+mtr
+ncdu
+pv
+pacman-contrib
+plocate
+smartmontools
+strace
+tcpdump
+termshark
+nmap
+whois
+ethtool
+tldr
+fastfetch

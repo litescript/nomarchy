@@ -175,31 +175,65 @@ coupling: `PATH` must reach the compositor, which it does via `~/.bash_profile` 
 login. A compositor started any other way would not inherit it, and every script bind would
 register, validate, and do nothing.
 
-## Bootstrapping a host
+## Bootstrapping a host: the `nomarchy` CLI
 
 ```bash
-common/scripts/bootstrap caesar            # report drift, change nothing
-common/scripts/bootstrap caesar --apply    # make the user-level changes
+nomarchy status  [host]          # drift audit: everything, read-only, never sudo
+nomarchy link    [host]          # user level: toolchains, builds, links, seeds, user units
+nomarchy install base            # packages, files, units, checks every host needs
+nomarchy install desktop         # the graphical session; umbriel built from AUR
+nomarchy install host [host]     # this machine's packages, files, units, checks
 ```
 
-Dry run is the default, so it doubles as a **drift audit**: run it any time to ask whether
-this machine still matches the repo. It never runs `sudo` — root steps are printed for a
-human — and it never clobbers: a path that exists but is not the expected symlink is
-reported as a conflict and left alone.
+`host` defaults to `/etc/hostname`. Before `~/.local/bin` is linked, call it by path:
+`common/scripts/nomarchy`. The old `bootstrap <host> [--apply]` still works — it is a shim
+for `status` and `link --yes`.
 
-It is data-driven, and the data is the spec:
+**The split is who may run what, and it is the whole design.** `status` and `link` never
+call `sudo`, so they are safe in an agent's tool shell, where sudo cannot be answered — run
+`status` any time to ask whether this machine still matches the repo. `install` **does**
+call sudo, because a human at a TTY is the password prompt. Until 2026-09-27 nothing did:
+the bootstrap refused sudo everywhere, so it could only *print* root steps, and on rigel's
+bare console that meant hand-copying a 100-package `pacman` line nobody could paste. The
+repo was a configuration plus instructions; it could not make the promise *repo → working
+machine*. `install` keeps the reading without the retyping: it works out everything that is
+not already true, prints the whole plan with every diff and command, asks once, then runs
+it. Package steps are fatal (later steps assume those binaries); others report and continue.
+
+Nothing clobbers silently. A path that exists but is not the expected symlink is a conflict
+and is left alone; a root-owned copy that differs is a conflict in `status` and a *shown
+diff* in `install`'s plan.
+
+It is data-driven, and the data is the spec. A **stage** is a directory of manifests:
+`common/stages/base/`, `common/stages/desktop/`, and for `host`, `hosts/<host>/packages/`
+plus `hosts/<host>/bootstrap/`:
 
 | file | what it declares |
 |---|---|
-| `common/packages/{repo,aur}.txt` | packages on every host |
-| `hosts/<host>/packages/{repo,aur}.txt` | packages only that machine gets |
+| `repo.txt` | official-repo packages, `pacman -S --needed` |
+| `aur.txt` | AUR packages, built **in list order** in `~/builds/<pkg>` with `makepkg -si` — the layout `umbriel-update` relies on, which is why the installer does not use `paru` even though Pete does |
+| `copies` | root-owned files, `<repo path> <system path> [mode]`; **diffed**, installed with the reload their path needs (`daemon-reload`, `udevadm`, `sysctl --system`, `sshd -t` + reload) |
+| `system-units` | `enable <unit>` or `mask <unit>`; a `static` unit (enabled by its package) only needs starting |
+| `checks` | state that is not a file or unit — timezone, locale, the firewall. `check`, then `probe` (no sudo, read-only, what `status` runs) and `fix` (may sudo), or `manual` for what needs a human |
+| `root-steps` | host only: printed, never run |
+
+And the user level, read by `link`:
+
+| file | what it declares |
+|---|---|
 | `common/bootstrap/links`, `hosts/<host>/bootstrap/links` | symlinks to lay |
-| `hosts/<host>/bootstrap/copies` | root-owned copies, **diffed** so their drift is reported rather than silent |
 | `common/bootstrap/seeds`, `hosts/<host>/bootstrap/seeds` | files an app owns but that must **exist** before it first runs; copied once if absent, never overwritten, deliberately **not** diffed |
 | `common/bootstrap/units`, `hosts/<host>/bootstrap/units` | `systemd --user` units to enable |
 | `common/bootstrap/toolchains`, `hosts/<host>/bootstrap/toolchains` | language toolchains — the gap between *package installed* and *thing works* |
-| `common/bootstrap/builds`, `hosts/<host>/bootstrap/builds` | source builds that are not packages; **run** on `--apply`, unlike the AUR list |
-| `hosts/<host>/bootstrap/root-steps` | printed, never run |
+| `common/bootstrap/builds`, `hosts/<host>/bootstrap/builds` | source builds that are not packages; a GitHub ssh URL is **cloned over https** with the ssh URL as its push URL, so a fresh host builds before any key is loaded |
+| `hosts/<host>/bootstrap/user-checks` | as `checks`, but `fix` must not sudo — caesar's rootless docker context |
+
+**A credential is a `manual` check, never a file here, and existence is not the probe.**
+caesar's UPS monitor needs the monuser password in `/etc/nut/upsmon.conf`, but the `nut`
+package ships a stock `upsmon.conf` — so "the file exists" is true on a machine that will
+never shut down on low battery. The probe is `nut-monitor` running, because upsmon refuses
+to start with no UPS configured. Prefer a probe that states the outcome over one that
+implies it.
 
 A file living in `common/` means it is *available* to any host; a host's `links` list is
 what that machine actually installs. The NAS units are the example — general-purpose files
@@ -218,11 +252,9 @@ check called healthy: `umbriel validate` said `config: ok`, the bind registered,
 the repo knew shelf should be there. **A bind whose target is undeclared is a bind that can
 fail while the drift audit says the machine is clean.**
 
-Unlike the AUR list, these actually **run** on `--apply`. The boundary the bootstrap holds
-is `sudo`, not effort: `makepkg -si` needs root to install what it built, so the script can
-only print it, whereas `make install` here is `PREFIX=$HOME/.local` and needs no root at
-all. Ordering follows the dependency chain — Packages, then Toolchains, then Source builds —
-because the build needs `gtk4` from one and a Rust toolchain from the other.
+Builds run from `link`, which never sudoes, because `make install` here is
+`PREFIX=$HOME/.local` and needs no root. Ordering follows the dependency chain — `install
+desktop` (which brings `gtk4` and `rustup`), then `link` (toolchain, then builds).
 
 `toolchains` is the subtler one. Arch's `rustup` package installs **shims only**:
 `/usr/bin/cargo` and `/usr/bin/rustc` exist and answer `command -v`, so `rustup` appearing
@@ -232,7 +264,7 @@ failed with *"could not choose a version of cargo to run"*. The probe is
 the toolchain *list* is non-empty would not do — a toolchain can be installed without being
 default, and that state still fails to build.
 
-**A new host is a `hosts/<name>/` somebody wrote on purpose.** The bootstrap refuses a
+**A new host is a `hosts/<name>/` somebody wrote on purpose.** `nomarchy` refuses a
 host directory that does not exist rather than defaulting to another machine's. `hosts/`
 is not a template directory, and a laptop is not a caesar clone: it has different
 microcode, hybrid Intel + NVIDIA graphics rather than one desktop card, no NAS, no second
@@ -241,7 +273,7 @@ user, and lid events caesar has no concept of.
 **Standing up a new machine has its own document: `docs/new-host/README.md`.** It is
 written for the agent running on that machine's *old* OS, and covers the sequence that
 matters — survey and write `hosts/<name>/` **before** the wipe, push, then install, then
-bootstrap. `common/scripts/host-survey` captures what only exists while the old OS is
+`nomarchy install` and `link`. `common/scripts/host-survey` captures what only exists while the old OS is
 alive: connected outputs and their modes, CPU vendor, GPU, lid and battery, wifi profile
 names, enabled services. It prints no secrets, by design.
 

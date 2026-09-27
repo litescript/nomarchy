@@ -1,0 +1,416 @@
+#!/usr/bin/env bash
+# nomarchy -- turn a bare Arch install into a nomarchy host, or say how far one already is.
+#
+#   nomarchy status  [host]             audit everything; change nothing; never sudo
+#   nomarchy link    [host]  [--yes]    user level: toolchains, builds, links, seeds, units
+#   nomarchy install base    [--yes]    packages, files, units and checks every host needs
+#   nomarchy install desktop [--yes]    the graphical session, umbriel built from AUR
+#   nomarchy install host [host] [--yes]  this machine's packages, files, units, checks
+#
+# host defaults to /etc/hostname, and must already exist as hosts/<host>/ -- a new host is
+# a directory somebody wrote on purpose, never a copy of another machine's (CLAUDE.md).
+#
+# ── The one rule: who may run what ──────────────────────────────────────────────────────
+# `status` and `link` never call sudo. They are safe for an agent's tool shell, where sudo
+# cannot be answered, and `status` is the drift audit: run it any time to ask whether this
+# machine still matches the repo.
+#
+# `install` DOES call sudo, because a human at a TTY is the password prompt. The earlier
+# bootstrap refused sudo everywhere and so could only PRINT root steps -- which on a bare
+# console meant hand-typing a 100-package pacman line nobody could copy. `install` closes
+# that gap without losing the reading: it works out everything that is not already true,
+# prints the whole plan, asks once, then runs it. --yes skips the question.
+#
+# ── What a stage is ─────────────────────────────────────────────────────────────────────
+# A directory of manifests. `base` and `desktop` are common/stages/<stage>/; `host` is
+# hosts/<host>/packages/ plus hosts/<host>/bootstrap/. Every manifest is optional:
+#
+#   repo.txt       official-repo packages               pacman -S --needed
+#   aur.txt        AUR packages, built in list order    ~/builds/<pkg>, makepkg -si
+#   copies         <repo path> <system path> [mode]     sudo install, then the reload
+#                                                       that path needs (see reload_for)
+#   system-units   enable <unit> | mask <unit>          systemctl enable --now | mask
+#   checks         check/probe/fix|manual blocks        probe: no sudo; fix: may sudo;
+#                                                       manual: printed for a human
+#   root-steps     host only: printed, never run        what needs a human
+#
+# The user level (`link`) reads common/bootstrap/ and hosts/<host>/bootstrap/: toolchains,
+# builds, links, seeds, units, user-checks.
+
+set -uo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+cd "$repo" || exit 1
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+ok=0; todo=0; conflict=0
+say()  { printf '  %s\n' "$*"; }
+good() { printf '  \033[32m✓\033[0m %s\n' "$*"; ((ok++)); }
+want() { printf '  \033[33m→\033[0m %s\n' "$*"; ((todo++)); }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; ((conflict++)); }
+head1() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+manifest() { local f; for f; do [[ -f $f ]] && grep -vE '^\s*#|^\s*$' "$f"; done; return 0; }
+expand() { printf '%s' "${1/#\~/$HOME}"; }
+
+# ── Plans ───────────────────────────────────────────────────────────────────────────────
+# In status mode need() only reports. In plan mode it also records the command that makes
+# the item true; nothing runs until the whole plan has been shown and accepted.
+plan_mode=0
+plan_desc=(); plan_cmd=(); plan_fatal=(); plan_notes=()
+need() {  # need <description> <command> [fatal]
+  want "$1"
+  if ((plan_mode)); then plan_desc+=("$1"); plan_cmd+=("$2"); plan_fatal+=("${3:-0}"); fi
+}
+
+run_plan() {
+  local yes=$1
+  if ((${#plan_cmd[@]} == 0)); then
+    head1 "Nothing to do."
+    return 0
+  fi
+  head1 "Plan: ${#plan_cmd[@]} step(s)"
+  local i
+  for i in "${!plan_cmd[@]}"; do
+    printf '  %2d. %s\n      \033[2m$ %s\033[0m\n' $((i + 1)) "${plan_desc[i]}" "${plan_cmd[i]}"
+  done
+  local n; for n in "${plan_notes[@]+"${plan_notes[@]}"}"; do say "note: $n"; done
+  if ((!yes)); then
+    printf '\nRun these? [y/N] '
+    local answer
+    read -r answer </dev/tty || answer=
+    [[ $answer == [yY]* ]] || { echo "Nothing changed."; return 1; }
+  fi
+  local failed=0
+  for i in "${!plan_cmd[@]}"; do
+    head1 "[$((i + 1))/${#plan_cmd[@]}] ${plan_desc[i]}"
+    if ! (eval "${plan_cmd[i]}"); then
+      printf '  \033[31m✗ failed\033[0m\n'
+      ((failed++))
+      if ((plan_fatal[i])); then
+        # Package steps are fatal: files, units and checks after them assume the packages
+        # that own their binaries and unit files are there.
+        echo "  stopping: later steps depend on this one"
+        return 1
+      fi
+    fi
+  done
+  ((failed == 0)) && head1 "Done." || head1 "Done, with $failed failed step(s) -- rerun 'nomarchy status' to see what is left."
+  ((failed == 0))
+}
+
+# ── Stages ──────────────────────────────────────────────────────────────────────────────
+host=''
+pkg_dir() { case $1 in host) echo "hosts/$host/packages" ;; *) echo "common/stages/$1" ;; esac; }
+sys_dir() { case $1 in host) echo "hosts/$host/bootstrap" ;; *) echo "common/stages/$1" ;; esac; }
+
+resolve_host() {
+  host=${1:-$(cat /etc/hostname 2>/dev/null)}
+  [[ -n $host ]] || die "no host given and /etc/hostname is empty (hosts: $(ls hosts | tr '\n' ' '))"
+  [[ -d hosts/$host ]] || die "no such host: hosts/$host -- a new host is written deliberately, not cloned (hosts: $(ls hosts | tr '\n' ' '))"
+}
+
+installed=''
+refresh_installed() { installed=$(pacman -Qq | sort); }
+
+sec_repo() {
+  local stage=$1 list missing n
+  list=$(manifest "$(pkg_dir "$stage")/repo.txt" | sort -u)
+  [[ -n $list ]] || { say "no repo packages declared"; return; }
+  missing=$(comm -23 <(printf '%s\n' "$list") <(printf '%s\n' "$installed"))
+  n=$(printf '%s\n' "$list" | wc -l)
+  if [[ -z $missing ]]; then
+    good "all $n repo packages installed"
+  else
+    need "install $(wc -l <<<"$missing") of $n repo packages: $(tr '\n' ' ' <<<"$missing")" \
+         "sudo pacman -S --needed $(tr '\n' ' ' <<<"$missing")" 1
+  fi
+}
+
+# Built where umbriel-update expects to find them, so its gated updates and rollback work
+# from the very first install. Order is the manifest's: AUR dependencies on other AUR
+# packages are resolved by listing them first, since makepkg -s only reaches the repos.
+aur_build() {
+  local pkg=$1 dir=$HOME/builds/$1
+  if [[ ! -d $dir/.git ]]; then
+    mkdir -p "$HOME/builds" && git clone "https://aur.archlinux.org/$pkg.git" "$dir" || return 1
+  else
+    git -C "$dir" pull --ff-only || return 1
+  fi
+  (cd "$dir" && makepkg -si --needed --noconfirm)
+}
+
+sec_aur() {
+  local stage=$1 p any=0
+  for p in $(manifest "$(pkg_dir "$stage")/aur.txt"); do
+    any=1
+    if grep -qx "$p" <<<"$installed"; then
+      good "$p (AUR)"
+    else
+      need "build and install $p from AUR in ~/builds/$p" "aur_build $p" 1
+    fi
+  done
+  ((any)) || say "no AUR packages declared"
+}
+
+# What a changed file needs before it means anything. Collected per plan and run once.
+reload_for() {
+  case $1 in
+    /etc/systemd/zram-generator.conf) echo "sudo systemctl daemon-reload && sudo systemctl start systemd-zram-setup@zram0.service" ;;
+    /etc/systemd/logind.conf.d/*)    echo "NOTE logind settings take effect at the next boot (restarting logind would end the session)" ;;
+    /etc/systemd/*)                   echo "sudo systemctl daemon-reload" ;;
+    /etc/udev/rules.d/*)              echo "sudo udevadm control --reload-rules && sudo udevadm trigger" ;;
+    /etc/sysctl.d/*)                  echo "sudo sysctl --system >/dev/null" ;;
+    /etc/modprobe.d/*)                echo "NOTE modprobe options take effect when the module next loads -- in practice, the next boot" ;;
+    # Validate before reloading, and reload, never restart: a bad sshd config plus a
+    # restart is how a remote machine becomes unreachable. try-reload is a no-op if sshd
+    # is not running yet.
+    /etc/ssh/sshd_config.d/*)         echo "sudo sshd -t && sudo systemctl try-reload-or-restart sshd.service" ;;
+    /etc/nut/*)                       echo "sudo systemctl try-restart nut-monitor.service" ;;
+  esac
+}
+
+sec_copies() {
+  local stage=$1 src dst mode reloads=() r
+  local f; f="$(sys_dir "$stage")/copies"
+  [[ -f $f ]] || { say "none declared"; return; }
+  while read -r src dst mode; do
+    [[ -n ${src:-} && -n ${dst:-} ]] || continue
+    mode=${mode:-0644}
+    if [[ ! -e $src ]]; then bad "$src does not exist in the repo"; continue; fi
+    local cmd="sudo install -D -m $mode $(printf %q "$repo/$src") $(printf %q "$dst")"
+    if [[ ! -e $dst ]]; then
+      need "install $dst" "$cmd"
+    elif [[ ! -r $dst ]]; then
+      say "? $dst not readable as $USER -- cannot compare"
+      continue
+    elif diff -q "$src" "$dst" >/dev/null 2>&1; then
+      good "$dst"
+      continue
+    elif ((plan_mode)); then
+      diff -u "$dst" "$src" | sed 's/^/      /' | head -40
+      need "replace $dst (differs from $src, diff above)" "$cmd"
+    else
+      bad "$dst DIFFERS from $src"
+      continue
+    fi
+    r=$(reload_for "$dst")
+    [[ -n $r && " ${reloads[*]-} " != *" $r "* ]] && reloads+=("$r")
+  done < <(manifest "$f")
+  if ((plan_mode)); then
+    for r in "${reloads[@]+"${reloads[@]}"}"; do
+      if [[ $r == NOTE\ * ]]; then plan_notes+=("${r#NOTE }")
+      else plan_desc+=("reload for the files above"); plan_cmd+=("$r"); plan_fatal+=(0); fi
+    done
+  fi
+}
+
+sec_units() {
+  local stage=$1 verb unit state
+  local f; f="$(sys_dir "$stage")/system-units"
+  [[ -f $f ]] || { say "none declared"; return; }
+  while read -r verb unit; do
+    [[ -n ${verb:-} && -n ${unit:-} ]] || continue
+    state=$(systemctl is-enabled "$unit" 2>/dev/null)
+    case $verb in
+      enable)
+        if [[ $state == enabled || $state == alias ]]; then good "$unit"
+        elif [[ $state == static ]]; then
+          # Enabled by its package (a .wants symlink under /usr/lib) and not enableable by
+          # us -- plocate-updatedb.timer is one. It starts at boot; it only needs starting
+          # now if it was installed since.
+          if systemctl is-active -q "$unit"; then good "$unit (static, active)"
+          else need "start $unit (static: enabled by its package, not yet running)" "sudo systemctl start $unit"; fi
+        else need "enable and start $unit (now: ${state:-not found})" "sudo systemctl enable --now $unit"; fi ;;
+      mask)
+        if [[ $state == masked ]]; then good "$unit masked"
+        else need "mask $unit (now: ${state:-not found})" "sudo systemctl mask $unit"; fi ;;
+      *) bad "$f: unknown verb '$verb' (enable|mask)" ;;
+    esac
+  done < <(manifest "$f")
+}
+
+# checks: `check <name>`, then indented `probe <cmd>` and either `fix <cmd>` or
+# `manual <instructions>`. Probes run with no sudo, from the repo root, and must be
+# read-only; they are what `status` evaluates. A manual check is for state that needs a
+# human -- above all a credential, which nothing here may write. Its probe is still what
+# decides it: a file merely EXISTING proves nothing when a package ships a stock one.
+manual_steps=()
+sec_checks() {
+  local f=$1 name='' probe='' fix='' manual='' line
+  [[ -f $f ]] || { say "none declared"; return; }
+  _check_one() {
+    [[ -n $name ]] || return 0
+    if [[ -z $probe || ( -z $fix && -z $manual ) ]]; then bad "$f: check '$name' needs a probe, and a fix or manual"; return; fi
+    if (eval "$probe") >/dev/null 2>&1; then good "$name"
+    elif [[ -n $manual ]]; then want "$name -- by hand, see below"; manual_steps+=("$name: $manual")
+    else need "$name" "$fix"; fi
+  }
+  while IFS= read -r line; do
+    line=${line#"${line%%[![:space:]]*}"}   # the keyword is the first word, after indentation
+    case $line in
+      check\ *) _check_one; name=${line#check }; probe=''; fix=''; manual='' ;;
+      probe\ *) probe=${line#probe}; probe=${probe#"${probe%%[![:space:]]*}"} ;;
+      fix\ *)   fix=${line#fix};     fix=${fix#"${fix%%[![:space:]]*}"} ;;
+      manual\ *) manual=${line#manual}; manual=${manual#"${manual%%[![:space:]]*}"} ;;
+      *) bad "$f: cannot parse '$line'" ;;
+    esac
+  done < <(manifest "$f")
+  _check_one
+}
+
+system_stage() {  # system_stage <stage> -- packages, then files, units, checks
+  local stage=$1 d
+  d=$(sys_dir "$stage")
+  head1 "[$stage] packages"; sec_repo "$stage"; sec_aur "$stage"
+  head1 "[$stage] root-owned files"; sec_copies "$stage"
+  head1 "[$stage] system units"; sec_units "$stage"
+  head1 "[$stage] checks"; sec_checks "$d/checks"
+}
+
+# ── User level (was common/scripts/bootstrap) ───────────────────────────────────────────
+sec_toolchains() {
+  local mgr chain active
+  local list; list=$(manifest common/bootstrap/toolchains "hosts/$host/bootstrap/toolchains")
+  [[ -n $list ]] || { say "none declared"; return; }
+  # Arch's rustup package ships shims only: cargo and rustc answer `command -v` with no
+  # toolchain behind them, so a package check passes and every build fails.
+  while read -r mgr chain; do
+    [[ -n ${mgr:-} && -n ${chain:-} ]] || continue
+    case $mgr in
+      rustup)
+        if ! command -v rustup >/dev/null 2>&1; then want "rustup is not installed yet -- nomarchy install desktop"
+        elif active="$(rustup show active-toolchain 2>/dev/null)" && [[ -n $active ]]; then good "rustup: ${active%% *}"
+        else need "rustup default $chain" "rustup default $chain"; fi ;;
+      *) bad "unknown toolchain manager '$mgr'" ;;
+    esac
+  done <<<"$list"
+}
+
+# Source builds: <command> <checkout> <url> <install command...>. A GitHub ssh URL is
+# CLONED over https and given the ssh URL as its push URL, so a fresh host can build
+# before any key is loaded, and the checkout is still pushable once one is.
+sec_builds() {
+  local cmd dest url install dir fetch
+  local list; list=$(manifest common/bootstrap/builds "hosts/$host/bootstrap/builds")
+  [[ -n $list ]] || { say "none declared"; return; }
+  while read -r cmd dest url install; do
+    [[ -n ${cmd:-} && -n ${install:-} ]] || continue
+    dir=$(expand "$dest")
+    if [[ -x $HOME/.local/bin/$cmd ]] || command -v "$cmd" >/dev/null 2>&1; then good "$cmd"; continue; fi
+    fetch=$url
+    [[ $url =~ ^git@github\.com:(.+)$ ]] && fetch="https://github.com/${BASH_REMATCH[1]}"
+    local c=''
+    [[ -d $dir/.git ]] || c="git clone $(printf %q "$fetch") $(printf %q "$dir") && git -C $(printf %q "$dir") remote set-url --push origin $(printf %q "$url") && "
+    need "build $cmd in $dest" "${c}(cd $(printf %q "$dir") && $install)"
+  done <<<"$list"
+}
+
+sec_links() {
+  local src dst target
+  while read -r src dst; do
+    [[ -n ${src:-} && -n ${dst:-} ]] || continue
+    target=$(expand "$dst")
+    if [[ ! -e $repo/$src ]]; then bad "$src does not exist in the repo"; continue; fi
+    if [[ -L $target ]]; then
+      if [[ $(readlink -f "$target") == "$(readlink -f "$repo/$src")" ]]; then good "$dst"
+      else bad "$dst -> $(readlink -f "$target") (expected $src)"; fi
+    elif [[ -e $target ]]; then
+      # Never clobber: on a fresh install ~/.bashrc is a real file with real content.
+      bad "$dst exists and is not a symlink -- move it aside, then rerun"
+    else
+      need "link $dst -> $src" "mkdir -p $(printf %q "$(dirname "$target")") && ln -s $(printf %q "$repo/$src") $(printf %q "$target")"
+    fi
+  done < <(manifest common/bootstrap/links "hosts/$host/bootstrap/links")
+}
+
+# Seeds: files an app owns but that must EXIST before it first runs. Copied once if
+# absent, never overwritten, deliberately not diffed -- their drift is the app working.
+sec_seeds() {
+  local src dst target
+  local list; list=$(manifest common/bootstrap/seeds "hosts/$host/bootstrap/seeds")
+  [[ -n $list ]] || { say "none declared"; return; }
+  while read -r src dst; do
+    [[ -n ${src:-} && -n ${dst:-} ]] || continue
+    target=$(expand "$dst")
+    if [[ ! -e $repo/$src ]]; then bad "$src does not exist in the repo"
+    elif [[ -e $target ]]; then good "$dst (present -- owned by the app, drift expected)"
+    else need "seed $dst from $src" "mkdir -p $(printf %q "$(dirname "$target")") && cp $(printf %q "$repo/$src") $(printf %q "$target")"; fi
+  done <<<"$list"
+}
+
+sec_user_units() {
+  local u state
+  for u in $(manifest common/bootstrap/units "hosts/$host/bootstrap/units"); do
+    state=$(systemctl --user is-enabled "$u" 2>/dev/null)
+    if [[ $state == enabled ]]; then good "$u"
+    else need "enable --user $u (now: ${state:-not found})" "systemctl --user daemon-reload && systemctl --user enable --now $u"; fi
+  done
+}
+
+user_level() {
+  head1 "[user] toolchains"; sec_toolchains
+  head1 "[user] source builds"; sec_builds
+  head1 "[user] symlinks"; sec_links
+  head1 "[user] seeded files"; sec_seeds
+  head1 "[user] systemd --user units"; sec_user_units
+  if [[ -f hosts/$host/bootstrap/user-checks ]]; then head1 "[user] checks"; sec_checks "hosts/$host/bootstrap/user-checks"; fi
+}
+
+root_steps() {
+  local f=hosts/$host/bootstrap/root-steps m
+  local steps; steps=$(manifest "$f")
+  [[ -n $steps || ${#manual_steps[@]} -gt 0 ]] || return 0
+  head1 "Still by hand -- nomarchy will not do these"
+  for m in "${manual_steps[@]+"${manual_steps[@]}"}"; do say "$m"; done
+  [[ -z $steps ]] || while IFS= read -r line; do say "$line"; done <<<"$steps"
+}
+
+summary() { printf '\n\033[1m%d ok, %d to do, %d conflicts\033[0m\n\n' "$ok" "$todo" "$conflict"; }
+
+# ── Commands ────────────────────────────────────────────────────────────────────────────
+cmd=${1:-}; shift || true
+yes=0; args=()
+for a in "$@"; do case $a in --yes|-y) yes=1 ;; -*) die "unknown option '$a'" ;; *) args+=("$a") ;; esac; done
+set -- "${args[@]+"${args[@]}"}"
+
+case $cmd in
+  status)
+    resolve_host "${1:-}"
+    printf '\n\033[1mnomarchy status — host %s — read-only\033[0m\n' "$host"
+    refresh_installed
+    for s in base desktop host; do system_stage "$s"; done
+    user_level
+    root_steps
+    summary
+    ((conflict == 0))
+    ;;
+  link)
+    resolve_host "${1:-}"
+    printf '\n\033[1mnomarchy link — host %s — user level, no sudo\033[0m\n' "$host"
+    plan_mode=1
+    user_level
+    run_plan "$yes"
+    ;;
+  install)
+    stage=${1:-}
+    case $stage in
+      base|desktop) resolve_host "${2:-}" ;;
+      host) resolve_host "${2:-}" ;;
+      *) die "usage: ${0##*/} install base|desktop|host [host] [--yes]" ;;
+    esac
+    ((EUID != 0)) || die "run as your user, not root -- makepkg refuses root, and sudo is called where needed"
+    printf '\n\033[1mnomarchy install %s — host %s\033[0m\n' "$stage" "$host"
+    plan_mode=1
+    refresh_installed
+    system_stage "$stage"
+    run_plan "$yes"; rc=$?
+    [[ $stage == host ]] && root_steps
+    exit $rc
+    ;;
+  *)
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1
+    ;;
+esac
