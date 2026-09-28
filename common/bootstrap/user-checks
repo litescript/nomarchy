@@ -6,10 +6,12 @@
 # which nothing here may write, and it can only be registered while Noctalia is RUNNING --
 # so on a fresh host this fails until the first graphical login, and passes on the `link`
 # after it. The source is only added when absent: whether `source add` is safe to repeat
-# has not been verified (the Irides session's caveat, 2026-09-27).
+# has not been verified (the Irides session's caveat, 2026-09-27). Enabling completes in the
+# background ("ok (exporting in background)"), so the fix waits until Noctalia reports the
+# plugin enabled -- the VM rehearsal's status, run seconds later, still saw it off.
 check Irides Noctalia plugin enabled (Mod+Alt+T)
   probe noctalia msg plugins list 2>/dev/null | grep -qE '^litescript/irides .* enabled'
-  fix   { noctalia msg plugins source list | grep -qE '^irides ' || noctalia msg plugins source add irides path ~/code/irides/noctalia-plugins; } && noctalia msg plugins enable litescript/irides
+  fix   { noctalia msg plugins source list | grep -qE '^irides ' || noctalia msg plugins source add irides path ~/code/irides/noctalia-plugins; } && noctalia msg plugins enable litescript/irides && for i in $(seq 20); do noctalia msg plugins list 2>/dev/null | grep -qE '^litescript/irides .* enabled' && exit 0; sleep 0.5; done; exit 1
 
 # Noctalia's settings are seeded from a snapshot in the repo (hosts/<host>/noctalia/). A
 # snapshot is only as good as its date, so this says when live has moved past it -- a
