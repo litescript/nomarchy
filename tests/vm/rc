@@ -158,7 +158,7 @@ EOF
 }
 
 # ── qemu ───────────────────────────────────────────────────────────────────────────────
-qemu() {  # qemu env|target [gui]
+qemu() {  # qemu env|target [gui|inspect]
   local phase=$1 gui=${2:-} args
   args=(-name "nomarchy-rc-$phase" -machine q35 -enable-kvm -cpu host -smp "$CPUS" -m "$MEM"
     -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
@@ -170,7 +170,7 @@ qemu() {  # qemu env|target [gui]
     -device "ahci,id=ahci"
     -drive "file=$WD/env.qcow2,format=qcow2,if=none,id=env" -device "ide-hd,drive=env,bus=ahci.0,model=Samsung SSD 870 EVO 2TB,serial=$RESCUE_SERIAL"
     -drive "file=$WD/decoy-win.raw,format=raw,if=none,id=decoy" -device "nvme,drive=decoy,serial=$DECOY_SERIAL,model=WD_BLACK SN850X 4000GB"
-    -drive "file=$WD/xpg.raw,format=raw,if=none,id=xpg" -device "nvme,drive=xpg,serial=2K0420036195,model=XPG SPECTRIX S40G"
+    -drive "file=$WD/xpg.raw,format=raw,if=none,id=xpg" -device "nvme,drive=xpg,serial=2K0420036195,model=XPG SPECTRIX S40G$([[ $gui == inspect ]] && echo ',bootindex=0')"
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22"
     -virtfs "local,path=/var/cache/pacman/pkg,mount_tag=pkgcache,security_model=none,readonly=on"
     -serial "file:$WD/serial-$phase.log" -pidfile "$WD/qemu.pid")
@@ -312,7 +312,9 @@ VMEOF
   # user with a password, as on metal), then the LAN blackhole, before any nomarchy stage.
   # ONE sudo -S: it reads the password from stdin and runs the whole step. Two calls do not
   # share credentials without a terminal -- "sudo: a terminal is required", the third run.
-  vm_ssh "echo '$(cat "$WD/vm-secrets/user-password")' | sudo -S -p '' sh -c \"echo 'peter ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/10-rehearsal && chmod 0440 /etc/sudoers.d/10-rehearsal\"" >>"$LOG" 2>&1
+  # 99-, not 10-: sudo applies the LAST matching rule, and the provisioner's 10-wheel
+  # (password required) sorts after 10-rehearsal and overrode it -- the fourth run.
+  vm_ssh "echo '$(cat "$WD/vm-secrets/user-password")' | sudo -S -p '' sh -c \"echo 'peter ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-rehearsal && chmod 0440 /etc/sudoers.d/99-rehearsal\"" >>"$LOG" 2>&1
   must "harness sudo on the target" vm_ssh 'sudo -n true'
   printf '%s\n' '[Unit]' 'Description=Rehearsal VM only: no route to the real LAN (NAS, UPS, Proxmox)' \
     'After=network-online.target NetworkManager.service' 'Wants=network-online.target' '[Service]' 'Type=oneshot' \
@@ -344,6 +346,9 @@ VMEOF
   vm_ssh 'mkdir -p ~/Pictures' && for f in f40.png synthwave-nsx.jpg cyberpunk-countach.jpg; do vm_scp "$HOME/Pictures/$f" peter@127.0.0.1:Pictures/; done
 
   step "reboot into the graphical session"
+  # Before --finalize-nvram the firmware still leads to the rescue system: ask for the new
+  # one for this restart, as an operator would.
+  check "BootNext set for the reboot (provision --boot-next)" vm_ssh 'cd ~/Projects/nomarchy && sudo provision/provision caesar --boot-next'
   vm_ssh 'sudo systemctl reboot' >/dev/null 2>&1; sleep 10
   wait_ssh 180 || die "the target did not come back after reboot"
   local i; for i in $(seq 60); do vm_ssh 'pgrep -x umbriel >/dev/null && pgrep -x noctalia >/dev/null' && break; sleep 3; done
@@ -391,6 +396,9 @@ case $cmd in
   run) run ;;
   gui) gui ;;
   rescue) running && die "a VM is running"; [[ -f $WD/env.qcow2 ]] || fresh_state; qemu env; wait_ssh || die "rescue did not come up"; say "rescue up: tests/vm/rc ssh" ;;
+  # Inspection only: bootindex makes OVMF prefer the XPG, sidestepping the NVRAM order the
+  # rehearsal itself must exercise.
+  target) running && die "a VM is running"; qemu target inspect; wait_ssh 180 || die "target did not come up"; say "target up: tests/vm/rc ssh" ;;
   ssh) running || die "no VM running"; exec ssh -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o LogLevel=ERROR \
          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null peter@127.0.0.1 "$@" ;;
   stop) stop_vm; say "stopped" ;;

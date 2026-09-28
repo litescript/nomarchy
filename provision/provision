@@ -3,6 +3,10 @@
 #
 #   provision/provision <host>                   read-only: check the target, print the whole plan
 #   sudo provision/provision <host> --apply      do it
+#   sudo provision/provision <host> --boot-next
+#                                                boot the new system on the NEXT restart only
+#                                                (before --finalize-nvram, BootOrder still
+#                                                leads to the previous system)
 #   sudo provision/provision <host> --finalize-nvram
 #                                                after the new system has booted: make it first
 #                                                in BootOrder, remove NVRAM entries whose loader
@@ -46,6 +50,7 @@ while (($#)); do
   case $1 in
     --apply) mode=apply ;;
     --finalize-nvram) mode=finalize ;;
+    --boot-next) mode=bootnext ;;
     --root) root=${2:-}; shift ;;
     --clone) clone=1 ;;
     --vm-secrets) vmsecrets=${2:-}; shift ;;
@@ -72,6 +77,21 @@ fi
 nvram_entries() { efibootmgr 2>/dev/null | sed -n 's/^Boot\([0-9A-F]\{4\}\)\*\{0,1\} \(.*\)$/\1\t\2/p'; }
 nvram_num_for_label() { nvram_entries | awk -F'\t' -v l="$1" '$2 == l {print $1}' | head -1; }
 efi_available() { [[ -d /sys/firmware/efi/efivars ]]; }
+
+# ── boot-next: until finalize, each boot of the new system is a one-shot ───────────────
+# BootOrder is deliberately left leading to the previous system until the new one has proven
+# itself, so every restart before --finalize-nvram falls back there -- found by the VM
+# rehearsal, whose second boot of the new system landed on the old one. This asks for the
+# new one once more.
+if [[ $mode == bootnext ]]; then
+  ((EUID == 0)) || die "--boot-next changes NVRAM: run it with sudo"
+  efi_available || die "no EFI variables here"
+  n=$(nvram_num_for_label "${SPEC[boot.nvram-label]}")
+  [[ -n $n ]] || die "no NVRAM entry '${SPEC[boot.nvram-label]}' -- has --apply run?"
+  efibootmgr -q -n "$n" || die "could not set BootNext"
+  say "BootNext = Boot$n '${SPEC[boot.nvram-label]}': the next restart boots it, once"
+  exit 0
+fi
 
 # ── finalize-nvram: a separate, late step ───────────────────────────────────────────────
 if [[ $mode == finalize ]]; then
@@ -389,6 +409,8 @@ head1 "Provisioned."
 cat <<NEXT
   Reboot. The firmware boots the new system ONCE (BootNext); it asks for the LUKS passphrase.
   If it does not come up, just reboot again: you are back on the previous system.
+  Until --finalize-nvram, EVERY restart returns to the previous system; to come back to the
+  new one:  sudo provision/provision $host --boot-next  before rebooting.
   On the new system: clone nomarchy if not done, then
       nomarchy install base && nomarchy install desktop && nomarchy install host
       nomarchy install storage && nomarchy link
