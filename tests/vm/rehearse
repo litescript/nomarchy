@@ -158,7 +158,11 @@ stop() {
 run() {
   running || die "not running -- '${0##*/} boot' first"
   local from=bundle; [[ ${1:-} == --github ]] && from=github
-  vm_ssh 'ip route get 192.168.1.208' 2>&1 | grep -qE '^(blackhole|unreachable)' \
+  # Two signals, both required: the route is in the table, and a real connection to the
+  # NAS's NFS port fails. (`ip route get` is no use here: for a blackholed address it
+  # answers "Invalid argument" rather than naming the route.)
+  vm_ssh 'ip route show type blackhole' 2>/dev/null | grep -q '^blackhole 192.168.1.0/24' \
+    && ! vm_ssh 'timeout 3 bash -c "</dev/tcp/192.168.1.208/2049"' 2>/dev/null \
     || die "the VM can reach 192.168.1.0/24 -- refusing: caesar's NAS units would touch the real NAS"
 
   local stamp logs; stamp=$(date +%Y%m%d-%H%M%S); logs=$WD/logs/$stamp; mkdir -p "$logs"
