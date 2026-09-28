@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+# provision -- lay down a nomarchy host's disk from its storage spec. DESTRUCTIVE.
+#
+#   provision/provision <host>                   read-only: check the target, print the whole plan
+#   sudo provision/provision <host> --apply      do it
+#   sudo provision/provision <host> --finalize-nvram
+#                                                after the new system has booted: make it first
+#                                                in BootOrder, remove NVRAM entries whose loader
+#                                                partition no longer exists
+#
+# Options: --root DIR (target mount root, default /mnt/nomarchy-<host>), --clone (clone
+# nomarchy into the new home over https). VM rehearsal only, refused anywhere else:
+# --vm-secrets DIR (LUKS passphrase and user password from files, for an unattended run).
+#
+# Deliberately NOT part of `nomarchy install`, and deliberately not linked into
+# ~/.local/bin: destructive provisioning gets a hard boundary and a human. The layout comes
+# from hosts/<host>/storage/layout through common/storage/spec.sh -- the same parser the
+# read-only verifier in `nomarchy status` uses -- so this script encodes no layout itself.
+#
+# It acts on ONE disk, and only when every gate passes:
+#   1. identity: the spec's /dev/disk/by-id name resolves to a whole disk whose model,
+#      serial AND size all match the spec. No /dev/nvmeXn1 name is ever trusted.
+#   2. in use: nothing on the disk or any partition is mounted, used as swap, holding a
+#      device-mapper or md device, or backing a loop device.
+#   3. the whole plan is printed, then one final statement naming the physical device, and
+#      the serial must be typed back.
+#
+# NVRAM: the new loader gets its own entry WITHOUT changing BootOrder, and is set as
+# BootNext -- a one-shot. If the first boot fails, the next restart falls back to whatever
+# booted before (on caesar, the SATA rescue install). Only --finalize-nvram, run later from
+# the new system after it has proven itself, changes BootOrder and removes dead entries.
+
+set -uo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+. "$repo/common/storage/spec.sh" || exit 1
+
+die()  { printf '\033[31mprovision: %s\033[0m\n' "$1" >&2; exit 1; }
+say()  { printf '%s\n' "$*"; }
+head1() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+step() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+
+host='' mode=plan root='' clone=0 vmsecrets=''
+while (($#)); do
+  case $1 in
+    --apply) mode=apply ;;
+    --finalize-nvram) mode=finalize ;;
+    --root) root=${2:-}; shift ;;
+    --clone) clone=1 ;;
+    --vm-secrets) vmsecrets=${2:-}; shift ;;
+    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option '$1'" ;;
+    *) host=$1 ;;
+  esac
+  shift
+done
+[[ -n $host ]] || die "usage: provision/provision <host> [--apply | --finalize-nvram]"
+spec=$repo/hosts/$host/storage/layout
+spec_load "$spec" || die "cannot load $spec"
+[[ ${SPEC[host]} == "$host" ]] || die "$spec says host '${SPEC[host]}', not '$host'"
+root=${root:-/mnt/nomarchy-$host}
+
+if [[ -n $vmsecrets ]]; then
+  virt=$(systemd-detect-virt 2>/dev/null)
+  [[ -n $virt && $virt != none ]] || die "--vm-secrets is for the VM rehearsal only, and this is not a VM"
+  [[ -f $vmsecrets/luks-passphrase && -f $vmsecrets/user-password ]] \
+    || die "--vm-secrets $vmsecrets needs luks-passphrase and user-password"
+fi
+
+# ── NVRAM helpers ───────────────────────────────────────────────────────────────────────
+nvram_entries() { efibootmgr 2>/dev/null | sed -n 's/^Boot\([0-9A-F]\{4\}\)\*\{0,1\} \(.*\)$/\1\t\2/p'; }
+nvram_num_for_label() { nvram_entries | awk -F'\t' -v l="$1" '$2 == l {print $1}' | head -1; }
+efi_available() { [[ -d /sys/firmware/efi/efivars ]]; }
+
+# ── finalize-nvram: a separate, late step ───────────────────────────────────────────────
+if [[ $mode == finalize ]]; then
+  ((EUID == 0)) || die "--finalize-nvram changes NVRAM: run it with sudo"
+  efi_available || die "no EFI variables here"
+  espuuid=$(spec_part esp | awk '{print $6}')
+  findmnt -rn -S "PARTUUID=$espuuid" >/dev/null \
+    || die "the running system's ESP is not the spec's ($espuuid) -- run this from the NEW system, after it has booted"
+  new=$(efibootmgr -v | awk -v u="$espuuid" 'tolower($0) ~ tolower(u) && /systemd-bootx64/ {sub(/^Boot/,"",$1); sub(/\*$/,"",$1); print $1; exit}')
+  [[ -n $new ]] || die "no NVRAM entry points at systemd-boot on $espuuid"
+  head1 "NVRAM now"; efibootmgr | sed 's/^/  /'
+  # Dead: the entry's loader partition exists on no disk in this machine.
+  live=$(lsblk -nro PARTUUID | tr 'A-F' 'a-f' | grep -v '^$')
+  dead=()
+  while read -r num puuid; do
+    grep -qx "$puuid" <<<"$live" || dead+=("$num")
+  done < <(efibootmgr -v | sed -n 's/^Boot\([0-9A-F]\{4\}\)\*\{0,1\} .*HD([0-9]*,GPT,\([0-9a-fA-F-]*\),.*/\1 \2/p' | tr 'A-F' 'a-f' | awk '{print toupper($1), $2}')
+  order=$(efibootmgr | sed -n 's/^BootOrder: //p')
+  neworder=$new
+  IFS=, read -ra cur <<<"$order"
+  for n in "${cur[@]}"; do
+    [[ $n == "$new" ]] && continue
+    [[ " ${dead[*]-} " == *" $n "* ]] && continue
+    neworder+=",$n"
+  done
+  head1 "Plan"
+  say "  BootOrder: $order  ->  $neworder"
+  for n in "${dead[@]+"${dead[@]}"}"; do say "  delete Boot$n (its loader partition is on no disk): $(nvram_entries | awk -F'\t' -v n="$n" '$1==n{print $2}')"; done
+  ((${#dead[@]})) || say "  no dead entries"
+  printf '\nApply? [y/N] '; read -r a </dev/tty; [[ $a == [yY]* ]] || { say "nothing changed"; exit 1; }
+  for n in "${dead[@]+"${dead[@]}"}"; do efibootmgr -q -b "$n" -B || die "could not delete Boot$n"; done
+  efibootmgr -q -o "$neworder" || die "could not set BootOrder"
+  head1 "NVRAM after"; efibootmgr | sed 's/^/  /'
+  exit 0
+fi
+
+# ── Gate 1: identity ────────────────────────────────────────────────────────────────────
+head1 "Target: /dev/disk/by-id/${SPEC[disk.by-id]}"
+if ! spec_identity_ok; then
+  say "  expected: model '${SPEC[disk.model]}', serial '${SPEC[disk.serial]}', ${SPEC[disk.bytes]} bytes"
+  if [[ -n $DISK_DEV ]]; then say "  found:    model '$DISK_MODEL', serial '$DISK_SERIAL', $DISK_BYTES bytes ($DISK_DEV)"
+  else say "  found:    nothing at that by-id path (or it is a partition, not a disk)"; fi
+  die "identity gate: REFUSED -- this is not the declared disk"
+fi
+say "  model '$DISK_MODEL', serial '$DISK_SERIAL', $DISK_BYTES bytes -> $DISK_DEV (kernel name today)"
+say "  identity gate: passed (by-id, model, serial and size all match)"
+
+# ── Gate 1b: never ──────────────────────────────────────────────────────────────────────
+# Independent of the spec's disk entry, so a typo there can only make this refuse, never
+# reach the wrong disk. Refused outright, whatever the spec says, is any disk holding:
+#   - a Microsoft partition (reserved, basic data, recovery) or an NTFS filesystem;
+#   - the ESP that any firmware entry loads a \EFI\MICROSOFT\ loader from (read from NVRAM,
+#     nothing mounted) -- on caesar, sda1, where Windows' boot manager lives;
+#   - the rescue install's root filesystem (rescue.root-uuid), or the running system's root.
+# Added 2026-09-27 at Pete's word, after a gate test pointed this tool (read-only) at sda.
+MS_TYPES='e3c9e316-0b5c-4db8-817d-f92df00215ae ebd0a0a2-b9e5-4433-87c0-68b6b72699c7 de94bba4-06d1-4d40-a16a-bfd50179d6ac'
+never=()
+# PARTUUIDs of every ESP a firmware entry loads something under \EFI\Microsoft\ from.
+winesp=$(efibootmgr -v 2>/dev/null | grep -i 'efi.microsoft' | grep -oiE 'gpt,[0-9a-f-]{36}' | cut -d, -f2 | tr 'A-F' 'a-f' | sort -u)
+runroot=$(findmnt -rn -o UUID / 2>/dev/null)
+# lsblk -P prints KEY="value" pairs: an empty field stays an empty field. (-r leaves gaps
+# that `read` would collapse, silently shifting every later column -- not acceptable here.)
+pval() { [[ $1 =~ (^|[[:space:]])$2=\"([^\"]*)\" ]] && printf '%s' "${BASH_REMATCH[2]}"; }
+while IFS= read -r row; do
+  dev=$(pval "$row" NAME); ptype=$(pval "$row" PARTTYPE); fstype=$(pval "$row" FSTYPE)
+  uuid=$(pval "$row" UUID); puuid=$(pval "$row" PARTUUID)
+  ptype=${ptype,,}; puuid=${puuid,,}
+  [[ -n $ptype && " $MS_TYPES " == *" $ptype "* ]] && never+=("$dev has a Microsoft partition type ($ptype)")
+  [[ $fstype == ntfs ]] && never+=("$dev is NTFS")
+  [[ -n $puuid ]] && grep -qx "$puuid" <<<"$winesp" && never+=("$dev is the ESP a firmware entry loads Microsoft's boot manager from")
+  [[ -n $uuid && $uuid == "${SPEC[rescue.root-uuid]:-none}" ]] && never+=("$dev is the rescue install's root ($uuid)")
+  [[ -n $uuid && $uuid == "$runroot" ]] && never+=("$dev is the running system's root")
+done < <(lsblk -nP -p -o NAME,PARTTYPE,FSTYPE,UUID,PARTUUID "$DISK_DEV")
+if ((${#never[@]})); then
+  printf '  %s\n' "${never[@]}"
+  die "never gate: REFUSED -- this disk holds something no provisioning may touch, whatever the spec says"
+fi
+say "  never gate: passed (no Windows, no Microsoft ESP, no rescue root, not the running root)"
+
+# ── Gate 2: not in use ──────────────────────────────────────────────────────────────────
+inuse=()
+while read -r dev; do
+  n=${dev##*/}
+  m=$(findmnt -rn -S "$dev" -o TARGET | head -1); [[ -n $m ]] && inuse+=("$dev is mounted at $m")
+  swapon --noheadings --show=NAME 2>/dev/null | grep -qx "$dev" && inuse+=("$dev is active swap")
+  [[ -n $(ls -A "/sys/class/block/$n/holders" 2>/dev/null) ]] \
+    && inuse+=("$dev is held by $(ls "/sys/class/block/$n/holders" | tr '\n' ' ')(device-mapper/md)")
+  [[ -n $(losetup -j "$dev" 2>/dev/null) ]] && inuse+=("$dev backs a loop device")
+done < <(lsblk -nrpo NAME "$DISK_DEV")
+rootsrc=$(findmnt -rn -o SOURCE / ); rootdisk=$(lsblk -nrpso NAME "${rootsrc%%\[*}" 2>/dev/null | tail -1)
+[[ $rootdisk == "$DISK_DEV" ]] && inuse+=("the RUNNING system's root is on it")
+if ((${#inuse[@]})); then
+  printf '  %s\n' "${inuse[@]}"
+  die "in-use gate: REFUSED -- unmount / close everything on $DISK_DEV first"
+fi
+say "  in-use gate: passed (nothing mounted, no swap, no holders, no loop)"
+
+# ── The plan ────────────────────────────────────────────────────────────────────────────
+esp=$(spec_part esp); rootp=$(spec_part root)
+read -r espn _ espsize _ _ _ <<<"$esp"; read -r rootn _ _ _ _ _ <<<"$rootp"
+espdev=$(spec_part_dev "$espn"); rootdev=$(spec_part_dev "$rootn")
+mapper=${SPEC[luks.mapper]}
+sgargs=(--disk-guid="${SPEC[gpt.uuid]}")
+for p in "${SPEC_PARTS[@]}"; do
+  read -r num _ size type label puuid <<<"$p"
+  [[ $size == rest ]] && end=0 || end="+${size%iB}"
+  sgargs+=(-n "$num:0:$end" -t "$num:$type" -c "$num:$label" -u "$num:$puuid")
+done
+nvlabel=${SPEC[boot.nvram-label]}
+
+head1 "What is on it now -- all of this is destroyed"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,PARTLABEL "$DISK_DEV" | sed 's/^/  /'
+
+head1 "Plan"
+cat <<PLAN
+  1. erase     wipefs --all on every partition, then sgdisk --zap-all $DISK_DEV
+  2. partition sgdisk ${sgargs[*]} $DISK_DEV
+  3. ESP       mkfs.fat -F 32 -i ${SPEC[esp.volid]} $espdev          -> UUID $(spec_esp_uuid)
+  4. LUKS2     cryptsetup luksFormat ${SPEC[luks.format]} --uuid ${SPEC[luks.uuid]} --label ${SPEC[luks.label]} $rootdev
+               ($( [[ -n $vmsecrets ]] && echo "VM passphrase from $vmsecrets" || echo "passphrase typed twice"))
+               systemd-cryptenroll --recovery-key $rootdev      (shown ONCE: write it down, store it offline)
+               cryptsetup open $rootdev $mapper
+  5. btrfs     mkfs.btrfs -L ${SPEC[btrfs.label]} -U ${SPEC[btrfs.uuid]} /dev/mapper/$mapper
+               subvolumes: $(for s in "${SPEC_SUBVOLS[@]}"; do printf '%s ' "${s%% *}"; done)
+               mounted under $root with ${SPEC[btrfs.options]}
+  6. install   pacstrap -K $root ${SPEC[pacstrap]}
+               fstab from the spec (UUIDs, subvolumes, options); hostname $host;
+               user peter (wheel, sudo) and its password; root account locked
+               nested subvolumes: $(for n in "${SPEC_NESTED[@]+"${SPEC_NESTED[@]}"}"; do printf '%s ' "${n%% *}"; done)
+  7. boot      mkinitcpio HOOKS=(${SPEC[boot.hooks]}), presets default$( [[ ${SPEC[boot.fallback]:-} == yes ]] && echo " + fallback")
+               bootctl install --no-variables; loader entries with:
+                 ${SPEC[boot.cmdline]}
+               systemd-boot-update.service and NetworkManager enabled
+  8. NVRAM     $(efi_available && echo "new entry '$nvlabel' -> \\EFI\\systemd\\systemd-bootx64.efi on $espdev; BootOrder UNCHANGED; BootNext = the new entry (one-shot)" || echo "SKIPPED: no EFI variables on this system")
+  9. finish    $( ((clone)) && echo "clone nomarchy into ~peter/Projects/nomarchy; ")unmount everything, close the LUKS mapping
+PLAN
+
+if [[ $mode == plan ]]; then
+  printf '\n\033[1mDry run: nothing was touched.\033[0m  To do it: sudo %s %s --apply\n' "$0" "$host"
+  exit 0
+fi
+
+# ── Apply ───────────────────────────────────────────────────────────────────────────────
+((EUID == 0)) || die "--apply needs root: sudo $0 $host --apply"
+for t in sgdisk wipefs mkfs.fat cryptsetup systemd-cryptenroll mkfs.btrfs pacstrap arch-chroot; do
+  command -v "$t" >/dev/null || die "missing tool: $t"
+done
+printf '\n\033[1;31mFINAL: this DESTROYS every byte on %s (model %s, serial %s, %s bytes,\n' \
+  "/dev/disk/by-id/${SPEC[disk.by-id]}" "$DISK_MODEL" "$DISK_SERIAL" "$DISK_BYTES"
+printf 'kernel name %s) and replaces it with host %s'"'"'s layout. There is no undo.\033[0m\n' "$DISK_DEV" "$host"
+printf 'Type the disk serial to proceed: '
+read -r typed </dev/tty
+[[ $typed == "${SPEC[disk.serial]}" ]] || die "serial not confirmed -- nothing was touched"
+# Re-check both gates at the last moment: nothing may have changed while the plan was read.
+spec_identity_ok || die "identity changed while the plan was on screen -- stopping"
+[[ -z $(lsblk -nrpo MOUNTPOINTS "$DISK_DEV" | tr -d '[:space:]') ]] || die "something on the disk got mounted -- stopping"
+
+set -e
+luksargs=(); openargs=(); enrollargs=()
+if [[ -n $vmsecrets ]]; then
+  luksargs=(--key-file "$vmsecrets/luks-passphrase"); openargs=(--key-file "$vmsecrets/luks-passphrase")
+  enrollargs=(--unlock-key-file="$vmsecrets/luks-passphrase")
+else
+  luksargs=(--verify-passphrase)
+fi
+cleanup() {
+  set +e
+  umount -R "$root" 2>/dev/null
+  cryptsetup close "$mapper" 2>/dev/null
+}
+trap cleanup EXIT
+
+step "1. erase"
+for d in $(lsblk -nrpo NAME "$DISK_DEV" | tac); do wipefs --all --quiet "$d"; done
+sgdisk --zap-all "$DISK_DEV" >/dev/null
+
+step "2. partition"
+sgdisk "${sgargs[@]}" "$DISK_DEV" >/dev/null
+partprobe "$DISK_DEV" 2>/dev/null || true; udevadm settle
+[[ -b $espdev && -b $rootdev ]] || die "partitions did not appear"
+
+step "3. ESP"
+mkfs.fat -F 32 -i "${SPEC[esp.volid]}" "$espdev" >/dev/null
+
+step "4. LUKS2"
+cryptsetup luksFormat --batch-mode ${SPEC[luks.format]} --uuid "${SPEC[luks.uuid]}" \
+  --label "${SPEC[luks.label]}" "${luksargs[@]}" "$rootdev"
+say "Recovery key -- shown once. Write it down and store it OFFLINE; it opens the volume if the passphrase is lost:"
+systemd-cryptenroll "${enrollargs[@]}" --recovery-key "$rootdev"
+cryptsetup open "${openargs[@]}" "$rootdev" "$mapper"
+
+step "5. btrfs"
+mkfs.btrfs -q -L "${SPEC[btrfs.label]}" -U "${SPEC[btrfs.uuid]}" "/dev/mapper/$mapper"
+top=$(mktemp -d); mount "/dev/mapper/$mapper" "$top"
+for s in "${SPEC_SUBVOLS[@]}"; do btrfs -q subvolume create "$top/${s%% *}"; done
+umount "$top"; rmdir "$top"
+# Mount in mountpoint order so / is first and deeper paths land inside their parents.
+while read -r name mp; do
+  mkdir -p "$root$mp"
+  mount -o "${SPEC[btrfs.options]},subvol=/$name" "/dev/mapper/$mapper" "$root$mp"
+done < <(printf '%s\n' "${SPEC_SUBVOLS[@]}" | awk '{print $1, $2}' | sort -k2)
+mkdir -p "$root${SPEC[esp.mount]}"
+mount -o umask=0077 "$espdev" "$root${SPEC[esp.mount]}"
+
+step "6. install"
+pacstrap -K "$root" ${SPEC[pacstrap]}
+{
+  echo "# From hosts/$host/storage/layout, written by provision/provision."
+  while read -r name mp; do
+    printf 'UUID=%s\t%s\tbtrfs\t%s,subvol=/%s\t0 0\n' "${SPEC[btrfs.uuid]}" "$mp" "${SPEC[btrfs.options]}" "$name"
+  done < <(printf '%s\n' "${SPEC_SUBVOLS[@]}" | awk '{print $1, $2}' | sort -k2)
+  printf 'UUID=%s\t%s\tvfat\tumask=0077\t0 2\n' "$(spec_esp_uuid)" "${SPEC[esp.mount]}"
+} > "$root/etc/fstab"
+echo "$host" > "$root/etc/hostname"
+arch-chroot "$root" useradd -m -G wheel -s /bin/bash peter
+install -m 0440 /dev/stdin "$root/etc/sudoers.d/10-wheel" <<<'%wheel ALL=(ALL:ALL) ALL'
+if [[ -n $vmsecrets ]]; then
+  printf 'peter:%s\n' "$(cat "$vmsecrets/user-password")" | arch-chroot "$root" chpasswd
+else
+  say "Password for peter on the new system:"
+  until arch-chroot "$root" passwd peter; do :; done
+fi
+arch-chroot "$root" passwd -q -l root
+for n in "${SPEC_NESTED[@]+"${SPEC_NESTED[@]}"}"; do
+  read -r path owner <<<"$n"
+  # Parents made AS the owner: `install -d -o` would give only the last component to them,
+  # leaving ~/.local and ~/.local/share owned by root.
+  arch-chroot "$root" runuser -u "$owner" -- mkdir -p "$(dirname "$path")"
+  btrfs -q subvolume create "$root$path"
+  arch-chroot "$root" chown "$owner:$owner" "$path"
+done
+
+step "7. boot"
+mkdir -p "$root/etc/mkinitcpio.conf.d"
+printf '# From hosts/%s/storage/layout (provision/provision).\nHOOKS=(%s)\n' "$host" "${SPEC[boot.hooks]}" \
+  > "$root/etc/mkinitcpio.conf.d/nomarchy.conf"
+{
+  echo "# From hosts/$host/storage/layout (provision/provision)."
+  echo 'ALL_kver="/boot/vmlinuz-linux"'
+  if [[ ${SPEC[boot.fallback]:-} == yes ]]; then
+    echo "PRESETS=('default' 'fallback')"
+  else
+    echo "PRESETS=('default')"
+  fi
+  echo 'default_image="/boot/initramfs-linux.img"'
+  echo 'fallback_image="/boot/initramfs-linux-fallback.img"'
+  echo 'fallback_options="-S autodetect"'
+} > "$root/etc/mkinitcpio.d/linux.preset"
+arch-chroot "$root" mkinitcpio -P
+arch-chroot "$root" bootctl install --no-variables --esp-path="${SPEC[esp.mount]}"
+entry=${SPEC[boot.entry]:-$host}
+printf 'default %s.conf\ntimeout %s\nconsole-mode keep\neditor no\n' "$entry" "${SPEC[boot.timeout]:-3}" \
+  > "$root${SPEC[esp.mount]}/loader/loader.conf"
+ucode=''; [[ -n ${SPEC[boot.ucode]:-} ]] && ucode="initrd  /${SPEC[boot.ucode]}.img"$'\n'
+printf 'title   Nomarchy (%s)\nlinux   /vmlinuz-linux\n%sinitrd  /initramfs-linux.img\noptions %s\n' \
+  "$host" "$ucode" "${SPEC[boot.cmdline]}" > "$root${SPEC[esp.mount]}/loader/entries/$entry.conf"
+if [[ ${SPEC[boot.fallback]:-} == yes ]]; then
+  printf 'title   Nomarchy (%s, fallback initramfs)\nlinux   /vmlinuz-linux\n%sinitrd  /initramfs-linux-fallback.img\noptions %s\n' \
+    "$host" "$ucode" "${SPEC[boot.cmdline]}" > "$root${SPEC[esp.mount]}/loader/entries/$entry-fallback.conf"
+fi
+arch-chroot "$root" systemctl enable -q systemd-boot-update.service NetworkManager.service
+
+step "8. NVRAM"
+if efi_available; then
+  old=$(nvram_num_for_label "$nvlabel")
+  if [[ -n $old ]]; then
+    say "an entry '$nvlabel' already exists (Boot$old); replacing it"
+    efibootmgr -q -b "$old" -B
+  fi
+  order=$(efibootmgr | sed -n 's/^BootOrder: //p')
+  efibootmgr -q --create --disk "$DISK_DEV" --part "$espn" --label "$nvlabel" --loader '\EFI\systemd\systemd-bootx64.efi'
+  new=$(nvram_num_for_label "$nvlabel")
+  [[ -n $order ]] && efibootmgr -q -o "$order"          # --create prepended it; put the order back
+  efibootmgr -q -n "$new"
+  say "Boot$new '$nvlabel' created; BootOrder unchanged ($order); BootNext=$new (one-shot)"
+else
+  say "no EFI variables here: skipped. Add the entry from the firmware setup."
+fi
+
+step "9. finish"
+if ((clone)); then
+  arch-chroot "$root" sudo -u peter git clone -q https://github.com/litescript/nomarchy.git /home/peter/Projects/nomarchy
+fi
+cleanup; trap - EXIT
+head1 "Provisioned."
+cat <<NEXT
+  Reboot. The firmware boots the new system ONCE (BootNext); it asks for the LUKS passphrase.
+  If it does not come up, just reboot again: you are back on the previous system.
+  On the new system: clone nomarchy if not done, then
+      nomarchy install base && nomarchy install desktop && nomarchy install host
+      nomarchy install storage && nomarchy link
+  and when it has proven itself:  sudo provision/provision $host --finalize-nvram
+NEXT

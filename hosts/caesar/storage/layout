@@ -1,0 +1,97 @@
+# caesar's storage and boot layout -- the single source of truth for BOTH
+#   provision/provision        the separate, human-run, destructive provisioner
+#   nomarchy status            the read-only verifier ([storage] section)
+# Parsed in one place, common/storage/spec.sh. Neither tool encodes the layout itself.
+#
+# Decided 2026-09-27 with Pete and Atlas, from the storage/boot archaeology in
+# docs/cutover/01-storage-boot-archaeology.md: GPT, a dedicated 2 GiB ESP on the XPG, LUKS2,
+# flat top-level btrfs subvolumes, zram, systemd-boot, sd-encrypt + Plymouth, Snapper +
+# snap-pac, no bootable snapshots, no TPM enrollment. Windows stays on sda1; the SATA
+# Nomarchy install stays as the independent rescue system.
+#
+# Format: `key value` (value = rest of the line), or a repeated record keyword with
+# whitespace-separated fields. ${key} in a value is replaced by that key's value.
+
+host                caesar
+
+# ── The target ───────────────────────────────────────────────────────────────────────────
+# The ONLY disk a destructive step may act on, and only when all four match -- the stable
+# by-id name, and the model, serial and size the kernel reports for the device behind it.
+# Never a /dev/nvmeXn1 name: those have already swapped on this machine once.
+disk.by-id          nvme-XPG_SPECTRIX_S40G_2K0420036195
+disk.model          XPG SPECTRIX S40G
+disk.serial         2K0420036195
+disk.bytes          1024209543168
+
+# ── Identifiers ──────────────────────────────────────────────────────────────────────────
+# Fixed here rather than left to chance, so the provisioner creates exactly these and the
+# verifier checks exact values, and fstab and the loader entry are known before the disk
+# exists. Generated once, 2026-09-27. Public by settled policy, like every UUID in hosts/.
+gpt.uuid            b15cb1d5-3b35-4a2a-91f6-1b3f5d560b9c
+luks.uuid           df147db6-fe3c-4385-9a3b-6140dc390f29
+btrfs.uuid          87dbcc3c-e1eb-4b36-b566-bbabf18402ce
+esp.volid           F7EDD893
+
+# ── Partitions ───────────────────────────────────────────────────────────────────────────
+# part <number> <role> <size> <sgdisk type> <partlabel> <partuuid>      (size `rest` = to the end)
+# EF00 is the EFI System Partition; 8304 is "Linux root (x86-64)" from the discoverable
+# partitions spec -- what rigel and Omarchy already use for their LUKS containers.
+part 1 esp  2GiB EF00 caesar-esp  ef7b11f1-9c72-42bf-9ff3-85d6d87c602d
+part 2 root rest 8304 caesar-root 12405401-aeaa-4726-a616-60938d84d3e1
+
+esp.fs              vfat
+esp.mount           /boot
+
+# ── Encryption ───────────────────────────────────────────────────────────────────────────
+# LUKS2 with cryptsetup's defaults (argon2id, aes-xts-plain64, 512-bit key) and 4 KiB
+# sectors. Passphrase keyslot, plus a recovery key enrolled by the provisioner and kept
+# offline. No TPM enrollment (decided): Secure Boot is off, so a TPM binding would protect
+# less than it appears to. Root is unlocked from the kernel command line (rd.luks.name),
+# as on rigel -- no crypttab entry for it.
+luks.label          caesar-luks
+luks.mapper         cryptroot
+luks.format         --type luks2 --sector-size 4096
+
+# ── Filesystem ───────────────────────────────────────────────────────────────────────────
+btrfs.label         caesar
+btrfs.options       noatime,compress=zstd:3,space_cache=v2
+
+# subvol <name> <mountpoint>    all top-level (id 5), so each rolls back on its own.
+# @snapshots is top-level, not nested inside @ as Omarchy had it: rolling @ back must not
+# take @'s own snapshots with it. @pkg keeps GBs of package cache out of every root snapshot.
+subvol @          /
+subvol @home      /home
+subvol @var_log   /var/log
+subvol @pkg       /var/cache/pacman/pkg
+subvol @snapshots /.snapshots
+
+# nested <path> <owner>    subvolumes INSIDE a mounted one: btrfs snapshots stop at them, so
+# their churn stays out of the parent's snapshots. Rootless docker's image layers here.
+nested /home/peter/.local/share/docker peter
+
+# No swap partition or file: zram (hosts/caesar/systemd/zram-generator.conf). No hibernation.
+swap                zram
+
+# ── Boot ─────────────────────────────────────────────────────────────────────────────────
+# systemd-boot on the XPG's own ESP, registered in NVRAM under its own label, kept current
+# by systemd-boot-update.service. A fallback initramfs entry exists too. rigel's hooks,
+# verbatim; MODULES stays empty (late NVIDIA KMS, docs/migration/06 §10).
+boot.loader         systemd-boot
+boot.nvram-label    Nomarchy (caesar XPG)
+boot.timeout        3
+boot.ucode          amd-ucode
+boot.hooks          base systemd autodetect microcode modconf kms keyboard sd-vconsole plymouth block sd-encrypt filesystems fsck
+boot.cmdline        rd.luks.name=${luks.uuid}=${luks.mapper} rd.luks.options=${luks.uuid}=discard root=/dev/mapper/${luks.mapper} rootflags=subvol=@ rw quiet splash vt.global_cursor_default=0
+boot.fallback       yes
+boot.plymouth-theme nomarchy
+
+# ── What must survive ────────────────────────────────────────────────────────────────────
+# The SATA install is the rescue system: recognized, never modified. When `/` is this
+# filesystem, the verifier knows it is running from the rescue system, not the target.
+rescue.root-uuid    5a369b57-0cf0-4dfb-8746-4a19bbb408a9
+rescue.nvram-label  Nomarchy
+windows.nvram-label Windows Boot Manager
+
+# Packages the provisioner pacstraps: a bootable, unlockable minimal Arch -- everything
+# above needs to be present before the first boot. Everything else is nomarchy's.
+pacstrap            base linux linux-firmware amd-ucode btrfs-progs cryptsetup plymouth sudo git openssh networkmanager efibootmgr
