@@ -21,6 +21,7 @@ common/irides/blueprints	~/.config/irides/blueprints
 # before this file has ever been applied, so ~/.local/bin does not exist yet.
 common/scripts/askpass-fuzzel		~/.local/bin/askpass-fuzzel
 common/scripts/nomarchy			~/.local/bin/nomarchy
+common/scripts/noctalia-snapshot	~/.local/bin/noctalia-snapshot
 common/scripts/backup-daily		~/.local/bin/backup-daily
 common/scripts/backup-legal-to-nas	~/.local/bin/backup-legal-to-nas
 common/scripts/launch-or-focus		~/.local/bin/launch-or-focus

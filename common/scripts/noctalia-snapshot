@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# noctalia-snapshot -- carry this machine's live Noctalia settings into the repo.
+#
+#   noctalia-snapshot [host]           refresh hosts/<host>/noctalia/settings.toml from live
+#   noctalia-snapshot --check [host]   exit 0 if the repo copy already matches live
+#
+# Noctalia owns ~/.local/state/noctalia/settings.toml and rewrites it whenever a setting
+# changes, so it cannot be a symlink into the repo. Instead the repo keeps a SNAPSHOT, and
+# hosts/<host>/bootstrap/seeds plants it on a rebuilt machine before first login: the bar,
+# lockscreen widgets, idle timings, plugins and theme come up as they were, not as
+# Noctalia's defaults. A snapshot is only as good as its date -- the first one sat 113
+# lines behind for three weeks -- so `nomarchy status` runs --check and says when live has
+# moved on. This command closes the gap; review the diff, then commit.
+#
+# [location] is REMOVED, always. Noctalia stores the coordinates of home to about ten
+# metres, and this repository is public. A rebuilt host gets its location back by hand
+# (a `manual` check in common/bootstrap/user-checks says so).
+#
+# host defaults to /etc/hostname.
+
+set -uo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+LIVE=${XDG_STATE_HOME:-$HOME/.local/state}/noctalia/settings.toml
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+check=0 host=''
+for a in "$@"; do
+  case $a in
+    --check) check=1 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option '$a'" ;;
+    *) host=$a ;;
+  esac
+done
+host=${host:-$(cat /etc/hostname 2>/dev/null)}
+[[ -d $repo/hosts/$host ]] || die "no such host: hosts/$host"
+SNAP=$repo/hosts/$host/noctalia/settings.toml
+
+# Top-level tables start in column 0; Noctalia indents sub-tables, so [location] ends at
+# the next column-0 table header.
+strip_location() { awk '/^\[location\]/ {skip = 1; next} /^\[/ {skip = 0} !skip' "$1"; }
+
+if ((check)); then
+  [[ -f $LIVE ]] || exit 0          # Noctalia has never run here: nothing to carry yet
+  [[ -f $SNAP ]] || exit 1          # it has, and none of it is captured
+  cmp -s <(strip_location "$LIVE") "$SNAP"
+  exit
+fi
+
+[[ -f $LIVE ]] || die "$LIVE does not exist -- has Noctalia run on this machine?"
+mkdir -p "$(dirname "$SNAP")"
+tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+strip_location "$LIVE" > "$tmp"
+# Belt and braces: the whole point of this script is that coordinates never reach the repo.
+if grep -qE '^[[:space:]]*(latitude|longitude)[[:space:]]*=' "$tmp"; then
+  die "coordinates survived the strip -- Noctalia's format has changed; NOT writing $SNAP"
+fi
+if cmp -s "$tmp" "$SNAP" 2>/dev/null; then
+  echo "already current: ${SNAP#"$repo"/}"
+  exit 0
+fi
+cp "$tmp" "$SNAP"
+echo "refreshed ${SNAP#"$repo"/} from live ([location] removed):"
+git -C "$repo" --no-pager diff --stat -- "${SNAP#"$repo"/}"
+echo "review:  git -C $repo diff -- ${SNAP#"$repo"/}"
+echo "then commit it -- the next rebuild of $host starts from this file."

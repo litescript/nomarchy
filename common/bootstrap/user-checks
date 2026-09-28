@@ -10,3 +10,23 @@
 check Irides Noctalia plugin enabled (Mod+Alt+T)
   probe noctalia msg plugins list 2>/dev/null | grep -qE '^litescript/irides .* enabled'
   fix   { noctalia msg plugins source list | grep -qE '^irides ' || noctalia msg plugins source add irides path ~/code/irides/noctalia-plugins; } && noctalia msg plugins enable litescript/irides
+
+# Noctalia's settings are seeded from a snapshot in the repo (hosts/<host>/noctalia/). A
+# snapshot is only as good as its date, so this says when live has moved past it -- a
+# setting changed today would otherwise miss the next rebuild without anyone noticing.
+check Noctalia settings captured in the repo (hosts/<host>/noctalia/settings.toml)
+  probe common/scripts/noctalia-snapshot --check
+  manual run noctalia-snapshot, review the diff, commit -- otherwise the next rebuild starts from the older snapshot
+
+# The seeded theme names a palette Irides GENERATES (custom_palette = "irides-<name>"), not
+# a versioned file. Regenerated from the blueprint once Irides is built; `irides apply`
+# activates it through Noctalia, so like the plugin this passes from the first graphical
+# login. It needs the wallpaper the blueprint pins, in ~/Pictures.
+check Irides palette for Noctalia's active theme exists
+  probe p=$(sed -n 's/^custom_palette = "\(.*\)"$/\1/p' ~/.local/state/noctalia/settings.toml 2>/dev/null); [[ $p != irides-* ]] || [[ -f ~/.config/noctalia/palettes/$p.json ]]
+  fix   p=$(sed -n 's/^custom_palette = "\(.*\)"$/\1/p' ~/.local/state/noctalia/settings.toml); irides apply "${p#irides-}"
+
+# Coordinates are stripped from every snapshot (public repo), so a rebuilt host has none.
+check Noctalia location set (weather, night light)
+  probe [[ ! -f ~/.local/state/noctalia/settings.toml ]] || grep -q '^latitude' ~/.local/state/noctalia/settings.toml
+  manual set it in Noctalia's settings -- the repo deliberately never carries your coordinates

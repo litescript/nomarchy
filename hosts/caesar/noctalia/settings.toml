@@ -1,5 +1,48 @@
 config_version = 14
 
+[bar.default]
+background_opacity = 0.48999998904764652
+center = [ "caffeine", "spacer_4", "date", "spacer_2", "clock", "spacer_3", "weather" ]
+end = [ "media", "spacer_5", "ai_usage", "group:g1", "network", "session" ]
+margin_ends = 0
+radius_top_left = 0
+radius_top_right = 0
+start = [ "workspaces", "bar" ]
+
+    [[bar.default.capsule_group]]
+    accordion = true
+    accordion_direction = "start"
+    enabled = true
+    fill = "outline"
+    id = "g1"
+    members = [ "bar_2", "notifications", "clipboard", "brightness", "volume" ]
+    opacity = 0.05000000074505806
+    padding = 6.0
+    radius = 7.0
+
+[idle]
+behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
+
+    [idle.behavior.lock]
+    action = "lock"
+    enabled = true
+    timeout = 600.0
+
+    [idle.behavior.lock-and-suspend]
+    action = "lock_and_suspend"
+    enabled = false
+    timeout = 900.0
+
+    [idle.behavior.screen-off]
+    action = "screen_off"
+    enabled = true
+    locked_timeout = 120.0
+    timeout = 660.0
+
+[lockscreen]
+blurred_desktop = true
+fingerprint = false
+
 [lockscreen_widgets]
 enabled = false
 schema_version = 2
@@ -91,11 +134,102 @@ widget_order = [ "lockscreen-login-box@DP-3", "lockscreen-login-box@DP-2", "lock
         show_unlock_hint = true
         show_weather = true
 
+[plugin_settings."felipeartur/ai-usagebar"]
+panel_open_near_click = true
+refresh_minutes = 15
+
+[plugins]
+enabled = [ "noctalia/umbriel-companion", "felipeartur/ai-usagebar", "litescript/irides" ]
+
+    [[plugins.source]]
+    kind = "git"
+    location = "https://github.com/noctalia-dev/official-plugins"
+    name = "official"
+
+    [[plugins.source]]
+    kind = "git"
+    location = "https://github.com/noctalia-dev/community-plugins"
+    name = "community"
+
+    [[plugins.source]]
+    kind = "path"
+    location = "/home/peter/code/irides/noctalia-plugins"
+    name = "irides"
+
+[shell]
+font_family = "JetBrainsMono Nerd Font Mono"
+polkit_agent = true
+
+    [shell.panel]
+    transparency_mode = "glass"
+
 [theme]
 builtin = "Tokyo-Night"
+custom_palette = "irides-NSX"
+mode = "dark"
+source = "custom"
 
-[wallpaper.default]
-path = "/usr/share/noctalia/assets/noctalia-wallpaper.png"
+    [theme.templates]
+    builtin_ids = [ "btop", "gtk3", "gtk4", "kcolorscheme", "kitty", "qt", "starship", "umbriel" ]
+    community_ids = [ "discord", "gimp", "obsidian", "fuzzel", "bat", "lazygit", "tmux" ]
 
-[wallpaper.last]
-path = "/usr/share/noctalia/assets/noctalia-wallpaper.png"
+[wallpaper]
+transition_on_startup = true
+
+    [wallpaper.default]
+    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+
+    [wallpaper.last]
+    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+
+    [wallpaper.monitors.DP-2]
+    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+
+    [wallpaper.monitors.DP-3]
+    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+
+    [wallpaper.monitors.HDMI-A-2]
+    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+
+[weather]
+unit = "imperial"
+
+[widget.ai_usage]
+extras = "none"
+show_value = false
+type = "felipeartur/ai-usagebar:bar"
+vendor = "anthropic"
+visualization = "none"
+
+[widget.bar]
+type = "noctalia/umbriel-companion:bar"
+
+[widget.bar_2]
+type = "litescript/irides:bar"
+
+[widget.clock]
+anchor = true
+
+[widget.date]
+format = "{:%A}"
+
+[widget.network]
+show_label = false
+
+[widget.spacer_2]
+type = "spacer"
+
+[widget.spacer_3]
+type = "spacer"
+
+[widget.spacer_4]
+type = "spacer"
+
+[widget.spacer_5]
+type = "spacer"
+
+[widget.volume]
+show_label = false
+
+[widget.weather]
+show_condition = false

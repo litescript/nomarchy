@@ -65,8 +65,10 @@ symlinked config.
 Some things are **copies, not symlinks**, and drift silently:
 
 - `~/.local/state/noctalia/settings.toml` — Noctalia rewrites this file itself, so the
-  repo copy is a snapshot. Read the live file when you need current state; it is
-  routinely ahead of `hosts/caesar/noctalia/settings.toml`.
+  repo copy, `hosts/caesar/noctalia/settings.toml`, is a snapshot: a **seed** a rebuilt
+  caesar starts from, not a link. `noctalia-snapshot` refreshes it from live and always
+  strips `[location]` (the coordinates of home; public repo); `nomarchy status` reports
+  when live has moved past it. Read the live file when you need current state.
 - `/etc/udev/rules.d/99-streamdeck-no-keyboard.rules` — root-owned, installed with
   `sudo install`.
 - `/etc/systemd/system/netconsole-listener.service` and `/etc/logrotate.d/netconsole-proxmox`

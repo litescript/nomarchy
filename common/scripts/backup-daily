@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 #
-# Daily backup of ~/code, ~/.claude and ~/Notes to the NAS, with a local fallback.
+# Daily backup of ~/code, ~/.claude, ~/Notes and ~/Pictures to the NAS, with a local fallback.
 # Ported from the old box (~/Scripts/backup-daily.sh) on 2026-09-13. Logic unchanged;
 # only the notification path differs, because this box has no libnotify.
 #
 # ~/Notes added 2026-09-26: incident write-ups, the Proxmox config backup and its firmware
 # ISO, copied off the old Omarchy disk. Until then that disk was the only other copy.
+#
+# ~/Pictures added 2026-09-27: the Irides blueprints pin their wallpapers there by SHA-256,
+# and Noctalia's seeded settings name them. Deliberately not in the public repo (downloaded
+# art of unknown licence), so without this the only copy was one disk.
 set -euo pipefail
 
 LOG_FILE="$HOME/Logs/code-backup.log"
@@ -96,10 +100,11 @@ main() {
     notify "NAS unavailable; backups saved locally."
   fi
 
-  mkdir -p "$DEST/code" "$DEST/claude" "$DEST/notes"
+  mkdir -p "$DEST/code" "$DEST/claude" "$DEST/notes" "$DEST/pictures"
   do_backup "$HOME/code"     "code"   "$DEST/code"
   do_backup "$HOME/.claude"  "claude" "$DEST/claude"
   do_backup "$HOME/Notes"    "notes"  "$DEST/notes"
+  do_backup "$HOME/Pictures" "pictures" "$DEST/pictures"
   log "All backups complete."
 }
 

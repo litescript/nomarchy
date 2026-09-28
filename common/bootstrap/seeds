@@ -14,7 +14,11 @@
 # and flagging it every run would train the eye to skip the section -- the same argument
 # hosts/caesar/bootstrap/copies makes for leaving Noctalia's settings.toml out.
 #
-# The bar for adding a row here: something must FAIL if the file is missing at first
-# login. If nothing fails, the file does not need seeding and this is just a stale copy
-# nobody asked for.
+# The bar for adding a row here: something must FAIL, or come up WRONG, if the file is
+# missing at first login. If nothing does, the file does not need seeding and this is just
+# a stale copy nobody asked for. (Noctalia's settings clear the second half of that bar:
+# absent, the shell starts at its defaults. They are seeded per host --
+# hosts/caesar/bootstrap/seeds -- and their drift IS checked, by noctalia-snapshot --check,
+# in the other direction: not "has the app changed the file" but "does the repo still
+# capture what the app has".)
 common/umbriel/noctalia.toml	~/.config/umbriel/noctalia.toml
