@@ -64,7 +64,10 @@ build_root() {  # build_root <workdir> <host> <owner uid>
   # Teardown, expanded NOW (at exit this function's locals are gone). pacstrap -K leaves
   # a root gpg-agent running with its homedir INSIDE the target -- the new system's
   # pacman keyring -- which holds the mount busy; the first build failed exactly so.
-  trap "gpgconf --homedir '$mnt/etc/pacman.d/gnupg' --kill all 2>/dev/null; pkill -f -- '--homedir $mnt/' 2>/dev/null; sleep 1; umount -R '$mnt'" EXIT
+  # `set +e` first: the trap inherits errexit, and the pkill fallback finds nothing when
+  # gpgconf has already done the job -- exit 1, trap aborted, image left mounted. The
+  # second build failed exactly so. The trap's last command, umount, sets the exit status.
+  trap "set +e; gpgconf --homedir '$mnt/etc/pacman.d/gnupg' --kill all 2>/dev/null; pkill -f -- '--homedir $mnt/' 2>/dev/null; sleep 1; umount -R '$mnt'" EXIT
 
   echo "==> pacstrap: base linux sudo git openssh networkmanager (the host's cache is used)"
   pacstrap -c -K "$mnt" base linux sudo git openssh networkmanager >"$wd/pacstrap.log" 2>&1 \
