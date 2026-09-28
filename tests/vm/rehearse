@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# rehearse -- run nomarchy's installer end to end on a bare Arch VM, before it runs on metal.
+#
+#   tests/vm/rehearse build [host]    bare Arch disk image, as archinstall would leave it (sudo)
+#   tests/vm/rehearse boot [--gui]    start the VM; --gui shows its screen (no sudo)
+#   tests/vm/rehearse run [--github]  clone, install base/desktop/host, link, status (no sudo)
+#   tests/vm/rehearse ssh [command]   a shell, or one command, in the VM as peter
+#   tests/vm/rehearse stop            power it off
+#   tests/vm/rehearse destroy         stop and delete everything under the work directory
+#
+# Why a VM and not a container: the host stage runs caesar's ufw rules, and a container
+# sharing caesar's network namespace would apply them to CAESAR's firewall. QEMU's
+# user-mode networking gives the VM its own kernel, its own netfilter and NAT to the
+# internet, and needs nothing configured on the host.
+#
+# What the image deliberately leaves undone, because nomarchy is supposed to do it and the
+# rehearsal is there to prove it can: timezone, locale, tty1 autologin, every package past
+# `base linux sudo git openssh networkmanager`, and everything under $HOME.
+#
+# What the image adds that no real host has, all rehearsal-only:
+#   - NOPASSWD sudo for peter, so `install --yes` runs unattended over ssh.
+#   - A blackhole route for 192.168.1.0/24. The host stage enables caesar's NAS automount,
+#     backup timers, subget and NUT -- and QEMU's NAT would happily carry them to the REAL
+#     NAS and UPS. `run` refuses to start unless the route is in place.
+#   - caesar's pacman cache, read-only over 9p, so packages already on caesar are not
+#     downloaded again; the VM downloads the rest into its own cache.
+#
+# Work directory: $NOMARCHY_VM_DIR, default /var/tmp/nomarchy-vm (not /tmp: tmpfs, and the
+# disk is a sparse 80G). Logs of each run land in <workdir>/logs/<timestamp>/.
+
+set -uo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+WD=${NOMARCHY_VM_DIR:-/var/tmp/nomarchy-vm}
+PORT=${NOMARCHY_VM_SSH_PORT:-2222}
+CPUS=${NOMARCHY_VM_CPUS:-12}
+MEM=${NOMARCHY_VM_MEM:-16G}
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+say() { printf '==> %s\n' "$*"; }
+
+vm_ssh() {
+  # -F /dev/null: caesar's own ssh config (AddKeysToAgent, config.local, host aliases)
+  # has nothing to say about a throwaway VM.
+  ssh -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o BatchMode=yes -o LogLevel=ERROR \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+      peter@127.0.0.1 "$@"
+}
+running() { [[ -f $WD/qemu.pid ]] && kill -0 "$(cat "$WD/qemu.pid")" 2>/dev/null; }
+
+# ── build (root part) ──────────────────────────────────────────────────────────────────
+# Runs as ONE root process via `sudo bash -c`, so there is one sudo prompt, and the
+# unmount happens in the same process however long pacstrap takes.
+build_root() {  # build_root <workdir> <host> <owner uid>
+  set -euo pipefail
+  local wd=$1 host=$2 owner=$3 mnt=$1/mnt
+  mkdir -p "$mnt"
+  mount -o loop "$wd/disk.raw" "$mnt"
+  trap "umount -R '$mnt'" EXIT   # expanded NOW: at exit this function's locals are gone
+
+  echo "==> pacstrap: base linux sudo git openssh networkmanager (the host's cache is used)"
+  pacstrap -c -K "$mnt" base linux sudo git openssh networkmanager >"$wd/pacstrap.log" 2>&1 \
+    || { tail -20 "$wd/pacstrap.log"; exit 1; }
+
+  echo "$host" > "$mnt/etc/hostname"
+  printf '/dev/vda\t/\text4\trw,relatime\t0 1\n' > "$mnt/etc/fstab"
+  printf 'pkgcache\t/var/cache/pacman/host\t9p\ttrans=virtio,version=9p2000.L,ro,nofail,x-systemd.automount\t0 0\n' >> "$mnt/etc/fstab"
+  mkdir -p "$mnt/var/cache/pacman/host"
+  # Downloads go to the first writable CacheDir; the host's cache is only read.
+  sed -i 's|^#CacheDir.*|CacheDir    = /var/cache/pacman/pkg/\nCacheDir    = /var/cache/pacman/host/|' "$mnt/etc/pacman.conf"
+
+  # autodetect runs against CAESAR's hardware inside the chroot and would drop virtio.
+  mkdir -p "$mnt/etc/mkinitcpio.conf.d"
+  echo 'MODULES=(virtio_blk virtio_pci virtio_net)' > "$mnt/etc/mkinitcpio.conf.d/rehearsal-vm.conf"
+  arch-chroot "$mnt" mkinitcpio -P >"$wd/mkinitcpio.log" 2>&1 || { tail -20 "$wd/mkinitcpio.log"; exit 1; }
+
+  arch-chroot "$mnt" useradd -m -G wheel -s /bin/bash peter
+  install -m 0440 /dev/stdin "$mnt/etc/sudoers.d/10-rehearsal" <<<'peter ALL=(ALL) NOPASSWD: ALL'
+  install -d -m 0700 -o 1000 -g 1000 "$mnt/home/peter/.ssh"
+  install -m 0600 -o 1000 -g 1000 "$wd/id_ed25519.pub" "$mnt/home/peter/.ssh/authorized_keys"
+
+  cat > "$mnt/etc/systemd/system/rehearsal-no-lan.service" <<'UNIT'
+[Unit]
+Description=Rehearsal VM only: no route to the real LAN (NAS, UPS, Proxmox)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/ip route replace blackhole 192.168.1.0/24
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  arch-chroot "$mnt" systemctl enable sshd.service NetworkManager.service rehearsal-no-lan.service >/dev/null 2>&1
+
+  install -m 0644 -o "$owner" "$mnt/boot/vmlinuz-linux" "$mnt/boot/initramfs-linux.img" "$wd/"
+  echo "==> image ready"
+}
+
+build() {
+  local host=${1:-caesar}
+  [[ -d $repo/hosts/$host ]] || die "no such host: hosts/$host"
+  command -v pacstrap >/dev/null && command -v qemu-system-x86_64 >/dev/null \
+    || die "needs: sudo pacman -S --needed qemu-base arch-install-scripts"
+  [[ ! -e $WD/disk.raw ]] || die "$WD/disk.raw exists -- '${0##*/} destroy' first"
+  mkdir -p "$WD"
+  ssh-keygen -q -t ed25519 -N '' -C nomarchy-rehearsal -f "$WD/id_ed25519"
+  truncate -s 80G "$WD/disk.raw"
+  mkfs.ext4 -q -F -L nomarchy-vm "$WD/disk.raw"
+  say "building a bare Arch image for host '$host' (sudo: loop mount, pacstrap, chroot)"
+  sudo bash -c "$(declare -f build_root); build_root \"\$1\" \"\$2\" \"\$3\"" _ "$WD" "$host" "$(id -u)" \
+    || die "build failed -- logs in $WD"
+  say "next: ${0##*/} boot && ${0##*/} run"
+}
+
+# ── boot / stop ────────────────────────────────────────────────────────────────────────
+boot() {
+  [[ -f $WD/disk.raw && -f $WD/vmlinuz-linux ]] || die "no image -- '${0##*/} build' first"
+  running && die "already running (pid $(cat "$WD/qemu.pid"))"
+  local display=(-display none -vga none)
+  # --gui: a window on caesar's desktop showing the VM's screen -- tty1 autologin and
+  # umbriel starting on virtio-gpu, which ssh cannot show.
+  [[ ${1:-} == --gui ]] && display=(-device virtio-vga-gl -display gtk,gl=on)
+  setsid -f qemu-system-x86_64 -name nomarchy-rehearsal -enable-kvm -cpu host \
+    -smp "$CPUS" -m "$MEM" \
+    -drive "file=$WD/disk.raw,format=raw,if=virtio" \
+    -kernel "$WD/vmlinuz-linux" -initrd "$WD/initramfs-linux.img" \
+    -append "root=/dev/vda rw console=ttyS0" \
+    -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22" \
+    -virtfs "local,path=/var/cache/pacman/pkg,mount_tag=pkgcache,security_model=none,readonly=on" \
+    -serial "file:$WD/serial.log" "${display[@]}" -pidfile "$WD/qemu.pid" \
+    >"$WD/qemu.log" 2>&1
+  say "booting; waiting for ssh on 127.0.0.1:$PORT"
+  local i
+  for i in $(seq 90); do
+    vm_ssh true 2>/dev/null && { say "up"; return 0; }
+    sleep 2
+  done
+  die "no ssh after 3 minutes -- see $WD/serial.log and $WD/qemu.log"
+}
+
+stop() {
+  running || { say "not running"; return 0; }
+  vm_ssh sudo systemctl poweroff 2>/dev/null
+  local i; for i in $(seq 30); do running || { say "stopped"; return 0; }; sleep 1; done
+  kill "$(cat "$WD/qemu.pid")" 2>/dev/null; say "killed"
+}
+
+# ── run ────────────────────────────────────────────────────────────────────────────────
+# The installer as a person would run it on a fresh console, minus the typing: every step
+# logged, every exit code kept, and the run continues past a failed step so one run shows
+# every problem, not just the first.
+run() {
+  running || die "not running -- '${0##*/} boot' first"
+  local from=bundle; [[ ${1:-} == --github ]] && from=github
+  vm_ssh 'ip route get 192.168.1.208' 2>&1 | grep -qE '^(blackhole|unreachable)' \
+    || die "the VM can reach 192.168.1.0/24 -- refusing: caesar's NAS units would touch the real NAS"
+
+  local stamp logs; stamp=$(date +%Y%m%d-%H%M%S); logs=$WD/logs/$stamp; mkdir -p "$logs"
+  local branch; branch=$(git -C "$repo" branch --show-current)
+  if [[ $from == bundle ]]; then
+    # The committed state of THIS checkout, pushed or not. Uncommitted edits are not in it.
+    say "cloning $branch @ $(git -C "$repo" rev-parse --short HEAD) from a bundle of this checkout"
+    git -C "$repo" bundle create "$WD/nomarchy.bundle" "$branch" 2>/dev/null
+    scp -F /dev/null -P "$PORT" -i "$WD/id_ed25519" -q -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$WD/nomarchy.bundle" peter@127.0.0.1:
+    vm_ssh "rm -rf ~/Projects/nomarchy && git clone -q -b $branch ~/nomarchy.bundle ~/Projects/nomarchy \
+            && git -C ~/Projects/nomarchy remote set-url origin https://github.com/litescript/nomarchy.git" \
+      || die "clone failed"
+  else
+    say "cloning $branch from GitHub"
+    vm_ssh "rm -rf ~/Projects/nomarchy && git clone -q -b $branch https://github.com/litescript/nomarchy.git ~/Projects/nomarchy" \
+      || die "clone failed"
+  fi
+
+  local steps=("status" "install base --yes" "install desktop --yes" "install host --yes" "link --yes" "status")
+  local i rc results=()
+  for i in "${!steps[@]}"; do
+    local name; name=$(printf '%02d-%s' "$i" "${steps[i]// /-}")
+    say "${steps[i]}   (log: $logs/$name.log)"
+    local t0=$SECONDS
+    vm_ssh "cd ~/Projects/nomarchy && common/scripts/nomarchy ${steps[i]}" >"$logs/$name.log" 2>&1
+    rc=$?
+    results+=("$(printf '%-24s rc=%-3s %4ds' "${steps[i]}" "$rc" $((SECONDS - t0)))")
+    grep -E 'ok, .* to do|Plan:|failed|stopping' "$logs/$name.log" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/^/      /' | tail -4
+  done
+  printf '\n'; say "summary ($logs)"; printf '    %s\n' "${results[@]}" | tee "$logs/summary.txt"
+}
+
+destroy() {
+  stop >/dev/null 2>&1
+  [[ -d $WD ]] || { say "nothing to destroy"; return 0; }
+  [[ $WD == /var/tmp/* || -n ${NOMARCHY_VM_DIR:-} ]] || die "refusing to delete unexpected $WD"
+  rm -rf -- "$WD"; say "deleted $WD"
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+  build) build "$@" ;;
+  boot) boot "$@" ;;
+  run) run "$@" ;;
+  ssh) running || die "not running"; exec ssh -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o LogLevel=ERROR \
+         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null peter@127.0.0.1 "$@" ;;
+  stop) stop ;;
+  destroy) destroy ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

@@ -141,13 +141,30 @@ aur_build() {
   (cd "$dir" && makepkg -si --needed --noconfirm)
 }
 
+# Some AUR packages build with cargo (paru, ai-usagebar). On a bare machine the plan is
+# made before anything is installed, so rustup is absent at planning time and gets its
+# default toolchain only in `link` -- too late: cargo is rustup's shim and fails with no
+# default. So the first pending AUR build is preceded by a step that sets the default if,
+# WHEN IT RUNS, none is active. Without it, makepkg -s would also have pulled in Arch's
+# `rust` for cargo, which then conflicts with rustup and stops pacman at a question the
+# plan cannot answer. Found while writing the VM rehearsal, 2026-09-27.
+toolchain_step() {
+  local chain
+  chain=$(manifest common/bootstrap/toolchains "hosts/$host/bootstrap/toolchains" | awk '$1 == "rustup" {print $2; exit}')
+  [[ -n $chain ]] || return 0
+  rustup show active-toolchain >/dev/null 2>&1 && return 0
+  need "rustup default $chain, before AUR builds that use cargo" \
+       "rustup show active-toolchain >/dev/null 2>&1 || rustup default $chain" 1
+}
+
 sec_aur() {
-  local stage=$1 p any=0
+  local stage=$1 p any=0 tc=0
   for p in $(manifest "$(pkg_dir "$stage")/aur.txt"); do
     any=1
     if grep -qx "$p" <<<"$installed"; then
       good "$p (AUR)"
     else
+      ((tc++ == 0 && plan_mode)) && toolchain_step
       need "build and install $p from AUR in ~/builds/$p" "aur_build $p" 1
     fi
   done

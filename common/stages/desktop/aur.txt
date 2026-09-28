@@ -1,5 +1,12 @@
-# Stage `desktop`, AUR. Built in ~/builds/<pkg> with makepkg, in this order -- see
-# ../base/aur.txt for why not paru.
+# Stage `desktop`, AUR. Built by `nomarchy install` in ~/builds/<pkg> with makepkg -- the
+# layout umbriel-update relies on -- in the order listed, so a package that depends on
+# another AUR package must come after it.
+#
+# paru is here because Pete uses it by hand; the installer deliberately does NOT use it:
+# paru builds in ~/.cache/paru/clone, and umbriel-update expects ~/builds/umbriel-git. It
+# sits in THIS stage, not base, because it builds with cargo: in base, makepkg -s would
+# install Arch's `rust` for cargo, which then conflicts with this stage's rustup. The
+# installer sets rustup's default toolchain before the first AUR build (toolchain_step).
 #
 # Deliberately NOT listed: umbriel-git-debug and xdg-desktop-portal-umbriel-git-debug.
 # Those are makepkg byproducts that arrive alongside the real package when debug packaging
@@ -8,6 +15,7 @@
 # After the first install, umbriel is updated by `umbriel-update`, never by rebuilding it
 # here: that script gates the new binary against the live config before installing it.
 
+paru
 umbriel-git
 xdg-desktop-portal-umbriel-git
 herdr-bin
