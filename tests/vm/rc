@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+# rc -- the release-candidate rehearsal: a miniature caesar in QEMU, taken from a blank disk
+# to a graphical nomarchy session, the way the real cutover will go.
+#
+#   tests/vm/rc build      build the miniature caesar's disks (sudo, once)
+#   tests/vm/rc run        the whole chain, unattended, every step logged (no sudo)
+#   tests/vm/rc gui        boot the provisioned target with a window and NO passphrase
+#                          credential: type the VM passphrase at the real Plymouth prompt
+#   tests/vm/rc ssh [cmd]  a shell on whichever VM is running
+#   tests/vm/rc stop | destroy
+#
+# The machine it models (all disks sparse files under $NOMARCHY_RC_DIR, default
+# /var/tmp/nomarchy-rc):
+#   OVMF UEFI firmware with its own persistent NVRAM, so BootNext, the first boot from the
+#     encrypted disk and --finalize-nvram all happen for real
+#   "SATA rescue" disk: GPT, an ESP carrying systemd-boot AND a stand-in
+#     \EFI\Microsoft\Boot\bootmgfw.efi, NVRAM entries "Nomarchy" and "Windows Boot
+#     Manager" pointing at it -- caesar's sda1 -- and an ext4 root (the rescue install)
+#   a decoy Windows data disk: Microsoft reserved + basic data partitions
+#   the synthetic XPG: an NVMe device with the real model, serial and exact byte count, so
+#     /dev/disk/by-id/nvme-XPG_SPECTRIX_S40G_2K0420036195 exists and the identity gate is
+#     the real one
+#
+# The chain `run` drives: rescue boots -> gate tests (the never gate must refuse the rescue
+# and decoy disks, the identity gate a wrong serial) -> provision/provision caesar --apply
+# (the serial typed back through a real tty) -> power off -> firmware boots the XPG via
+# BootNext -> systemd-boot -> initramfs -> sd-encrypt -> btrfs -> nomarchy install base,
+# desktop, host, storage, link -> reboot into the graphical session -> link again ->
+# --finalize-nvram -> tests/snapper-recovery -> nomarchy status.
+#
+# VM-only, never on metal, all of it rehearsal plumbing rather than nomarchy:
+#   - secrets in <dir>/vm-secrets/, generated per build and named VM-REHEARSAL-ONLY. The
+#     LUKS passphrase reaches the target as a systemd credential (cryptsetup.passphrase, via
+#     SMBIOS): the real passphrase keyslot and the real sd-encrypt path, only no typing.
+#     Nothing VM-specific is written into the target's boot configuration.
+#   - ONE substitution in the spec inside the VM: rescue.root-uuid becomes the VM rescue
+#     disk's. Giving the VM caesar's real root UUID would put two filesystems with that UUID
+#     on caesar's host while the image is built. Every other line of hosts/caesar/storage/
+#     layout is used as committed.
+#   - NOPASSWD sudo, a harness ssh key, a blackhole route for 192.168.1.0/24 (caesar's NAS,
+#     UPS and backups must not be reachable from a rehearsal), and stand-ins for the steps a
+#     human does by hand: the NUT password, the wallpapers the Irides blueprints pin, a
+#     Noctalia location.
+
+set -uo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+WD=${NOMARCHY_RC_DIR:-/var/tmp/nomarchy-rc}
+PORT=${NOMARCHY_RC_SSH_PORT:-2223}
+CPUS=${NOMARCHY_RC_CPUS:-12}
+MEM=${NOMARCHY_RC_MEM:-16G}
+OVMF_CODE=/usr/share/edk2/x64/OVMF_CODE.4m.fd
+OVMF_VARS=/usr/share/edk2/x64/OVMF_VARS.4m.fd
+ENV_ROOT_PARTUUID=5e5c0e00-0000-4000-8000-00000000c0de    # VM-only, fixed so -append can name it
+XPG_BYTES=1024209543168
+
+die() { printf '\033[31mrc: %s\033[0m\n' "$1" >&2; exit 1; }
+say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
+
+vm_ssh() {
+  ssh -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o BatchMode=yes -o LogLevel=ERROR \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+      peter@127.0.0.1 "$@"
+}
+vm_tty() {  # vm_tty <stdin-text> <command>: a REAL tty, so `read </dev/tty` in the VM works
+  printf '%s' "$1" | ssh -tt -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o LogLevel=ERROR \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null peter@127.0.0.1 "$2"
+}
+vm_scp() { scp -F /dev/null -P "$PORT" -i "$WD/id_ed25519" -q -o StrictHostKeyChecking=no \
+             -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$@"; }
+running() { [[ -f $WD/qemu.pid ]] && kill -0 "$(cat "$WD/qemu.pid")" 2>/dev/null; }
+wait_ssh() {
+  local i
+  for i in $(seq "${1:-120}"); do vm_ssh true 2>/dev/null && return 0; running || return 1; sleep 2; done
+  return 1
+}
+stop_vm() {
+  running || return 0
+  vm_ssh 'sudo systemctl poweroff' >/dev/null 2>&1
+  local i; for i in $(seq 60); do running || return 0; sleep 1; done
+  kill "$(cat "$WD/qemu.pid")" 2>/dev/null; sleep 2
+}
+
+# ── build ──────────────────────────────────────────────────────────────────────────────
+build_root() {  # as ONE root process; <workdir> <owner uid>
+  set -euo pipefail
+  local wd=$1 owner=$2 mnt=$1/mnt loop
+  mkdir -p "$mnt"
+  loop=$(losetup -P -f --show "$wd/env.raw")
+  trap "set +e; gpgconf --homedir '$mnt/etc/pacman.d/gnupg' --kill all 2>/dev/null; pkill -f -- '--homedir $mnt/' 2>/dev/null; sleep 1; umount -R '$mnt'; losetup -d '$loop'" EXIT
+  mkfs.ext4 -q -L rescue "${loop}p2"
+  mount "${loop}p2" "$mnt"
+  echo "==> pacstrap the rescue system (base + what provision/provision needs)"
+  pacstrap -c -K "$mnt" base linux sudo git openssh networkmanager gptfdisk dosfstools parted \
+    cryptsetup btrfs-progs arch-install-scripts efibootmgr >"$wd/pacstrap.log" 2>&1 \
+    || { tail -20 "$wd/pacstrap.log"; exit 1; }
+  echo caesar > "$mnt/etc/hostname"
+  printf 'PARTUUID=%s\t/\text4\trw,relatime\t0 1\n' "$(blkid -s PARTUUID -o value "${loop}p2")" > "$mnt/etc/fstab"
+  printf 'pkgcache\t/var/cache/pacman/host\t9p\ttrans=virtio,version=9p2000.L,ro,nofail,x-systemd.automount\t0 0\n' >> "$mnt/etc/fstab"
+  mkdir -p "$mnt/var/cache/pacman/host"
+  sed -i 's|^#CacheDir.*|CacheDir    = /var/cache/pacman/pkg/\nCacheDir    = /var/cache/pacman/host/|' "$mnt/etc/pacman.conf"
+  mkdir -p "$mnt/etc/mkinitcpio.conf.d"
+  echo 'MODULES=(virtio_blk virtio_pci virtio_net)' > "$mnt/etc/mkinitcpio.conf.d/rehearsal-vm.conf"
+  arch-chroot "$mnt" mkinitcpio -P >"$wd/mkinitcpio.log" 2>&1 || { tail -20 "$wd/mkinitcpio.log"; exit 1; }
+  arch-chroot "$mnt" useradd -m -G wheel -s /bin/bash peter
+  install -m 0440 /dev/stdin "$mnt/etc/sudoers.d/10-rehearsal" <<<'peter ALL=(ALL) NOPASSWD: ALL'
+  install -d -m 0700 -o 1000 -g 1000 "$mnt/home/peter/.ssh"
+  install -m 0600 -o 1000 -g 1000 "$wd/id_ed25519.pub" "$mnt/home/peter/.ssh/authorized_keys"
+  cat > "$mnt/etc/systemd/system/rehearsal-no-lan.service" <<'UNIT'
+[Unit]
+Description=Rehearsal VM only: no route to the real LAN (NAS, UPS, Proxmox)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/ip route replace blackhole 192.168.1.0/24
+[Install]
+WantedBy=multi-user.target
+UNIT
+  arch-chroot "$mnt" systemctl enable sshd.service NetworkManager.service rehearsal-no-lan.service >/dev/null 2>&1
+  install -m 0644 -o "$owner" "$mnt/boot/vmlinuz-linux" "$mnt/boot/initramfs-linux.img" "$wd/"
+  echo "==> rescue image ready"
+}
+
+build() {
+  command -v pacstrap >/dev/null && command -v qemu-system-x86_64 >/dev/null || die "needs qemu-base and arch-install-scripts"
+  [[ -f $OVMF_CODE && -f $OVMF_VARS ]] || die "needs edk2-ovmf"
+  [[ ! -e $WD/env.raw ]] || die "$WD exists -- 'tests/vm/rc destroy' first"
+  mkdir -p "$WD/vm-secrets" && chmod 700 "$WD/vm-secrets"
+  ssh-keygen -q -t ed25519 -N '' -C nomarchy-rc -f "$WD/id_ed25519"
+  # VM-only secrets, unmistakably so. Alphanumeric: they travel inside a QEMU argument.
+  printf 'VMREHEARSALONLY%s' "$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)" > "$WD/vm-secrets/luks-passphrase"
+  printf 'vmrehearsalonly%s' "$(tr -dc 'a-z0-9' </dev/urandom | head -c 12)" > "$WD/vm-secrets/user-password"
+  cp "$WD/id_ed25519.pub" "$WD/vm-secrets/authorized_keys"
+  # The rescue disk: GPT, ESP (formatted inside the VM -- the host has no mkfs.fat), ext4 root.
+  truncate -s 24G "$WD/env.raw"
+  sfdisk -q "$WD/env.raw" <<EOF
+label: gpt
+size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="EFI System Partition"
+type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=$ENV_ROOT_PARTUUID, name="rescue-root"
+EOF
+  # The decoy Windows data disk: only the partition types matter to the never gate.
+  truncate -s 2G "$WD/decoy-win.raw"
+  sfdisk -q "$WD/decoy-win.raw" <<'EOF'
+label: gpt
+size=16MiB, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE, name="Microsoft reserved partition"
+type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="Basic data partition"
+EOF
+  # The synthetic XPG: blank, the exact size the real one reports.
+  truncate -s "$XPG_BYTES" "$WD/xpg.raw"
+  cp "$OVMF_VARS" "$WD/OVMF_VARS.fd"
+  say "building the rescue system (sudo: loop device, pacstrap, chroot)"
+  sudo bash -c "$(declare -f build_root); build_root \"\$1\" \"\$2\"" _ "$WD" "$(id -u)" || die "build failed -- logs in $WD"
+  say "built. next: tests/vm/rc run"
+}
+
+# ── qemu ───────────────────────────────────────────────────────────────────────────────
+qemu() {  # qemu env|target [gui]
+  local phase=$1 gui=${2:-} args
+  args=(-name "nomarchy-rc-$phase" -machine q35 -enable-kvm -cpu host -smp "$CPUS" -m "$MEM"
+    -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
+    -drive "if=pflash,format=raw,file=$WD/OVMF_VARS.fd"
+    -drive "file=$WD/env.raw,format=raw,if=none,id=env" -device "virtio-blk-pci,drive=env,serial=RESCUE-SATA"
+    -drive "file=$WD/decoy-win.raw,format=raw,if=none,id=decoy" -device "virtio-blk-pci,drive=decoy,serial=DECOY-WINDOWS"
+    -drive "file=$WD/xpg.raw,format=raw,if=none,id=xpg" -device "nvme,drive=xpg,serial=2K0420036195,model=XPG SPECTRIX S40G"
+    -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22"
+    -virtfs "local,path=/var/cache/pacman/pkg,mount_tag=pkgcache,security_model=none,readonly=on"
+    -serial "file:$WD/serial-$phase.log" -pidfile "$WD/qemu.pid")
+  if [[ $phase == env ]]; then
+    args+=(-kernel "$WD/vmlinuz-linux" -initrd "$WD/initramfs-linux.img"
+           -append "root=PARTUUID=$ENV_ROOT_PARTUUID rw console=ttyS0" -display none -vga none)
+  else
+    if [[ $gui == gui ]]; then
+      args+=(-device virtio-vga-gl -display gtk,gl=on)
+    else
+      args+=(-device virtio-vga-gl -display egl-headless
+             -smbios "type=11,value=io.systemd.credential:cryptsetup.passphrase=$(cat "$WD/vm-secrets/luks-passphrase")")
+    fi
+  fi
+  running && die "a VM is already running"
+  setsid -f qemu-system-x86_64 "${args[@]}" >"$WD/qemu-$phase.log" 2>&1
+  sleep 2; running || die "qemu did not start: $(tail -3 "$WD/qemu-$phase.log")"
+}
+
+# ── run ────────────────────────────────────────────────────────────────────────────────
+LOG=''
+step() { printf '\n\033[1;34m[%s] %s\033[0m\n' "$(date +%T)" "$*" | tee -a "$LOG"; }
+check() {  # check <description> <command...>: runs, logs, records PASS/FAIL, continues
+  local d=$1; shift
+  if "$@" >>"$LOG" 2>&1; then printf '  \033[32mPASS\033[0m %s\n' "$d" | tee -a "$LOG"; RESULTS+=("PASS  $d")
+  else printf '  \033[31mFAIL\033[0m %s\n' "$d" | tee -a "$LOG"; RESULTS+=("FAIL  $d"); fi
+}
+clone_into_vm() {  # the committed HEAD of this checkout, with the ONE VM substitution
+  local branch; branch=$(git -C "$repo" branch --show-current)
+  git -C "$repo" bundle create "$WD/nomarchy.bundle" "$branch" 2>/dev/null
+  vm_scp "$WD/nomarchy.bundle" peter@127.0.0.1:
+  vm_ssh "rm -rf ~/Projects/nomarchy && git clone -q -b $branch ~/nomarchy.bundle ~/Projects/nomarchy \
+    && git -C ~/Projects/nomarchy remote set-url origin https://github.com/litescript/nomarchy.git"
+  local uuid; uuid=$(vm_ssh "lsblk -no UUID /dev/disk/by-id/virtio-RESCUE-SATA-part2")
+  vm_ssh "sed -i 's/^rescue.root-uuid .*/rescue.root-uuid    $uuid   # VM substitution (tests\/vm\/rc)/' ~/Projects/nomarchy/hosts/caesar/storage/layout"
+  echo "VM substitution: rescue.root-uuid -> $uuid" >>"$LOG"
+}
+vm_expect() {  # vm_expect <command> <phrase>...: output goes to the log; every phrase must appear
+  local out p; out=$(vm_ssh "$1" 2>&1); printf '%s\n' "$out"; shift
+  for p; do grep -qF -- "$p" <<<"$out" || { echo "(missing: $p)"; return 1; }; done
+}
+typed_serial_refused() {  # a wrong serial at the prompt: refused, and the XPG still blank
+  local out; out=$(vm_tty 'nope
+' 'cd ~/Projects/nomarchy && sudo provision/provision caesar --apply --vm-secrets ~/vm-secrets' 2>&1)
+  printf '%s\n' "$out"
+  grep -qF 'serial not confirmed' <<<"$out" \
+    && vm_ssh '[ -z "$(lsblk -no PARTUUID /dev/disk/by-id/nvme-XPG_SPECTRIX_S40G_2K0420036195 | tr -d "[:space:]")" ]'
+}
+gate_spec() {  # gate_spec <name> <by-id> <serial>: a throwaway spec aimed at another disk, IN THE VM
+  vm_ssh "cd ~/Projects/nomarchy && mkdir -p hosts/$1/storage && dev=\$(readlink -f /dev/disk/by-id/$2) \
+    && sed -e 's/^host .*/host $1/' -e 's|^disk.by-id .*|disk.by-id $2|' \
+           -e \"s|^disk.model .*|disk.model \$(lsblk -dn -o MODEL \$dev | sed 's/[[:space:]]*\$//')|\" \
+           -e 's/^disk.serial .*/disk.serial $3/' -e \"s/^disk.bytes .*/disk.bytes \$((\$(cat /sys/block/\${dev##*/}/size)*512))/\" \
+           hosts/caesar/storage/layout > hosts/$1/storage/layout"
+}
+
+run() {
+  [[ -f $WD/env.raw ]] || die "no machine -- 'tests/vm/rc build' first"
+  running && die "a VM is running -- 'tests/vm/rc stop' first"
+  [[ -z $(git -C "$repo" status --porcelain) ]] || die "the checkout has uncommitted changes: a release candidate is ONE frozen commit"
+  local stamp; stamp=$(date +%Y%m%d-%H%M%S); mkdir -p "$WD/logs"; LOG=$WD/logs/rc-$stamp.log; RESULTS=()
+  echo "rc run $stamp, commit $(git -C "$repo" rev-parse --short HEAD)" > "$LOG"
+  say "log: $LOG   commit: $(git -C "$repo" rev-parse --short HEAD)"
+
+  step "rescue: boot"
+  qemu env; wait_ssh || die "rescue did not come up (serial-env.log)"
+  check "rescue: LAN blackholed, NAS unreachable" \
+    vm_ssh 'ip route show type blackhole | grep -q "^blackhole 192.168.1.0/24" && ! timeout 3 bash -c "</dev/tcp/192.168.1.208/2049"'
+  step "rescue: caesar's firmware picture -- its own ESP with systemd-boot and a stand-in Windows loader"
+  vm_ssh 'set -e; esp=/dev/disk/by-id/virtio-RESCUE-SATA-part1
+    [ "$(lsblk -no FSTYPE $esp)" = vfat ] || sudo mkfs.fat -F 32 $esp >/dev/null
+    sudo mkdir -p /mnt/resc-esp && sudo mount $esp /mnt/resc-esp
+    sudo bootctl install --no-variables --esp-path=/mnt/resc-esp >/dev/null 2>&1
+    sudo install -D /mnt/resc-esp/EFI/systemd/systemd-bootx64.efi /mnt/resc-esp/EFI/Microsoft/Boot/bootmgfw.efi
+    sudo umount /mnt/resc-esp
+    for pair in "Nomarchy|\EFI\systemd\systemd-bootx64.efi" "Windows Boot Manager|\EFI\Microsoft\Boot\bootmgfw.efi"; do
+      l=${pair%%|*}; p=${pair#*|}
+      efibootmgr | grep -q "^Boot[0-9A-F]*\*\? $l\b" || sudo efibootmgr -q --create --disk /dev/disk/by-id/virtio-RESCUE-SATA --part 1 --label "$l" --loader "$p"
+    done
+    efibootmgr' >>"$LOG" 2>&1
+  clone_into_vm
+  vm_ssh 'install -d -m 700 ~/vm-secrets'; vm_scp "$WD"/vm-secrets/* peter@127.0.0.1:vm-secrets/
+
+  step "gates: each must REFUSE"
+  gate_spec zz-rescue virtio-RESCUE-SATA RESCUE-SATA
+  gate_spec zz-decoy virtio-DECOY-WINDOWS DECOY-WINDOWS
+  vm_ssh "cd ~/Projects/nomarchy && mkdir -p hosts/zz-wrong/storage && sed -e 's/^host .*/host zz-wrong/' -e 's/^disk.serial .*/disk.serial 2K0420036196/' hosts/caesar/storage/layout > hosts/zz-wrong/storage/layout"
+  check "never gate refuses the rescue disk (its root, and the Windows ESP on it)" \
+    vm_expect 'cd ~/Projects/nomarchy && provision/provision zz-rescue' 'never gate: REFUSED' "rescue install's root" 'Microsoft'
+  check "never gate refuses the decoy Windows disk" \
+    vm_expect 'cd ~/Projects/nomarchy && provision/provision zz-decoy' 'never gate: REFUSED' 'Microsoft partition type'
+  check "identity gate refuses the XPG under a serial one digit off" \
+    vm_expect 'cd ~/Projects/nomarchy && provision/provision zz-wrong' 'identity gate: REFUSED'
+  vm_ssh 'cd ~/Projects/nomarchy && rm -rf hosts/zz-rescue hosts/zz-decoy hosts/zz-wrong'
+  check "a wrong typed serial stops before anything is touched" typed_serial_refused
+
+  step "provision the XPG (the serial typed back through a real tty)"
+  vm_tty '2K0420036195
+' 'cd ~/Projects/nomarchy && sudo provision/provision caesar --apply --vm-secrets ~/vm-secrets' >>"$LOG" 2>&1
+  check "provisioner finished" grep -q 'Provisioned\.' "$LOG"
+  check "NVRAM: new entry, BootNext set, BootOrder not led by it" \
+    vm_ssh 'o=$(efibootmgr); n=$(sed -n "s/^Boot\([0-9A-F]*\)\*\? Nomarchy (caesar XPG).*/\1/p" <<<"$o"); [ -n "$n" ] && grep -q "^BootNext: $n" <<<"$o" && ! grep -q "^BootOrder: $n" <<<"$o"'
+  stop_vm
+
+  step "first boot of the target: firmware BootNext -> systemd-boot -> initramfs -> sd-encrypt -> btrfs"
+  qemu target; wait_ssh 180 || die "the target did not come up (serial-target.log)"
+  check "booted from the XPG's btrfs" vm_ssh '[ "$(findmnt -rn -o UUID /)" = 87dbcc3c-e1eb-4b36-b566-bbabf18402ce ]'
+  check "unlocked through the real LUKS path (systemd-cryptsetup, not a keyfile)" \
+    vm_ssh 'journalctl -b --no-pager | grep -q "systemd-cryptsetup.*Set cipher"'
+  # Rehearsal plumbing first: the harness's sudo (the provisioner made peter a normal wheel
+  # user with a password, as on metal), then the LAN blackhole, before any nomarchy stage.
+  vm_ssh "echo '$(cat "$WD/vm-secrets/user-password")' | sudo -S -v 2>/dev/null && echo 'peter ALL=(ALL) NOPASSWD: ALL' | sudo install -m 0440 /dev/stdin /etc/sudoers.d/10-rehearsal" >>"$LOG" 2>&1
+  printf '%s\n' '[Unit]' 'Description=Rehearsal VM only: no route to the real LAN (NAS, UPS, Proxmox)' \
+    'After=network-online.target NetworkManager.service' 'Wants=network-online.target' '[Service]' 'Type=oneshot' \
+    'RemainAfterExit=yes' 'ExecStart=/usr/bin/ip route replace blackhole 192.168.1.0/24' '[Install]' 'WantedBy=multi-user.target' \
+    | vm_ssh 'sudo install -m 0644 /dev/stdin /etc/systemd/system/rehearsal-no-lan.service && sudo systemctl daemon-reload && sudo systemctl enable --now rehearsal-no-lan.service' >>"$LOG" 2>&1
+  check "target: LAN blackholed before any nomarchy stage" \
+    vm_ssh 'ip route show type blackhole | grep -q "^blackhole 192.168.1.0/24"'
+  clone_into_vm
+
+  local s
+  vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy status' >>"$LOG" 2>&1
+  for s in "install base --yes" "install desktop --yes" "install host --yes"; do
+    step "nomarchy $s"
+    if [[ $s == "install host --yes" ]]; then
+      # As an operator would: run it, do the by-hand step it prints (the NUT password --
+      # here a VM stand-in), run it again. The second run is the one that must be clean.
+      vm_ssh "cd ~/Projects/nomarchy && common/scripts/nomarchy $s" >>"$LOG" 2>&1
+      step "stand-in for the by-hand NUT step (VM only), then install host again"
+      vm_ssh "sed 's/<password>/vmrehearsalonly/' ~/Projects/nomarchy/hosts/caesar/nut/upsmon.conf.example | sudo install -m 0640 -o root -g nut /dev/stdin /etc/nut/upsmon.conf && sudo systemctl restart nut-monitor" >>"$LOG" 2>&1
+    fi
+    check "nomarchy $s" vm_ssh "cd ~/Projects/nomarchy && common/scripts/nomarchy $s"
+    [[ $s == "install base --yes" ]] && vm_ssh "sudo ufw allow from 10.0.2.2 to any port 22 proto tcp comment 'rehearsal: ssh from the QEMU host'" >>"$LOG" 2>&1
+  done
+  step "nomarchy install storage --yes"
+  check "nomarchy install storage --yes" vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy install storage --yes'
+  step "nomarchy link --yes (before first login: the Noctalia-side checks cannot pass yet)"
+  vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy link --yes' >>"$LOG" 2>&1
+  step "stand-in for restoring user data (VM only): the wallpapers the Irides blueprints pin"
+  vm_ssh 'mkdir -p ~/Pictures' && for f in f40.png synthwave-nsx.jpg cyberpunk-countach.jpg; do vm_scp "$HOME/Pictures/$f" peter@127.0.0.1:Pictures/; done
+
+  step "reboot into the graphical session"
+  vm_ssh 'sudo systemctl reboot' >/dev/null 2>&1; sleep 10
+  wait_ssh 180 || die "the target did not come back after reboot"
+  local i; for i in $(seq 60); do vm_ssh 'pgrep -x umbriel >/dev/null && pgrep -x noctalia >/dev/null' && break; sleep 3; done
+  check "graphical session: umbriel and noctalia running from tty1 autologin" vm_ssh 'pgrep -x umbriel >/dev/null && pgrep -x noctalia >/dev/null'
+  vm_ssh "grep -q '^\[location\]' ~/.local/state/noctalia/settings.toml || printf '\n[location]\nlatitude = 0.0\nlongitude = 0.0\n' >> ~/.local/state/noctalia/settings.toml" >>"$LOG" 2>&1
+
+  step "nomarchy link, after first login (the Noctalia-side checks)"
+  check "nomarchy link --yes after first login" vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy link --yes'
+
+  step "NVRAM: finalize, now that the new system has proven itself"
+  vm_tty 'y
+' 'cd ~/Projects/nomarchy && sudo provision/provision caesar --finalize-nvram' >>"$LOG" 2>&1
+  check "our entry first in BootOrder; rescue and Windows entries intact" \
+    vm_ssh 'o=$(efibootmgr); n=$(sed -n "s/^Boot\([0-9A-F]*\)\*\? Nomarchy (caesar XPG).*/\1/p" <<<"$o"); grep -q "^BootOrder: $n" <<<"$o" && grep -q " Nomarchy$\| Nomarchy	" <<<"$o" && grep -q "Windows Boot Manager" <<<"$o"'
+
+  step "Snapper recovery"
+  check "tests/snapper-recovery" vm_ssh 'cd ~/Projects/nomarchy && tests/snapper-recovery'
+
+  step "final nomarchy status"
+  vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy status' > "$WD/logs/rc-$stamp-status.log" 2>&1
+  cat "$WD/logs/rc-$stamp-status.log" >>"$LOG"
+  local summary; summary=$(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep -E '^[0-9]+ ok, ' | tail -1)
+  check "status: 0 to do, 0 conflicts  ($summary)" grep -qE '^[0-9]+ ok, 0 to do, 0 conflicts' <(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log")
+  check "umbriel at the exact pins" grep -q 'umbriel and its portal installed at the pinned revisions' <(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep '✓')
+  check "umbriel accepts the live config (incl. Noctalia's palette)" grep -qi 'accepts the live config' <(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep '✓')
+
+  printf '\n\033[1mRelease-candidate result (%s)\033[0m\n' "$(git -C "$repo" rev-parse --short HEAD)" | tee -a "$LOG"
+  printf '  %s\n' "${RESULTS[@]}" | tee -a "$LOG"
+  printf '  not done / to do in the final status:\n' | tee -a "$LOG"
+  sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep -E '^\s+(→|✗)' | sed 's/^/    /' | tee -a "$LOG"
+  say "log: $LOG  (the VM is left running: tests/vm/rc ssh / stop)"
+}
+
+gui() {
+  [[ -f $WD/xpg.raw ]] || die "no machine"
+  running && die "a VM is running -- 'tests/vm/rc stop' first"
+  say "booting the target in a window, WITHOUT the passphrase credential."
+  say "At the Plymouth prompt, type the VM-ONLY passphrase: $(cat "$WD/vm-secrets/luks-passphrase")"
+  qemu target gui
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+  build) build ;;
+  run) run ;;
+  gui) gui ;;
+  ssh) running || die "no VM running"; exec ssh -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o LogLevel=ERROR \
+         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null peter@127.0.0.1 "$@" ;;
+  stop) stop_vm; say "stopped" ;;
+  destroy) stop_vm; [[ $WD == /var/tmp/* || -n ${NOMARCHY_RC_DIR:-} ]] || die "refusing to delete $WD"; rm -rf -- "$WD"; say "deleted $WD" ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

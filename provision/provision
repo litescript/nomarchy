@@ -10,7 +10,8 @@
 #
 # Options: --root DIR (target mount root, default /mnt/nomarchy-<host>), --clone (clone
 # nomarchy into the new home over https). VM rehearsal only, refused anywhere else:
-# --vm-secrets DIR (LUKS passphrase and user password from files, for an unattended run).
+# --vm-secrets DIR (LUKS passphrase and user password from files, and optionally a harness
+# ssh key, for an unattended run).
 #
 # Deliberately NOT part of `nomarchy install`, and deliberately not linked into
 # ~/.local/bin: destructive provisioning gets a hard boundary and a human. The layout comes
@@ -196,7 +197,7 @@ cat <<PLAN
   5. btrfs     mkfs.btrfs -L ${SPEC[btrfs.label]} -U ${SPEC[btrfs.uuid]} /dev/mapper/$mapper
                subvolumes: $(for s in "${SPEC_SUBVOLS[@]}"; do printf '%s ' "${s%% *}"; done)
                mounted under $root with ${SPEC[btrfs.options]}
-  6. install   pacstrap -K $root ${SPEC[pacstrap]}
+  6. install   pacstrap -c -K $root ${SPEC[pacstrap]}
                fstab from the spec (UUIDs, subvolumes, options); hostname $host;
                user peter (wheel, sudo) and its password; root account locked
                nested subvolumes: $(for n in "${SPEC_NESTED[@]+"${SPEC_NESTED[@]}"}"; do printf '%s ' "${n%% *}"; done)
@@ -276,7 +277,8 @@ mkdir -p "$root${SPEC[esp.mount]}"
 mount -o umask=0077 "$espdev" "$root${SPEC[esp.mount]}"
 
 step "6. install"
-pacstrap -K "$root" ${SPEC[pacstrap]}
+# -c: use the running system's package cache rather than downloading everything again.
+pacstrap -c -K "$root" ${SPEC[pacstrap]}
 {
   echo "# From hosts/$host/storage/layout, written by provision/provision."
   while read -r name mp; do
@@ -332,6 +334,14 @@ if [[ ${SPEC[boot.fallback]:-} == yes ]]; then
     "$host" "$ucode" "${SPEC[boot.cmdline]}" > "$root${SPEC[esp.mount]}/loader/entries/$entry-fallback.conf"
 fi
 arch-chroot "$root" systemctl enable -q systemd-boot-update.service NetworkManager.service
+if [[ -n $vmsecrets && -f $vmsecrets/authorized_keys ]]; then
+  # VM rehearsal only: let the harness drive the new system over ssh.
+  install -d -m 0700 "$root/home/peter/.ssh"
+  install -m 0600 "$vmsecrets/authorized_keys" "$root/home/peter/.ssh/authorized_keys"
+  arch-chroot "$root" chown -R peter:peter /home/peter/.ssh
+  arch-chroot "$root" systemctl enable -q sshd.service
+  say "VM rehearsal: harness ssh key installed, sshd enabled"
+fi
 
 step "8. NVRAM"
 if efi_available; then
