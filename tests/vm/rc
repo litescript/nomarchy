@@ -401,6 +401,10 @@ gui() {
 }
 
 cmd=${1:-}; shift || true
+# Run as the user: build calls sudo itself for the one step that needs root, and everything
+# else -- the disks, the harness key, the VM secrets -- must belong to the user who runs the
+# rehearsal. A whole `sudo tests/vm/rc build` left all of it root-owned and unreadable.
+case $cmd in build|run|gui|rescue|target) ((EUID != 0)) || die "run tests/vm/rc as your user, not with sudo -- it asks for sudo itself where it must" ;; esac
 case $cmd in
   build) build ;;
   run) run ;;
