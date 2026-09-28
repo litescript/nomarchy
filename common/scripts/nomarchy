@@ -100,6 +100,13 @@ run_plan() {
   ((failed == 0))
 }
 
+# The plan is the consent: it was shown in full and accepted, so pacman is not asked again.
+# Without --noconfirm pacman puts its own "Proceed? [Y/n]" after the plan's, which on a
+# console is a second question and without one (--yes over ssh, the VM rehearsal) is an
+# abort -- found by the first rehearsal, 2026-09-27. --noconfirm takes pacman's DEFAULT
+# answers, and the default for removing a conflicting package is no: a conflict still
+# stops the step loudly rather than removing anything.
+
 # ── Stages ──────────────────────────────────────────────────────────────────────────────
 host=''
 pkg_dir() { case $1 in host) echo "hosts/$host/packages" ;; *) echo "common/stages/$1" ;; esac; }
@@ -124,7 +131,7 @@ sec_repo() {
     good "all $n repo packages installed"
   else
     need "install $(wc -l <<<"$missing") of $n repo packages: $(tr '\n' ' ' <<<"$missing")" \
-         "sudo pacman -S --needed $(tr '\n' ' ' <<<"$missing")" 1
+         "sudo pacman -S --needed --noconfirm $(tr '\n' ' ' <<<"$missing")" 1
   fi
 }
 
@@ -333,9 +340,17 @@ sec_links() {
     if [[ -L $target ]]; then
       if [[ $(readlink -f "$target") == "$(readlink -f "$repo/$src")" ]]; then good "$dst"
       else bad "$dst -> $(readlink -f "$target") (expected $src)"; fi
+    elif [[ -f $target && -f /etc/skel/${target#"$HOME"/} ]] \
+         && cmp -s "$target" "/etc/skel/${target#"$HOME"/}"; then
+      # useradd copies /etc/skel into a new home, so a fresh install HAS ~/.bashrc and
+      # ~/.bash_profile as real files, and the never-clobber rule below stopped the very
+      # first link on a bare machine (the VM rehearsal, 2026-09-27). A file byte-identical
+      # to its /etc/skel original holds nothing anyone wrote; it is moved aside, not deleted.
+      need "replace $dst (untouched /etc/skel copy, kept as ${dst}.skel) -> $src" \
+           "mv $(printf %q "$target") $(printf %q "$target.skel") && ln -s $(printf %q "$repo/$src") $(printf %q "$target")"
     elif [[ -e $target ]]; then
-      # Never clobber: on a fresh install ~/.bashrc is a real file with real content.
-      bad "$dst exists and is not a symlink -- move it aside, then rerun"
+      # Never clobber anything a human may have written.
+      bad "$dst exists and is not a symlink, and is not an untouched /etc/skel copy -- move it aside, then rerun"
     else
       need "link $dst -> $src" "mkdir -p $(printf %q "$(dirname "$target")") && ln -s $(printf %q "$repo/$src") $(printf %q "$target")"
     fi

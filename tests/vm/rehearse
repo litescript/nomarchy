@@ -6,7 +6,12 @@
 #   tests/vm/rehearse run [--github]  clone, install base/desktop/host, link, status (no sudo)
 #   tests/vm/rehearse ssh [command]   a shell, or one command, in the VM as peter
 #   tests/vm/rehearse stop            power it off
+#   tests/vm/rehearse reset           stop, and throw away everything since the bare image
 #   tests/vm/rehearse destroy         stop and delete everything under the work directory
+#
+# The VM never writes the image `build` made: it boots a copy-on-write overlay on top of it,
+# so `reset` returns it to bare Arch in a second, with no sudo and no rebuild. (The first
+# rehearsal booted the image itself, and one run was enough to make it no longer bare.)
 #
 # Why a VM and not a container: the host stage runs caesar's ufw rules, and a container
 # sharing caesar's network namespace would apply them to CAESAR's firewall. QEMU's
@@ -122,13 +127,17 @@ build() {
 boot() {
   [[ -f $WD/disk.raw && -f $WD/vmlinuz-linux ]] || die "no image -- '${0##*/} build' first"
   running && die "already running (pid $(cat "$WD/qemu.pid"))"
+  if [[ ! -f $WD/overlay.qcow2 ]]; then
+    qemu-img create -q -f qcow2 -F raw -b "$WD/disk.raw" "$WD/overlay.qcow2" || die "qemu-img failed"
+    say "fresh overlay: the VM starts from the bare image"
+  fi
   local display=(-display none -vga none)
   # --gui: a window on caesar's desktop showing the VM's screen -- tty1 autologin and
   # umbriel starting on virtio-gpu, which ssh cannot show.
   [[ ${1:-} == --gui ]] && display=(-device virtio-vga-gl -display gtk,gl=on)
   setsid -f qemu-system-x86_64 -name nomarchy-rehearsal -enable-kvm -cpu host \
     -smp "$CPUS" -m "$MEM" \
-    -drive "file=$WD/disk.raw,format=raw,if=virtio" \
+    -drive "file=$WD/overlay.qcow2,format=qcow2,if=virtio" \
     -kernel "$WD/vmlinuz-linux" -initrd "$WD/initramfs-linux.img" \
     -append "root=/dev/vda rw console=ttyS0" \
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22" \
@@ -196,6 +205,12 @@ run() {
   printf '\n'; say "summary ($logs)"; printf '    %s\n' "${results[@]}" | tee "$logs/summary.txt"
 }
 
+reset() {
+  stop >/dev/null 2>&1
+  rm -f "$WD/overlay.qcow2"
+  say "reset: the next boot starts from the bare image"
+}
+
 destroy() {
   stop >/dev/null 2>&1
   [[ -d $WD ]] || { say "nothing to destroy"; return 0; }
@@ -211,6 +226,7 @@ case $cmd in
   ssh) running || die "not running"; exec ssh -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o LogLevel=ERROR \
          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null peter@127.0.0.1 "$@" ;;
   stop) stop ;;
+  reset) reset ;;
   destroy) destroy ;;
   *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
