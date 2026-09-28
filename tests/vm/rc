@@ -193,6 +193,15 @@ qemu() {  # qemu env|target [gui]
 # ── run ────────────────────────────────────────────────────────────────────────────────
 LOG=''
 step() { printf '\n\033[1;34m[%s] %s\033[0m\n' "$(date +%T)" "$*" | tee -a "$LOG"; }
+must() {  # must <description> <command...>: a SAFETY check -- on failure the run stops here.
+  # The third run's LAN-blackhole check on the target failed and, being a plain `check`, the
+  # run carried on into the stage that enables caesar's NAS, UPS and backup units. (It did no
+  # harm -- sudo had failed too, so nothing installed -- but that was luck, not design.)
+  local d=$1; shift
+  if "$@" >>"$LOG" 2>&1; then printf '  \033[32mPASS\033[0m %s\n' "$d" | tee -a "$LOG"; RESULTS+=("PASS  $d")
+  else printf '  \033[31mFAIL\033[0m %s -- STOPPING: a safety condition\n' "$d" | tee -a "$LOG"; RESULTS+=("FAIL  $d")
+       stop_vm; die "stopped: $d"; fi
+}
 check() {  # check <description> <command...>: runs, logs, records PASS/FAIL, continues
   local d=$1; shift
   if "$@" >>"$LOG" 2>&1; then printf '  \033[32mPASS\033[0m %s\n' "$d" | tee -a "$LOG"; RESULTS+=("PASS  $d")
@@ -254,7 +263,7 @@ run() {
 
   step "rescue: boot"
   qemu env; wait_ssh || die "rescue did not come up (serial-env.log)"
-  check "rescue: LAN blackholed, NAS unreachable" \
+  must "rescue: LAN blackholed, NAS unreachable" \
     vm_ssh 'ip route show type blackhole | grep -q "^blackhole 192.168.1.0/24" && ! timeout 3 bash -c "</dev/tcp/192.168.1.208/2049"'
   step "rescue: caesar's firmware picture -- its own ESP with systemd-boot and a stand-in Windows loader"
   vm_ssh "RESCUE_ID=$RESCUE_ID bash -s" <<'VMEOF' >>"$LOG" 2>&1
@@ -296,17 +305,20 @@ VMEOF
 
   step "first boot of the target: firmware BootNext -> systemd-boot -> initramfs -> sd-encrypt -> btrfs"
   qemu target; wait_ssh 180 || die "the target did not come up (serial-target.log)"
-  check "booted from the XPG's btrfs" vm_ssh '[ "$(findmnt -rn -o UUID /)" = 87dbcc3c-e1eb-4b36-b566-bbabf18402ce ]'
+  must "booted from the XPG's btrfs" vm_ssh '[ "$(findmnt -rn -o UUID /)" = 87dbcc3c-e1eb-4b36-b566-bbabf18402ce ]'
   check "unlocked through the real LUKS path (systemd-cryptsetup, not a keyfile)" \
     vm_ssh 'journalctl -b --no-pager | grep -q "systemd-cryptsetup.*Set cipher"'
   # Rehearsal plumbing first: the harness's sudo (the provisioner made peter a normal wheel
   # user with a password, as on metal), then the LAN blackhole, before any nomarchy stage.
-  vm_ssh "echo '$(cat "$WD/vm-secrets/user-password")' | sudo -S -v 2>/dev/null && echo 'peter ALL=(ALL) NOPASSWD: ALL' | sudo install -m 0440 /dev/stdin /etc/sudoers.d/10-rehearsal" >>"$LOG" 2>&1
+  # ONE sudo -S: it reads the password from stdin and runs the whole step. Two calls do not
+  # share credentials without a terminal -- "sudo: a terminal is required", the third run.
+  vm_ssh "echo '$(cat "$WD/vm-secrets/user-password")' | sudo -S -p '' sh -c \"echo 'peter ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/10-rehearsal && chmod 0440 /etc/sudoers.d/10-rehearsal\"" >>"$LOG" 2>&1
+  must "harness sudo on the target" vm_ssh 'sudo -n true'
   printf '%s\n' '[Unit]' 'Description=Rehearsal VM only: no route to the real LAN (NAS, UPS, Proxmox)' \
     'After=network-online.target NetworkManager.service' 'Wants=network-online.target' '[Service]' 'Type=oneshot' \
     'RemainAfterExit=yes' 'ExecStart=/usr/bin/ip route replace blackhole 192.168.1.0/24' '[Install]' 'WantedBy=multi-user.target' \
     | vm_ssh 'sudo install -m 0644 /dev/stdin /etc/systemd/system/rehearsal-no-lan.service && sudo systemctl daemon-reload && sudo systemctl enable --now rehearsal-no-lan.service' >>"$LOG" 2>&1
-  check "target: LAN blackholed before any nomarchy stage" \
+  must "target: LAN blackholed before any nomarchy stage" \
     vm_ssh 'ip route show type blackhole | grep -q "^blackhole 192.168.1.0/24"'
   clone_into_vm
 
