@@ -12,8 +12,10 @@
 # Those are makepkg byproducts that arrive alongside the real package when debug packaging
 # is enabled; they show up in `pacman -Qqe` but must not be installed on their own.
 #
-# After the first install, umbriel is updated by `umbriel-update`, never by rebuilding it
-# here: that script gates the new binary against the live config before installing it.
+# umbriel-git and its portal are built at the revs pinned in common/umbriel/UPSTREAM, never
+# at upstream main (see aur_build in common/scripts/nomarchy). After the first install they
+# are updated by `umbriel-update`, never by rebuilding them here: that script gates the new
+# binary against the live config before installing it, and only then moves the pins.
 
 # umbriel-git DEPENDS on the portal, and makepkg -s cannot fetch an AUR dependency, so the
 # portal is built first -- the order umbriel-update's PKGS already uses. The first VM

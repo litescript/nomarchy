@@ -138,14 +138,28 @@ sec_repo() {
 # Built where umbriel-update expects to find them, so its gated updates and rollback work
 # from the very first install. Order is the manifest's: AUR dependencies on other AUR
 # packages are resolved by listing them first, since makepkg -s only reaches the repos.
+#
+# umbriel and its portal are built at the revs pinned in common/umbriel/UPSTREAM, never at
+# upstream main, which is what their AUR PKGBUILDs name: umbriel-update writes a copy with
+# #commit=<pin> and makepkg runs that (-p). A fresh machine then gets exactly the umbriel
+# its base.toml was validated against -- the rehearsal before pinning compiled whatever main
+# was that minute. There is no gate here: on a fresh machine there is no live config yet
+# to gate against; the pin was gated on the host that moved it, and `nomarchy status`
+# checks the installed revs and the live config separately afterwards.
 aur_build() {
-  local pkg=$1 dir=$HOME/builds/$1
+  local pkg=$1 dir=$HOME/builds/$1 pb=PKGBUILD
   if [[ ! -d $dir/.git ]]; then
     mkdir -p "$HOME/builds" && git clone "https://aur.archlinux.org/$pkg.git" "$dir" || return 1
   else
+    # makepkg rewrites pkgver= in the PKGBUILD it runs, which leaves the AUR checkout dirty
+    # and a later pull refusing. That line is never hand-edited here; put it back.
+    git -C "$dir" checkout -q -- PKGBUILD 2>/dev/null
     git -C "$dir" pull --ff-only || return 1
   fi
-  (cd "$dir" && makepkg -si --needed --noconfirm)
+  if "$repo/common/scripts/umbriel-update" --print-pin "$pkg" >/dev/null 2>&1; then
+    pb=$("$repo/common/scripts/umbriel-update" --pinned-pkgbuild "$pkg") || return 1
+  fi
+  (cd "$dir" && makepkg -p "$pb" -si --needed --noconfirm)
 }
 
 # Some AUR packages build with cargo (paru, ai-usagebar). On a bare machine the plan is
@@ -438,7 +452,10 @@ Keeping a machine current:
                              running programs do not reread config on their own
                              (umbriel builds before f66d6a8: `umbriel validate`;
                              kitty: Ctrl+Shift+F5 in open windows)
-  umbriel-update             now and then: is upstream umbriel ahead?
+  umbriel-update             now and then: how far upstream umbriel is past the pins,
+                             and whether Arch's Noctalia is in step with them
+  umbriel-update --sync --apply
+                             after a pull that moved the pins: install exactly them
 
 Details: CLAUDE.md, "Bootstrapping a host".
 HELP

@@ -30,3 +30,22 @@ check Irides palette for Noctalia's active theme exists
 check Noctalia location set (weather, night light)
   probe [[ ! -f ~/.local/state/noctalia/settings.toml ]] || grep -q '^latitude' ~/.local/state/noctalia/settings.toml
   manual set it in Noctalia's settings -- the repo deliberately never carries your coordinates
+
+# umbriel is two invariants, checked SEPARATELY (Atlas's distinction, 2026-09-27):
+#
+#   declared revision -- the installed umbriel and portal are exactly the revs pinned in
+#     common/umbriel/UPSTREAM. Fails after a pull that moved the pins, or on a host that
+#     installed off-pin by hand.
+#   compatibility -- the installed umbriel ACCEPTS the live config, palette included. Can
+#     fail with the pins exact: a `pacman -Syu` bringing a Noctalia whose palette template
+#     speaks newer or older umbriel breaks the pair without anyone touching umbriel.
+#
+# Neither can be fixed here -- installing needs sudo, and a compatibility failure needs a
+# human to decide which side moves -- so both are manual; umbriel-update's survey says why.
+check umbriel and its portal installed at the pinned revisions (common/umbriel/UPSTREAM)
+  probe common/scripts/umbriel-update --check-pins
+  manual umbriel-update --sync --apply installs exactly the pins, gated on the live config (or --apply to move them forward)
+
+check installed umbriel accepts the live config (palette included)
+  probe common/scripts/umbriel-update --check-config
+  manual run umbriel-update: its survey shows whether the config is ahead of the binary (install the pins) or Noctalia's palette is out of step with umbriel (wait for, or move to, a matching pair)

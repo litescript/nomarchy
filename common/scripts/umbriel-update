@@ -2,7 +2,9 @@
 # Keep umbriel rolling without losing this repo's config.
 #
 #   umbriel-update                      survey: what upstream has, what it would break
-#   umbriel-update --apply              build, gate on the live config, install
+#   umbriel-update --apply              build the config's rev, gate on the live config,
+#                                       install, and move the build pins to what was built
+#   umbriel-update --sync [--apply]     install EXACTLY the pinned revs, gated; pins unchanged
 #   umbriel-update --merge-config       preview upstream's config changes merged into base.toml
 #   umbriel-update --merge-config --apply   write the merge
 #   umbriel-update --merge-accept       promote a resolved base.toml.new
@@ -11,6 +13,23 @@
 #
 # Dry run is the default, matching bootstrap and merge-show-dirs. Run the bare form as
 # often as you like; it only fetches and reports.
+#
+# PINS, NOT MAIN
+#
+# common/umbriel/UPSTREAM records three revs (see that file): `config`, the upstream rev
+# base.toml is merged to, and one BUILD pin per package -- the exact rev every host builds.
+# Nothing here or in `nomarchy install` builds upstream main: the AUR PKGBUILDs say
+# #branch=main, so builds use a copy with #commit=<pin> (pinned_pkgbuild). Until 2026-09-27
+# a fresh machine got whatever main was that minute -- the VM rehearsal compiled fd870c1,
+# a rev nothing had validated. Two invariants, checked separately (common/bootstrap/
+# user-checks): the INSTALLED revs equal the pins (--check-pins), and the installed binary
+# ACCEPTS the live config (--check-config). The first can hold while the second fails: a
+# `pacman -Syu` that brings a newer Noctalia, whose palette template speaks a vocabulary
+# the pinned umbriel does not, breaks the pair without anyone touching umbriel.
+#
+# The build pins move only here, only in --apply, and only after the new binary validated
+# the live config -- so a pin is always a rev some host has proved. `config` moves ahead of
+# them at --merge-config; the --apply that follows brings the build pins up to it.
 #
 # WHY THIS EXISTS
 #
@@ -118,17 +137,24 @@ validate_with() {  # validate_with <binary> [config]
   fi
 }
 
-apply=0; mode=survey
-for a in "$@"; do
-  case "$a" in
+apply=0; mode=survey; arg=''
+while (($#)); do
+  case "$1" in
     --apply)        apply=1 ;;
+    --sync)         mode=sync ;;
     --merge-config) mode=merge ;;
     --merge-accept) mode=accept ;;
     --find-pin)     mode=findpin ;;
     --rollback)     mode=rollback ;;
+    # Plumbing for nomarchy and its checks: print and exit, no header, no network.
+    --print-pin)       mode=printpin; arg=${2:-}; shift ;;
+    --pinned-pkgbuild) mode=pinnedpkgbuild; arg=${2:-}; shift ;;
+    --check-pins)      mode=checkpins ;;
+    --check-config)    mode=checkconfig ;;
     -h|--help)      sed -n '2,/^#$/p' "$(readlink -f "$0")" | sed 's/^# \?//'; exit 0 ;;
-    *)              die "unknown argument: $a  (--help)" ;;
+    *)              die "unknown argument: $1  (--help)" ;;
   esac
+  shift
 done
 
 # ── Package plumbing ────────────────────────────────────────────────────────
@@ -164,7 +190,34 @@ fetch_clone() {
 
 target_rev() { git -C "$1" rev-parse --short=7 refs/heads/main 2>/dev/null; }
 
-pin_rev() { grep -vE '^\s*#|^\s*$' "$PIN" 2>/dev/null | head -1 | tr -d '[:space:]'; }
+# common/umbriel/UPSTREAM: `<key> <rev>` lines, keys `config` and the package names. This
+# is the only parser; nomarchy asks through --print-pin rather than reading the file.
+pin_of() { awk -v k="$1" '$0 !~ /^[[:space:]]*#/ && $1 == k {print $2; exit}' "$PIN" 2>/dev/null; }
+pin_rev() { pin_of config; }     # the three-way merge's base leg
+
+# The portal has no config of its own, so it follows umbriel: the newest portal commit on
+# main no later than the umbriel rev being built. Upstream releases the two from repos that
+# track each other; pairing by date is how they were paired when both were at main.
+portal_rev_for() {  # portal_rev_for <umbriel rev>
+  local uclone pclone when
+  uclone=$(clone_dir "$BUILDS/umbriel-git") || return 1
+  pclone=$(clone_dir "$BUILDS/xdg-desktop-portal-umbriel-git") || return 1
+  when=$(git -C "$uclone" log -1 --format=%cI "$1" 2>/dev/null) || return 1
+  git -C "$pclone" rev-list -1 --before="$when" refs/heads/main 2>/dev/null | cut -c1-7
+}
+
+# makepkg builds whatever the PKGBUILD's source= names, and the AUR's says #branch=main. A
+# pinned build runs a COPY with that fragment replaced by #commit=<rev>, passed with -p, so
+# the AUR checkout stays clean for `git pull` -- makepkg rewrites pkgver= in the file it
+# runs, which until now was the AUR's own PKGBUILD. Prints the copy's name, relative to
+# the build directory, which is where makepkg -p wants it.
+pinned_pkgbuild() {  # pinned_pkgbuild <pkg> <rev>
+  local dir=$BUILDS/$1 rev=$2 f=PKGBUILD.pinned
+  [[ -f $dir/PKGBUILD && -n $rev ]] || return 1
+  sed -E "s|(git\+https://[^'\"#]+)(#[^'\"]*)?|\1#commit=$rev|" "$dir/PKGBUILD" > "$dir/$f"
+  grep -q "#commit=$rev" "$dir/$f" || { rm -f "$dir/$f"; return 1; }
+  printf '%s' "$f"
+}
 
 # ── Survey ──────────────────────────────────────────────────────────────────
 
@@ -173,8 +226,8 @@ umbriel_target=""
 behind=0            # packages with an update waiting
 
 survey() {
-  head1 "Upstream"
-  local pkg dir clone inst tgt n
+  head1 "Pins (common/umbriel/UPSTREAM) against installed and upstream"
+  local pkg dir clone inst pin tgt n
   for pkg in "${PKGS[@]}"; do
     dir="$BUILDS/$pkg"
     if [[ ! -d $dir ]]; then
@@ -187,26 +240,36 @@ survey() {
       continue
     fi
     fetch_clone "$clone" || bad "$pkg: fetch failed (offline?)"
-    inst=$(installed_rev "$pkg") || { bad "$pkg: not installed"; continue; }
+    pin=$(pin_of "$pkg")
+    [[ -n $pin ]] || { bad "$pkg: no build pin in $PIN"; continue; }
     tgt=$(target_rev "$clone")   || { bad "$pkg: cannot resolve refs/heads/main"; continue; }
-
     [[ $pkg == umbriel-git ]] && { umbriel_clone=$clone; umbriel_target=$tgt; }
 
-    if [[ $inst == "$tgt" ]]; then
-      good "$pkg  $inst (current)"
+    inst=$(installed_rev "$pkg") || inst=''
+    if [[ -z $inst ]]; then
+      want "$pkg not installed; pinned $pin  -> umbriel-update --sync --apply"; ((behind++))
+    elif [[ $inst == "$pin" ]]; then
+      good "$pkg $inst = pin"
+    else
+      want "$pkg installed $inst, pinned $pin  -> umbriel-update --sync --apply"; ((behind++))
+    fi
+
+    # How far upstream has moved past the pin -- information, not a fault: the pin moves
+    # when a merge and a gated --apply say it may.
+    n=$(git -C "$clone" rev-list --count "$pin..$tgt" 2>/dev/null)
+    if [[ $pin == "$tgt" ]]; then
+      say "    upstream main is at the pin"
       continue
     fi
-    n=$(git -C "$clone" rev-list --count "$inst..$tgt" 2>/dev/null)
-    want "$pkg  $inst → $tgt  (${n:-?} commits)"
-    ((behind++))
+    say "    upstream main is ${n:-?} commits past the pin ($tgt)"
 
     # Conventional-commit breaking markers. Upstream uses `type(scope)!:` and has not so
     # far used a BREAKING CHANGE footer, so check both rather than trusting one.
     local brk
-    brk=$(git -C "$clone" log --format='%h %s' "$inst..$tgt" 2>/dev/null \
+    brk=$(git -C "$clone" log --format='%h %s' "$pin..$tgt" 2>/dev/null \
           | grep -E '^[0-9a-f]+ [a-z]+(\([^)]*\))?!:')
     local ftr
-    ftr=$(git -C "$clone" log --format='%h %s' --grep='BREAKING CHANGE' "$inst..$tgt" 2>/dev/null)
+    ftr=$(git -C "$clone" log --format='%h %s' --grep='BREAKING CHANGE' "$pin..$tgt" 2>/dev/null)
     if [[ -n $brk || -n $ftr ]]; then
       printf '    \033[31mbreaking:\033[0m\n'
       printf '%s\n%s\n' "$brk" "$ftr" | grep -v '^$' | sort -u | while read -r l; do say "      $l"; done
@@ -214,7 +277,7 @@ survey() {
 
     if [[ $pkg == umbriel-git ]]; then
       local cfg
-      cfg=$(git -C "$clone" log --oneline --abbrev=7 "$inst..$tgt" -- examples/config.toml 2>/dev/null)
+      cfg=$(git -C "$clone" log --oneline --abbrev=7 "$pin..$tgt" -- examples/config.toml 2>/dev/null)
       if [[ -n $cfg ]]; then
         printf '    config schema touched by:\n'
         printf '%s\n' "$cfg" | while read -r l; do say "      $l"; done
@@ -231,12 +294,31 @@ survey() {
   elif [[ -z $umbriel_target ]]; then
     say "upstream rev unknown; skipping"
   elif [[ $pin == "$umbriel_target" ]]; then
-    good "base.toml synced to $pin"
+    good "base.toml synced to $pin, which is upstream main"
   else
     local d
     d=$(git -C "$umbriel_clone" diff --numstat "$pin..$umbriel_target" -- examples/config.toml 2>/dev/null)
     want "base.toml synced to $pin, upstream example is at $umbriel_target${d:+  (${d%%$'\t'*} added, $(printf '%s' "$d" | cut -f2) removed)}"
     say  "    umbriel-update --merge-config"
+  fi
+  if [[ -n $pin && $pin != "$(pin_of umbriel-git)" ]]; then
+    want "config is merged to $pin, ahead of the umbriel build pin $(pin_of umbriel-git): --apply builds $pin, gates, and moves the build pins"
+  fi
+
+  # ── Noctalia: the other half of the pair ─────────────────────────────────
+  # Noctalia renders the palette umbriel's REQUIRED include pulls in, from a template that
+  # speaks some umbriel's vocabulary. Arch ships Noctalia, so it moves on `pacman -Syu`,
+  # not here -- and a pinned umbriel can be broken from that side. Report where it stands:
+  # installed, what Arch serves (as of the last pacman sync), and upstream's newest release.
+  head1 "Noctalia (pacman owns it; its palette template must match the pinned umbriel)"
+  local ninst narch nup
+  ninst=$(pacman -Q noctalia 2>/dev/null | awk '{print $2}')
+  narch=$(pacman -Si noctalia 2>/dev/null | awk -F': ' '/^Version/ {print $2; exit}')
+  nup=$(git ls-remote --tags --refs https://github.com/noctalia-dev/noctalia 'v*' 2>/dev/null \
+        | awk -F/ '{print $3}' | grep -v -e '-' | sort -V | tail -1)
+  say "installed ${ninst:-none}   Arch ${narch:-unknown} (last sync)   upstream ${nup:-unknown}"
+  if [[ -n $ninst && -n $narch && ${ninst%-*} != "${narch%-*}" ]]; then
+    want "Arch serves noctalia $narch, installed $ninst: a pacman -Syu changes the palette template"
   fi
 
   # ── Live config against the installed binary ──────────────────────────────
@@ -395,9 +477,9 @@ merge_config() {
   if (( n == 0 )) && [[ -z $changes ]]; then
     # Nothing but comments moved: safe to promote without a human.
     cp "$tmp/ours" "$BASE"
-    write_pin "$tgt"
+    write_pins "$tgt" "$(pin_of umbriel-git)" "$(pin_of xdg-desktop-portal-umbriel-git)"
     echo
-    good "base.toml updated and pinned to $tgt"
+    good "base.toml merged to $tgt (the build pins move at --apply, after the gate)"
     say  "The live session reloads base.toml on write. Unknown keys are warnings there, so"
     say  "the old compositor keeps its last working configuration -- expected until you install."
     say  "Next: umbriel-update --apply"
@@ -413,16 +495,29 @@ merge_config() {
   fi
 }
 
-write_pin() {
+# The only writer of common/umbriel/UPSTREAM. Always writes all three, so a partial update
+# cannot leave a key missing.
+write_pins() {  # write_pins <config> <umbriel-git> <xdg-desktop-portal-umbriel-git>
+  [[ -n $1 && -n $2 && -n $3 ]] || die "write_pins: refusing to write an empty pin"
   cat > "$PIN" <<PINFILE
-# The upstream umbriel rev that common/umbriel/base.toml is synced to.
+# Upstream umbriel revisions this repo is pinned to. Read and written only by
+# common/scripts/umbriel-update (pin_of / write_pins), never by hand: a wrong value here
+# fails quietly.
 #
-# base.toml is a fork of upstream's examples/config.toml. This records which revision it
-# was last merged against, which is the "base" leg of the three-way merge in
-# common/scripts/umbriel-update. Wrong value here means a wrong merge, silently -- it is
-# written by --merge-config/--merge-accept rather than by hand for that reason.
+#   config    the rev of upstream's examples/config.toml that common/umbriel/base.toml is
+#             merged to -- the "base" leg of the three-way merge. Moved by --merge-config
+#             and --merge-accept.
+#   umbriel-git, xdg-desktop-portal-umbriel-git
+#             the exact revs every host BUILDS: \`nomarchy install desktop\` and
+#             \`umbriel-update --sync\` build these, never upstream main. Moved only by
+#             \`umbriel-update --apply\`, after the new binary validated the live config.
+#
+# In steady state config == umbriel-git: the binary speaks the vocabulary base.toml is in.
+# Between a --merge-config and the --apply that follows it, config is ahead.
 
-$1
+config                          $1
+umbriel-git                     $2
+xdg-desktop-portal-umbriel-git  $3
 PINFILE
 }
 
@@ -436,10 +531,10 @@ merge_accept() {
   fi
   local tgt; tgt=$(tr -d '[:space:]' < "$PIN.pending")
   mv "$BASE.new" "$BASE"
-  write_pin "$tgt"
+  write_pins "$tgt" "$(pin_of umbriel-git)" "$(pin_of xdg-desktop-portal-umbriel-git)"
   rm -f "$PIN.pending"
   head1 "Merge accepted"
-  good "base.toml promoted, pinned to $tgt"
+  good "base.toml promoted, merged to $tgt (the build pins move at --apply, after the gate)"
   say  "Validate against the binary you are about to install, not the one running now:"
   say  "    umbriel-update --apply"
 }
@@ -510,28 +605,53 @@ stash_current() {
   return 0
 }
 
+# Newest by modification time. It used to be `sort | tail -1`, which ranks .r989 above
+# .r1098 lexically -- harmless only while a single package ever sat in the directory.
 built_package() {
   local pkg=$1 dir=$2
-  find "$dir" -maxdepth 1 -name "$pkg-*.pkg.tar.zst" ! -name '*-debug-*' 2>/dev/null \
-    | sort | tail -1
+  find "$dir" -maxdepth 1 -name "$pkg-*.pkg.tar.zst" ! -name '*-debug-*' -printf '%T@ %p\n' 2>/dev/null \
+    | sort -n | tail -1 | cut -d' ' -f2-
 }
 
-do_apply() {
-  local -a to_install=()
-  local pkg dir clone inst tgt
+# The build pins move only after the gate passed and pacman installed -- so every pin is a
+# rev some host has proved against a live config.
+move_pins() {  # move_pins <umbriel rev> <portal rev>
+  if [[ $1 == "$(pin_of umbriel-git)" && $2 == "$(pin_of xdg-desktop-portal-umbriel-git)" ]]; then
+    good "build pins already at umbriel $1, portal $2"
+    return
+  fi
+  write_pins "$(pin_of config)" "$1" "$2"
+  good "build pins moved to umbriel $1, portal $2 -- commit common/umbriel/UPSTREAM so other hosts --sync to them"
+}
 
-  head1 "Build"
+# forward (--apply): build the rev base.toml is merged to, and the portal paired with it,
+#   gate, install, then move the build pins to what was built.
+# sync (--sync --apply): build exactly the build pins, gate, install; pins untouched. For a
+#   host that pulled pins another host moved -- rigel after caesar's update, or any host
+#   after `git pull`.
+do_install() {
+  local which=$1
+  local -a to_install=()
+  local pkg dir inst tgt ut pt
+  if [[ $which == forward ]]; then
+    ut=$(pin_of config)
+    pt=$(portal_rev_for "$ut") || pt=''
+    [[ -n $pt ]] || { bad "cannot pair a portal rev with umbriel $ut -- is the portal clone fetched?"; exit 1; }
+  else
+    ut=$(pin_of umbriel-git); pt=$(pin_of xdg-desktop-portal-umbriel-git)
+  fi
+  [[ -n $ut && -n $pt ]] || die "missing pins in $PIN"
+
+  head1 "Build ($which: umbriel $ut, portal $pt)"
   for pkg in "${PKGS[@]}"; do
     dir="$BUILDS/$pkg"
     [[ -d $dir ]] || { bad "$pkg: no build directory"; continue; }
-    clone=$(clone_dir "$dir")
-    inst=$(installed_rev "$pkg")
-    tgt=$(target_rev "$clone")
+    [[ $pkg == umbriel-git ]] && tgt=$ut || tgt=$pt
+    inst=$(installed_rev "$pkg") || inst=''
     if [[ $inst == "$tgt" ]]; then
-      good "$pkg $inst already current, not rebuilding"
+      good "$pkg $inst already installed, not rebuilding"
       continue
     fi
-
     # An --apply that got as far as building and then stopped -- a refused sudo, most
     # likely, since sudo cannot read a password without a terminal -- leaves a good
     # package sitting in the build directory. Re-running should install it, not spend
@@ -545,8 +665,9 @@ do_apply() {
     fi
 
     stash_current "$pkg" "$dir"
-    say "building $pkg ($inst → $tgt) ..."
-    if ! ( cd "$dir" && makepkg -f --noconfirm ); then
+    local pb; pb=$(pinned_pkgbuild "$pkg" "$tgt") || { bad "$pkg: cannot write a PKGBUILD pinned to $tgt"; exit 1; }
+    say "building $pkg (${inst:-none} → $tgt, pinned) ..."
+    if ! ( cd "$dir" && makepkg -f --noconfirm -p "$pb" ); then
       bad "$pkg: makepkg failed"
       say "    If it stopped on a missing dependency, install it and re-run:"
       say "    sudo pacman -S --needed <pkg>"
@@ -554,12 +675,14 @@ do_apply() {
     fi
     local built; built=$(built_package "$pkg" "$dir")
     [[ -n $built ]] || { bad "$pkg: built, but no package file found"; exit 1; }
+    [[ $built == *".$tgt-"* ]] || { bad "$pkg: built $(basename "$built"), which is not $tgt -- refusing"; exit 1; }
     good "$pkg → $(basename "$built")"
     to_install+=("$built")
   done
 
   if (( ${#to_install[@]} == 0 )); then
     head1 "Nothing to install"
+    [[ $which == forward ]] && move_pins "$ut" "$pt"
     session_state
     return 0
   fi
@@ -570,12 +693,12 @@ do_apply() {
   # install rather than a broken session.
   head1 "Gate — live config against the NEW binary"
   local staged="$BUILDS/umbriel-git/pkg/umbriel-git/usr/bin/umbriel"
-  if [[ ! -x $staged ]]; then
-    if [[ -n $(built_package umbriel-git "$BUILDS/umbriel-git") ]]; then
-      bad "no staged binary at $staged -- cannot gate; refusing to install"
-      exit 1
-    fi
-    say "umbriel itself was not rebuilt; nothing to gate"
+  # Gate the umbriel being INSTALLED, not whatever an earlier build left in pkg/.
+  if [[ " ${to_install[*]} " != *"/umbriel-git-"* ]]; then
+    say "umbriel itself is not being installed; nothing to gate"
+  elif [[ ! -x $staged ]]; then
+    bad "no staged binary at $staged -- cannot gate; refusing to install"
+    exit 1
   else
     local out rc
     out=$(validate_with "$staged" "$LIVE" 2>&1); rc=$?
@@ -607,6 +730,7 @@ do_apply() {
     exit 1
   fi
   good "installed"
+  [[ $which == forward ]] && move_pins "$ut" "$pt"
 
   head1 "After"
   if out=$(validate_with umbriel 2>&1); then
@@ -661,13 +785,47 @@ do_rollback() {
 
 # ── Main ────────────────────────────────────────────────────────────────────
 
+# Plumbing: answer and exit, before any header -- nomarchy and its checks read the output.
+case $mode in
+  printpin)
+    [[ -n $arg ]] || die "--print-pin <config|umbriel-git|xdg-desktop-portal-umbriel-git>"
+    r=$(pin_of "$arg"); [[ -n $r ]] || exit 1; printf '%s\n' "$r"; exit 0 ;;
+  pinnedpkgbuild)
+    [[ -n $arg ]] || die "--pinned-pkgbuild <package>"
+    r=$(pin_of "$arg"); [[ -n $r ]] || die "$arg has no pin in $PIN"
+    pinned_pkgbuild "$arg" "$r" || die "cannot write a pinned PKGBUILD in $BUILDS/$arg"
+    echo; exit 0 ;;
+  checkpins)
+    # Declared revision state: are the INSTALLED revs the pinned ones? Read-only, no network.
+    rc=0
+    for pkg in "${PKGS[@]}"; do
+      want_rev=$(pin_of "$pkg"); have_rev=$(installed_rev "$pkg") || have_rev=none
+      if [[ $have_rev == "$want_rev" ]]; then echo "$pkg $have_rev = pin"
+      else echo "$pkg installed $have_rev, pinned ${want_rev:-none}"; rc=1; fi
+    done
+    exit $rc ;;
+  checkconfig)
+    # Compatibility: does the INSTALLED umbriel accept the live config -- including the
+    # palette the installed Noctalia generated? Separate from --check-pins on purpose: the
+    # pins can be exact while a Noctalia update breaks the pair, and vice versa.
+    command -v umbriel >/dev/null || { echo "umbriel is not installed"; exit 1; }
+    [[ -e $LIVE ]] || { echo "$LIVE does not exist"; exit 1; }
+    validate_with umbriel "$LIVE" 2>&1 | grep -vE '^[0-9:.]+ \[' | tail -6
+    exit "${PIPESTATUS[0]}" ;;
+esac
+
 printf '\n\033[1mumbriel-update — %s\033[0m\n' \
   "$( ((apply)) && echo 'APPLYING' || echo 'dry run, nothing will change')"
 
 case $mode in
   survey)
     survey
-    if (( apply )); then do_apply; fi
+    if (( apply )); then do_install forward; fi
+    ;;
+  sync)
+    survey
+    if (( apply )); then do_install sync
+    else echo; say "dry run. --sync --apply builds exactly the pins, gates them on the live config, installs."; fi
     ;;
   merge)
     dir="$BUILDS/umbriel-git"

@@ -293,10 +293,30 @@ would have installed it happily and left a session whose `Mod+R` silently did no
 umbriel-update                        # what upstream has, and what it would break
 umbriel-update --merge-config         # preview upstream's config changes, merged
 umbriel-update --merge-config --apply # write it; resolve conflicts; --merge-accept
-umbriel-update --apply                # build, gate on the live config, install
+umbriel-update --apply                # build the merged rev, gate, install, move the pins
+umbriel-update --sync --apply         # install EXACTLY the pinned revs, gated (after a pull)
 umbriel-update --rollback             # reinstall the previous package
 umbriel-update --find-pin             # re-derive which rev base.toml forked from
 ```
+
+**Every host builds the pins, never upstream `main`.** `common/umbriel/UPSTREAM` records
+three revs: `config`, the upstream rev `base.toml` is merged to, and one **build pin** each
+for `umbriel-git` and `xdg-desktop-portal-umbriel-git`. The AUR PKGBUILDs say
+`#branch=main`, so `nomarchy install desktop` and `umbriel-update` build a copy with
+`#commit=<pin>` (`makepkg -p`), which also keeps the AUR checkout clean. Before this, a
+fresh machine got whatever `main` was that minute: the VM rehearsal compiled `fd870c1`,
+a rev nothing had validated. `config` moves at `--merge-config`; the build pins move only
+at `--apply`, after the new binary validated the live config, so a pin is always a rev
+some host has proved. The portal has no config and follows umbriel: the newest portal
+commit no later than the umbriel rev. Another host picks up moved pins with
+`--sync --apply`.
+
+**Two invariants, checked separately** (`nomarchy status`, via `--check-pins` and
+`--check-config`): the installed revs equal the pins, and the installed umbriel accepts the
+live config. The second can fail with the first exact — Arch ships Noctalia, a
+`pacman -Syu` can bring a palette template in a different umbriel vocabulary, and the pair
+breaks without anyone touching umbriel. `umbriel-update`'s survey reports Noctalia
+installed, what Arch serves, and upstream's newest release, so that lag is on screen.
 
 It rests on three things, each established by testing umbriel 0.1.0 rather than by
 reading docs:
@@ -313,8 +333,8 @@ reading docs:
   wherever this repo had not customised the line; what conflicts is what a human should
   decide. The 2026-09-18 update produced four conflicts, all four genuine.
 
-**The pin in `common/umbriel/UPSTREAM` has to be right, and a wrong one fails quietly.**
-It records the rev `base.toml` was forked from — the base leg of that merge. A pin set
+**The `config` pin in `common/umbriel/UPSTREAM` has to be right, and a wrong one fails
+quietly.** It records the rev `base.toml` was forked from — the base leg of that merge. A pin set
 too late makes the merge read upstream's own changes as this repo's customisations and
 keep them out, with no conflict and no warning. That happened on the first run: the pin
 was seeded with the installed rev, which was two days too late, and the tell was

@@ -1,8 +1,18 @@
-# The upstream umbriel rev that common/umbriel/base.toml is synced to.
+# Upstream umbriel revisions this repo is pinned to. Read and written only by
+# common/scripts/umbriel-update (pin_of / write_pins), never by hand: a wrong value here
+# fails quietly.
 #
-# base.toml is a fork of upstream's examples/config.toml. This records which revision it
-# was last merged against, which is the "base" leg of the three-way merge in
-# common/scripts/umbriel-update. Wrong value here means a wrong merge, silently -- it is
-# written by --merge-config/--merge-accept rather than by hand for that reason.
+#   config    the rev of upstream's examples/config.toml that common/umbriel/base.toml is
+#             merged to -- the "base" leg of the three-way merge. Moved by --merge-config
+#             and --merge-accept.
+#   umbriel-git, xdg-desktop-portal-umbriel-git
+#             the exact revs every host BUILDS: `nomarchy install desktop` and
+#             `umbriel-update --sync` build these, never upstream main. Moved only by
+#             `umbriel-update --apply`, after the new binary validated the live config.
+#
+# In steady state config == umbriel-git: the binary speaks the vocabulary base.toml is in.
+# Between a --merge-config and the --apply that follows it, config is ahead.
 
-6bf03a0
+config                          6bf03a0
+umbriel-git                     6bf03a0
+xdg-desktop-portal-umbriel-git  d6bd72c
