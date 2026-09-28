@@ -15,8 +15,11 @@
 # After the first install, umbriel is updated by `umbriel-update`, never by rebuilding it
 # here: that script gates the new binary against the live config before installing it.
 
+# umbriel-git DEPENDS on the portal, and makepkg -s cannot fetch an AUR dependency, so the
+# portal is built first -- the order umbriel-update's PKGS already uses. The first VM
+# rehearsal had them the other way round: 'target not found: xdg-desktop-portal-umbriel-git'.
 paru
-umbriel-git
 xdg-desktop-portal-umbriel-git
+umbriel-git
 herdr-bin
 ai-usagebar

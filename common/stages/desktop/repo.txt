@@ -32,6 +32,10 @@ imagemagick
 pipewire
 pipewire-pulse
 wireplumber
+# JACK is provided by more than one package, and something in this stage needs it. Left
+# undeclared, `pacman --noconfirm` takes its default -- jack2 -- where caesar runs
+# pipewire-jack. Found by the VM rehearsal; declaring it makes the choice, not pacman.
+pipewire-jack
 
 # Fonts
 noto-fonts

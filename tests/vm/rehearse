@@ -27,6 +27,8 @@
 #   - A blackhole route for 192.168.1.0/24. The host stage enables caesar's NAS automount,
 #     backup timers, subget and NUT -- and QEMU's NAT would happily carry them to the REAL
 #     NAS and UPS. `run` refuses to start unless the route is in place.
+#   - A ufw rule admitting ssh from QEMU's 10.0.2.2 (added once ufw is installed), without
+#     which caesar's own firewall shuts the harness out after the host stage.
 #   - caesar's pacman cache, read-only over 9p, so packages already on caesar are not
 #     downloaded again; the VM downloads the rest into its own cache.
 #
@@ -204,6 +206,15 @@ run() {
     rc=$?
     results+=("$(printf '%-24s rc=%-3s %4ds' "${steps[i]}" "$rc" $((SECONDS - t0)))")
     grep -E 'ok, .* to do|Plan:|failed|stopping' "$logs/$name.log" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/^/      /' | tail -4
+    if [[ ${steps[i]} == "install base --yes" ]]; then
+      # Rehearsal-only, like the blackhole route. caesar's firewall (applied by the host
+      # stage) admits ssh from 192.168.1.0/24 only, and this harness reaches the VM from
+      # QEMU's 10.0.2.2 -- so the second rehearsal locked itself out mid-run, rc=255 on
+      # everything after `install host`. apply-rules never resets existing rules, so a rule
+      # added now, once ufw exists, survives it.
+      vm_ssh "sudo ufw allow from 10.0.2.2 to any port 22 proto tcp comment 'rehearsal: ssh from the QEMU host'" >/dev/null 2>&1 \
+        || say "warning: could not pre-authorize the harness's ssh in ufw -- later steps may lose ssh"
+    fi
   done
   printf '\n'; say "summary ($logs)"; printf '    %s\n' "${results[@]}" | tee "$logs/summary.txt"
 }
