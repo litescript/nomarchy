@@ -1,0 +1,7 @@
+# Stage `storage` for caesar: what only makes sense on the declared disk layout
+# (./layout), installed by `nomarchy install storage` -- which refuses to run anywhere else,
+# above all on the SATA rescue install (ext4, no snapshots, untouched).
+snapper
+# A pre/post snapshot pair around every pacman transaction: an update that breaks the
+# system can be undone from what it changed.
+snap-pac

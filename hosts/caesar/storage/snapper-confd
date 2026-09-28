@@ -1,0 +1,2 @@
+# /etc/conf.d/snapper -- the configs snapper manages. From hosts/caesar/storage/.
+SNAPPER_CONFIGS="root"

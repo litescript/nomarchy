@@ -1,0 +1,7 @@
+# Storage-stage checks. Format: common/stages/base/checks.
+
+# snapper must be able to read its own config and see /.snapshots -- the declared,
+# top-level @snapshots -- or snap-pac's hooks fail on every pacman transaction.
+check snapper manages / with the declared config
+  probe snapper --csvout -c root get-config 2>/dev/null | grep -qx 'SUBVOLUME,/'
+  manual sudo snapper -c root get-config  -- read the error; the config is hosts/caesar/storage/snapper-root.conf

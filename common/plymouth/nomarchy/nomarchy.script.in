@@ -1,0 +1,93 @@
+# nomarchy Plymouth theme -- the LUKS unlock screen and boot splash, for every host.
+#
+# Brought into the repo 2026-09-27 from rigel, where it had been hand-written into
+# /usr/share/plymouth/themes/rigel/ on 09-15 and was owned by no package: rebuilding rigel
+# would have lost it. The only host-specific thing in it was the title, so the title is now a
+# placeholder filled from the host name by common/plymouth/render -- caesar reads C A E S A R,
+# rigel still reads R I G E L. Installed by a check in common/stages/desktop/checks.
+
+Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+
+status = "normal";
+
+# ---------- helpers ----------
+
+fun centered_text(text, y, r, g, b)
+{
+    local.image = Image.Text(text, r, g, b);
+    local.sprite = Sprite(local.image);
+
+    local.x = Window.GetX() +
+              Window.GetWidth() / 2 -
+              local.image.GetWidth() / 2;
+
+    local.sprite.SetPosition(local.x, y, 10000);
+
+    return local.sprite;
+}
+
+# ---------- normal boot ----------
+
+title = centered_text(
+    "@TITLE@",
+    Window.GetY() + Window.GetHeight() * 0.42,
+    0.85, 0.85, 0.85
+);
+
+boot_status = centered_text(
+    "INITIALIZING",
+    Window.GetY() + Window.GetHeight() * 0.55,
+    0.45, 0.45, 0.45
+);
+
+# ---------- password ----------
+
+fun display_normal_callback()
+{
+    global.status = "normal";
+
+    if (global.locked)
+        global.locked.SetOpacity(0);
+
+    if (global.password)
+        global.password.SetOpacity(0);
+
+    global.boot_status.SetOpacity(1);
+}
+
+fun display_password_callback(prompt, bullets)
+{
+    global.status = "password";
+
+    global.boot_status.SetOpacity(0);
+
+    if (!global.locked)
+    {
+        global.locked = centered_text(
+            "SYSTEM VOLUME LOCKED",
+            Window.GetY() + Window.GetHeight() * 0.51,
+            0.65, 0.65, 0.65
+        );
+    }
+
+    if (global.password)
+        global.password.SetOpacity(0);
+
+    local.mask = "";
+
+    for (i = 0; i < bullets; i++)
+        local.mask += "*";
+
+    if (bullets == 0)
+        local.mask = "_";
+
+    global.password = centered_text(
+        "[  " + local.mask + "  ]",
+        Window.GetY() + Window.GetHeight() * 0.57,
+        0.90, 0.90, 0.90
+    );
+}
+
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+Plymouth.SetDisplayPasswordFunction(display_password_callback);

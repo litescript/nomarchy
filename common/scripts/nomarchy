@@ -109,8 +109,8 @@ run_plan() {
 
 # ── Stages ──────────────────────────────────────────────────────────────────────────────
 host=''
-pkg_dir() { case $1 in host) echo "hosts/$host/packages" ;; *) echo "common/stages/$1" ;; esac; }
-sys_dir() { case $1 in host) echo "hosts/$host/bootstrap" ;; *) echo "common/stages/$1" ;; esac; }
+pkg_dir() { case $1 in host) echo "hosts/$host/packages" ;; storage) echo "hosts/$host/storage" ;; *) echo "common/stages/$1" ;; esac; }
+sys_dir() { case $1 in host) echo "hosts/$host/bootstrap" ;; storage) echo "hosts/$host/storage" ;; *) echo "common/stages/$1" ;; esac; }
 
 resolve_host() {
   host=${1:-$(cat /etc/hostname 2>/dev/null)}
@@ -307,6 +307,127 @@ system_stage() {  # system_stage <stage> -- packages, then files, units, checks
   head1 "[$stage] checks"; sec_checks "$d/checks"
 }
 
+
+# ── Storage and boot ────────────────────────────────────────────────────────────────────
+# hosts/<host>/storage/layout is the declared disk, encryption, filesystem and boot layout,
+# read through common/storage/spec.sh -- the same parser the provisioner uses, so the two
+# cannot disagree about what "correct" means. Everything here is read-only and needs no sudo.
+#
+# Which system is running decides what is checked:
+#   target   `/` is the declared btrfs: verify every item of the layout
+#   rescue   `/` is the declared rescue install (caesar's SATA disk): the layout describes
+#            the OTHER disk, so it is reported for reference, never counted as failures
+#   other    neither: a conflict, because the running system matches nothing declared
+storage_spec() { echo "hosts/$host/storage/layout"; }
+# Sets STORAGE_CTX and loads SPEC in THIS shell -- not via $( ), whose subshell would take
+# the loaded spec with it and leave the verifier comparing against empty values.
+STORAGE_CTX=none
+storage_load() {
+  STORAGE_CTX=none
+  [[ -f $(storage_spec) ]] || return 0
+  . common/storage/spec.sh
+  spec_load "$(storage_spec)" >/dev/null || { STORAGE_CTX=broken; return 0; }
+  local rootuuid; rootuuid=$(findmnt -rn -o UUID / 2>/dev/null)
+  if [[ $rootuuid == "${SPEC[btrfs.uuid]}" ]]; then STORAGE_CTX=target
+  elif [[ $rootuuid == "${SPEC[rescue.root-uuid]:-}" ]]; then STORAGE_CTX=rescue
+  else STORAGE_CTX=other; fi
+}
+
+# expect <label> <actual> <wanted>
+expect() { if [[ $2 == "$3" ]]; then good "$1"; else bad "$1: is '${2:-<none>}', declared '$3'"; fi; }
+
+nvram_num() { efibootmgr 2>/dev/null | awk -v l="$1" -F'\t' '{split($1, a, " "); sub(/^Boot/, "", a[1]); sub(/\*$/, "", a[1]); lab=substr($1, index($1, " ")+1)} lab == l {print a[1]; exit}'; }
+
+sec_storage_verify() {
+  local ctx=$1 p num role size type label puuid dev
+  if [[ $ctx == rescue ]]; then
+    say "running from the RESCUE install (/ is ${SPEC[rescue.root-uuid]}): the declared layout is the"
+    say "target disk's, so it is shown for reference and not counted."
+    if spec_identity_ok; then say "  target present: ${SPEC[disk.by-id]} ($DISK_DEV), identity matches"
+    else say "  target ${SPEC[disk.by-id]}: not present or identity differs"; fi
+    local cur; cur=$(lsblk -dno PTUUID "$DISK_DEV" 2>/dev/null)
+    [[ $cur == "${SPEC[gpt.uuid]}" ]] && say "  target is provisioned (GPT ${SPEC[gpt.uuid]})" \
+                                      || say "  target is NOT provisioned yet (GPT ${cur:-none}, declared ${SPEC[gpt.uuid]})"
+    for label in "${SPEC[rescue.nvram-label]:-}" "${SPEC[windows.nvram-label]:-}"; do
+      [[ -n $label ]] || continue
+      [[ -n $(nvram_num "$label") ]] && say "  NVRAM entry '$label' present" || say "  NVRAM entry '$label' MISSING"
+    done
+    return 0
+  fi
+
+  # Identity and partitions
+  if spec_identity_ok; then good "disk ${SPEC[disk.by-id]}: model, serial and size match"
+  else bad "disk ${SPEC[disk.by-id]}: identity does not match the spec"; return 0; fi
+  expect "GPT disk GUID" "$(lsblk -dno PTUUID "$DISK_DEV")" "${SPEC[gpt.uuid]}"
+  local -A guid=([EF00]=c12a7328-f81f-11d2-ba4b-00a0c93ec93b [8304]=4f68bce3-e8cd-4db1-96e7-fbcaf984b709)
+  for p in "${SPEC_PARTS[@]}"; do
+    read -r num role size type label puuid <<<"$p"
+    dev=$(spec_part_dev "$num")
+    expect "part $num ($role) PARTUUID" "$(lsblk -dno PARTUUID "$dev")" "$puuid"
+    expect "part $num ($role) type" "$(lsblk -dno PARTTYPE "$dev")" "${guid[$type]:-$type}"
+    expect "part $num ($role) label" "$(lsblk -dno PARTLABEL "$dev")" "$label"
+    [[ $size == rest ]] || expect "part $num ($role) size" "$(lsblk -bdno SIZE "$dev")" "$(numfmt --from=iec-i "${size%B}")"
+  done
+
+  # ESP, LUKS, btrfs
+  local espdev rootdev mapper=${SPEC[luks.mapper]}
+  espdev=$(spec_part_dev "$(spec_part esp | awk '{print $1}')"); rootdev=$(spec_part_dev "$(spec_part root | awk '{print $1}')")
+  expect "ESP filesystem" "$(lsblk -dno FSTYPE,UUID "$espdev" | xargs)" "vfat $(spec_esp_uuid)"
+  expect "ESP mounted at ${SPEC[esp.mount]}" "$(findmnt -rn -o SOURCE "${SPEC[esp.mount]}")" "$espdev"
+  expect "LUKS container" "$(lsblk -dno FSTYPE,UUID "$rootdev" | xargs)" "crypto_LUKS ${SPEC[luks.uuid]}"
+  expect "LUKS label" "$(lsblk -dno LABEL "$rootdev")" "${SPEC[luks.label]}"
+  [[ -e /dev/disk/by-id/dm-uuid-CRYPT-LUKS2-${SPEC[luks.uuid]//-/}-$mapper ]] \
+    && good "LUKS2, open as /dev/mapper/$mapper" || bad "no LUKS2 mapping $mapper for ${SPEC[luks.uuid]}"
+  expect "btrfs filesystem" "$(lsblk -dno FSTYPE,LABEL,UUID "/dev/mapper/$mapper" 2>/dev/null | xargs)" "btrfs ${SPEC[btrfs.label]} ${SPEC[btrfs.uuid]}"
+
+  # Subvolumes: mounted where declared, with every declared option
+  local s name mp src opts o missing
+  for s in "${SPEC_SUBVOLS[@]}"; do
+    read -r name mp <<<"$s"
+    src=$(findmnt -rn -o SOURCE -M "$mp" 2>/dev/null); opts=$(findmnt -rn -o OPTIONS -M "$mp" 2>/dev/null)
+    if [[ $src != *"[/$name]" ]]; then bad "$mp: mounted from '${src:-nothing}', declared subvolume $name"; continue; fi
+    missing=''
+    for o in ${SPEC[btrfs.options]//,/ }; do [[ ,$opts, == *",$o,"* ]] || missing+="$o "; done
+    [[ -z $missing ]] && good "$mp = $name (${SPEC[btrfs.options]})" || bad "$mp = $name, missing options: $missing"
+  done
+  for s in "${SPEC_NESTED[@]+"${SPEC_NESTED[@]}"}"; do
+    read -r mp _ <<<"$s"
+    [[ $(stat -c %i "$mp" 2>/dev/null) == 256 ]] && good "$mp is a nested subvolume" || bad "$mp is not a subvolume (its data would ride in its parent's snapshots)"
+  done
+  if [[ ${SPEC[swap]:-} == zram ]]; then
+    swapon --noheadings --show=NAME | grep -q '^/dev/zram' && good "swap: zram" || bad "swap: no zram device active"
+  fi
+
+  # Boot
+  local have sysv
+  sysv=$(pacman -Q systemd 2>/dev/null | awk '{print $2}'); sysv=${sysv%%-*}
+  have=$(bootctl status 2>/dev/null | sed -n 's/.*Product: systemd-boot \([^ -]*\).*/\1/p' | head -1)
+  [[ -n $have ]] && { [[ $have == "$sysv" ]] && good "systemd-boot $have, current with systemd" || bad "systemd-boot $have on the ESP, systemd is $sysv"; } \
+                 || bad "systemd-boot is not what booted this system"
+  [[ $(systemctl is-enabled systemd-boot-update.service 2>/dev/null) == enabled ]] \
+    && good "systemd-boot-update.service enabled" || bad "systemd-boot-update.service not enabled (the ESP's loader will fall behind)"
+  local t missingt=''
+  for t in ${SPEC[boot.cmdline]}; do [[ " $(cat /proc/cmdline) " == *" $t "* ]] || missingt+="$t "; done
+  [[ -z $missingt ]] && good "kernel command line carries the declared options" || bad "kernel command line lacks: $missingt"
+  expect "initramfs HOOKS" "$(sed -n 's/^HOOKS=(\(.*\))$/\1/p' /etc/mkinitcpio.conf.d/nomarchy.conf 2>/dev/null)" "${SPEC[boot.hooks]}"
+  [[ -z ${SPEC[boot.plymouth-theme]:-} ]] || expect "Plymouth theme" "$(plymouth-set-default-theme 2>/dev/null)" "${SPEC[boot.plymouth-theme]}"
+
+  # NVRAM: ours registered and first; rescue and Windows still there
+  local espuuid ours order
+  espuuid=$(spec_part esp | awk '{print $6}')
+  ours=$(nvram_num "${SPEC[boot.nvram-label]}")
+  if [[ -z $ours ]]; then bad "no NVRAM entry '${SPEC[boot.nvram-label]}'"
+  elif efibootmgr -v 2>/dev/null | grep "^Boot$ours" | grep -qi "$espuuid"; then good "NVRAM Boot$ours '${SPEC[boot.nvram-label]}' -> the declared ESP"
+  else bad "NVRAM Boot$ours '${SPEC[boot.nvram-label]}' does not point at the declared ESP"; fi
+  order=$(efibootmgr 2>/dev/null | sed -n 's/^BootOrder: //p')
+  if [[ -n $ours && ${order%%,*} == "$ours" ]]; then good "Boot$ours is first in BootOrder"
+  elif [[ -n $ours ]]; then want "Boot$ours is not first in BootOrder ($order) -- once this system has proven itself: sudo provision/provision $host --finalize-nvram"; fi
+  for label in "${SPEC[rescue.nvram-label]:-}" "${SPEC[windows.nvram-label]:-}"; do
+    [[ -z $label ]] && continue
+    [[ -n $(nvram_num "$label") ]] && good "NVRAM entry '$label' intact" || bad "NVRAM entry '$label' is missing"
+  done
+}
+
 # ── User level (was common/scripts/bootstrap) ───────────────────────────────────────────
 sec_toolchains() {
   local mgr chain active
@@ -431,7 +552,12 @@ Usage:
                                          every host needs
   nomarchy install desktop [--yes]       the graphical session; umbriel built from AUR
   nomarchy install host [host] [--yes]   this machine's own packages, files, units, checks
+  nomarchy install storage [--yes]       what only makes sense on the declared disk layout
+                                         (Snapper); refused anywhere else
   nomarchy help                          this text (also -h, --help, after any command)
+
+  On a host's declared RESCUE install (hosts/<host>/storage/layout: rescue.root-uuid),
+  install refuses unless given --on-rescue: that system stays as it is.
 
   host defaults to /etc/hostname. install prints the whole plan -- every package, diff
   and command -- asks once, then runs it, with sudo prompting you; --yes skips the
@@ -441,6 +567,7 @@ A fresh machine, in order (common/scripts/nomarchy until link has put it on PATH
   nomarchy install base
   nomarchy install desktop
   nomarchy install host
+  nomarchy install storage   once provision/provision has laid the disk down
   nomarchy link              and again after the first graphical login, for the
                              checks that need Noctalia running
 
@@ -463,8 +590,8 @@ HELP
 
 for a in "$@"; do case $a in -h|--help|help) usage; exit 0 ;; esac; done
 cmd=${1:-}; shift || true
-yes=0; args=()
-for a in "$@"; do case $a in --yes|-y) yes=1 ;; -*) die "unknown option '$a'" ;; *) args+=("$a") ;; esac; done
+yes=0; on_rescue=0; args=()
+for a in "$@"; do case $a in --yes|-y) yes=1 ;; --on-rescue) on_rescue=1 ;; -*) die "unknown option '$a'" ;; *) args+=("$a") ;; esac; done
 set -- "${args[@]+"${args[@]}"}"
 
 case $cmd in
@@ -473,6 +600,14 @@ case $cmd in
     printf '\n\033[1mnomarchy status — host %s — read-only\033[0m\n' "$host"
     refresh_installed
     for s in base desktop host; do system_stage "$s"; done
+    storage_load
+    case $STORAGE_CTX in
+      none) ;;
+      broken) head1 "[storage]"; bad "$(storage_spec) does not parse" ;;
+      target) system_stage storage; head1 "[storage] layout and boot (declared: $(storage_spec))"; sec_storage_verify target ;;
+      rescue) head1 "[storage] layout and boot"; sec_storage_verify rescue ;;
+      other) head1 "[storage] layout and boot"; bad "/ is neither the declared btrfs (${SPEC[btrfs.uuid]}) nor the rescue install" ;;
+    esac
     user_level
     root_steps
     summary
@@ -490,9 +625,22 @@ case $cmd in
     case $stage in
       base|desktop) resolve_host "${2:-}" ;;
       host) resolve_host "${2:-}" ;;
-      *) die "usage: ${0##*/} install base|desktop|host [host] [--yes]" ;;
+      storage)
+        resolve_host "${2:-}"
+        # Snapper and the rest only make sense on the declared layout: refuse elsewhere,
+        # above all on the rescue install, which is ext4 and must stay untouched.
+        storage_load
+        [[ $STORAGE_CTX == target ]] || die "install storage: / is not $host's declared layout ($(storage_spec)) -- nothing to do here"
+        ;;
+      *) die "usage: ${0##*/} install base|desktop|host|storage [host] [--yes]" ;;
     esac
     ((EUID != 0)) || die "run as your user, not root -- makepkg refuses root, and sudo is called where needed"
+    # The rescue install (the declared rescue.root-uuid -- caesar's SATA disk) stays as it
+    # is: installing here writes /etc, and anything touching the initramfs writes its ESP.
+    storage_load
+    if [[ $STORAGE_CTX == rescue ]] && ((!on_rescue)); then
+      die "this is $host's RESCUE install (/ is ${SPEC[rescue.root-uuid]}); install is refused here so it stays as it is. Pass --on-rescue if you really mean it."
+    fi
     printf '\n\033[1mnomarchy install %s — host %s\033[0m\n' "$stage" "$host"
     plan_mode=1
     refresh_installed

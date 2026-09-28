@@ -1,0 +1,3 @@
+# Root-owned files for the storage stage: <repo path> <system path> [mode]
+hosts/caesar/storage/snapper-root.conf	/etc/snapper/configs/root	0640
+hosts/caesar/storage/snapper-confd	/etc/conf.d/snapper	0644

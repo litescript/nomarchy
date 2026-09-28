@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# render [host] -- print the nomarchy Plymouth script with the host's title filled in:
+# the host name, upper-cased, letters spaced (caesar -> "C A E S A R"). host defaults to
+# /etc/hostname. Used by both the probe and the fix of the Plymouth check, so what is
+# installed and what is checked are the same text.
+set -euo pipefail
+dir="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+host=${1:-$(cat /etc/hostname)}
+title=$(printf '%s' "${host^^}" | sed 's/./& /g; s/ $//')
+sed "s/@TITLE@/$title/" "$dir/nomarchy/nomarchy.script.in"

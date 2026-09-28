@@ -1,0 +1,9 @@
+[Plymouth Theme]
+Name=Nomarchy
+Description=Austere boot and unlock screen for nomarchy hosts (common/plymouth/)
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/nomarchy
+ScriptFile=/usr/share/plymouth/themes/nomarchy/nomarchy.script
+ConsoleLogBackgroundColor=0x000000

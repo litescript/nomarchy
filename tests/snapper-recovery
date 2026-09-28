@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# snapper-recovery -- prove Snapper RECOVERY works on this host, not merely that Snapper is
+# installed. Run on the provisioned system (the VM rehearsal, or caesar after cutover):
+#
+#   tests/snapper-recovery          (uses sudo; changes nothing it does not put back)
+#
+# 1. take a disposable snapshot of / (@)
+# 2. make a harmless change inside @: a marker file under /var/lib (in @, unlike /var/log
+#    and /var/cache/pacman/pkg, which are their own subvolumes and are NOT in @'s snapshots)
+# 3. require Snapper to report exactly that change between the snapshot and now
+# 4. restore through Snapper (undochange), the file-level recovery path
+# 5. require the change to be gone and Snapper to report no difference for it
+# 6. delete the test snapshot -- also on failure, via the trap
+#
+# The whole-root path -- replacing @ with a snapshot when the system will not boot -- is
+# documented in docs/cutover/02-snapper-recovery.md; it is done from the SATA rescue install
+# and needs a reboot, so it is not something this script does to a running system.
+
+set -uo pipefail
+
+MARKDIR=/var/lib/nomarchy-snapper-test
+MARK=$MARKDIR/marker
+pre=''
+
+die() { printf '\033[31mFAIL: %s\033[0m\n' "$1" >&2; exit 1; }
+ok()  { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+
+cleanup() {
+  [[ -n $pre ]] && sudo snapper -c root delete "$pre" 2>/dev/null
+  sudo rm -rf "$MARKDIR" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
+
+[[ $(findmnt -rn -o FSTYPE /) == btrfs ]] || die "/ is not btrfs -- this is not a host with the declared layout"
+sudo snapper -c root get-config >/dev/null 2>&1 || die "snapper has no usable 'root' config (nomarchy install storage)"
+[[ -e $MARKDIR ]] && die "$MARKDIR already exists -- a previous run did not clean up; inspect it first"
+
+printf '\n\033[1mSnapper recovery test\033[0m\n'
+
+pre=$(sudo snapper -c root create --print-number --cleanup-algorithm number \
+        --description "nomarchy recovery test (disposable)") || die "could not create a snapshot"
+[[ $pre =~ ^[0-9]+$ ]] || die "snapper returned '$pre', not a snapshot number"
+ok "1. snapshot $pre of / taken"
+
+sudo mkdir -p "$MARKDIR" && date -Is | sudo tee "$MARK" >/dev/null || die "could not write $MARK"
+[[ -f $MARK ]] || die "$MARK was not created"
+ok "2. harmless change made inside @: $MARK"
+
+diff=$(sudo snapper -c root status "$pre..0" 2>&1) || die "snapper status failed: $diff"
+grep -qE "^\+[.a-z]* +$MARK\$" <<<"$diff" || die "snapper does not report $MARK as created since snapshot $pre:
+$diff"
+ok "3. snapper reports it: $(grep -E " $MARK\$" <<<"$diff")"
+
+sudo snapper -c root undochange "$pre..0" "$MARK" "$MARKDIR" >/dev/null 2>&1 || die "undochange failed"
+[[ ! -e $MARK && ! -e $MARKDIR ]] || die "undochange ran but $MARK is still there"
+ok "4. restored through snapper undochange $pre..0: the marker is gone"
+
+diff=$(sudo snapper -c root status "$pre..0" 2>&1)
+grep -q " $MARKDIR" <<<"$diff" && die "after the restore, snapper still reports a difference under $MARKDIR:
+$diff"
+ok "5. no difference left under $MARKDIR between snapshot $pre and now"
+
+sudo snapper -c root delete "$pre" || die "could not delete test snapshot $pre"
+pre=''
+ok "6. test snapshot deleted"
+
+printf '\n\033[1;32mPASS: Snapper can see a change in @ and undo it.\033[0m\n'

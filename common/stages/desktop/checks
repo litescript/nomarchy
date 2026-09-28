@@ -1,0 +1,8 @@
+
+# The Plymouth theme: common mechanism, host-specific title (common/plymouth/). Installing
+# it rebuilds the initramfs (plymouth-set-default-theme -R), because the theme is embedded
+# in it -- that is where the unlock screen runs. On a host whose initramfs has no plymouth
+# hook, the theme is installed but unused.
+check Plymouth theme nomarchy installed, titled for this host, and the default
+  probe cmp -s <(common/plymouth/render "$host") /usr/share/plymouth/themes/nomarchy/nomarchy.script && cmp -s common/plymouth/nomarchy/nomarchy.plymouth /usr/share/plymouth/themes/nomarchy/nomarchy.plymouth && [[ $(plymouth-set-default-theme 2>/dev/null) == nomarchy ]]
+  fix   t=$(mktemp) && common/plymouth/render "$host" > "$t" && sudo install -Dm644 "$t" /usr/share/plymouth/themes/nomarchy/nomarchy.script && sudo install -Dm644 common/plymouth/nomarchy/nomarchy.plymouth /usr/share/plymouth/themes/nomarchy/nomarchy.plymouth && sudo plymouth-set-default-theme -R nomarchy; r=$?; rm -f "$t"; exit $r

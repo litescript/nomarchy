@@ -19,6 +19,10 @@ libadwaita
 # Terminal
 kitty
 
+# The boot splash and LUKS unlock screen (theme: common/plymouth/). The initramfs hook and
+# `splash` belong to each host's storage/boot layout, not here.
+plymouth
+
 # Wayland utilities: the clipboard, screenshot and askpass stack
 fuzzel
 wl-clipboard
