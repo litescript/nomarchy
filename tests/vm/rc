@@ -168,7 +168,7 @@ qemu() {  # qemu env|target [gui]
     # (The first run used virtio disks, which have no model; the spec loader rejected those
     # test specs before any gate ran, which proved nothing.)
     -device "ahci,id=ahci"
-    -drive "file=$WD/env.raw,format=raw,if=none,id=env" -device "ide-hd,drive=env,bus=ahci.0,model=Samsung SSD 870 EVO 2TB,serial=$RESCUE_SERIAL"
+    -drive "file=$WD/env.qcow2,format=qcow2,if=none,id=env" -device "ide-hd,drive=env,bus=ahci.0,model=Samsung SSD 870 EVO 2TB,serial=$RESCUE_SERIAL"
     -drive "file=$WD/decoy-win.raw,format=raw,if=none,id=decoy" -device "nvme,drive=decoy,serial=$DECOY_SERIAL,model=WD_BLACK SN850X 4000GB"
     -drive "file=$WD/xpg.raw,format=raw,if=none,id=xpg" -device "nvme,drive=xpg,serial=2K0420036195,model=XPG SPECTRIX S40G"
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22"
@@ -205,7 +205,7 @@ clone_into_vm() {  # the committed HEAD of this checkout, with the ONE VM substi
   vm_ssh "rm -rf ~/Projects/nomarchy && git clone -q -b $branch ~/nomarchy.bundle ~/Projects/nomarchy \
     && git -C ~/Projects/nomarchy remote set-url origin https://github.com/litescript/nomarchy.git"
   local uuid; uuid=$(vm_ssh "lsblk -no UUID /dev/disk/by-id/$RESCUE_ID-part2")
-  vm_ssh "sed -i 's/^rescue.root-uuid .*/rescue.root-uuid    $uuid   # VM substitution (tests\/vm\/rc)/' ~/Projects/nomarchy/hosts/caesar/storage/layout"
+  vm_ssh "sed -i 's/^rescue.root-uuid .*/# VM substitution by tests\/vm\/rc: the VM rescue disk, not caesar'\\''s sda2\nrescue.root-uuid    $uuid/' ~/Projects/nomarchy/hosts/caesar/storage/layout"
   echo "VM substitution: rescue.root-uuid -> $uuid" >>"$LOG"
 }
 vm_expect() {  # vm_expect <command> <phrase>...: output goes to the log; every phrase must appear
@@ -227,9 +227,26 @@ gate_spec() {  # gate_spec <name> <by-id> <serial>: a throwaway spec aimed at an
            hosts/caesar/storage/layout > hosts/$1/storage/layout"
 }
 
+preflight() {  # every QEMU device and display the run needs, before anything starts
+  local dev miss=()
+  for dev in virtio-vga-gl nvme ahci ide-hd; do
+    qemu-system-x86_64 -device help 2>/dev/null | grep -q "\"$dev\"" || miss+=("device $dev")
+  done
+  qemu-system-x86_64 -display help 2>/dev/null | grep -qx 'egl-headless' || miss+=("display egl-headless")
+  ((${#miss[@]} == 0)) || die "QEMU lacks: ${miss[*]} -- sudo pacman -S --needed qemu-ui-egl-headless qemu-ui-opengl qemu-ui-gtk qemu-hw-display-virtio-gpu qemu-hw-display-virtio-vga qemu-hw-display-virtio-gpu-pci qemu-hw-display-virtio-gpu-pci-gl qemu-hw-display-virtio-vga-gl qemu-hw-display-virtio-gpu-gl"
+}
+fresh_state() {  # a release candidate starts from pristine state: every run, not just the first
+  rm -f "$WD/xpg.raw" "$WD/env.qcow2"
+  truncate -s "$XPG_BYTES" "$WD/xpg.raw"                       # the blank synthetic XPG
+  cp "$OVMF_VARS" "$WD/OVMF_VARS.fd"                            # empty NVRAM
+  qemu-img create -q -f qcow2 -F raw -b "$WD/env.raw" "$WD/env.qcow2"   # rescue disk, throwaway layer
+}
+
 run() {
   [[ -f $WD/env.raw ]] || die "no machine -- 'tests/vm/rc build' first"
   running && die "a VM is running -- 'tests/vm/rc stop' first"
+  preflight
+  fresh_state
   [[ -z $(git -C "$repo" status --porcelain) ]] || die "the checkout has uncommitted changes: a release candidate is ONE frozen commit"
   local stamp; stamp=$(date +%Y%m%d-%H%M%S); mkdir -p "$WD/logs"; LOG=$WD/logs/rc-$stamp.log; RESULTS=()
   echo "rc run $stamp, commit $(git -C "$repo" rev-parse --short HEAD)" > "$LOG"
@@ -361,7 +378,7 @@ case $cmd in
   build) build ;;
   run) run ;;
   gui) gui ;;
-  rescue) running && die "a VM is running"; qemu env; wait_ssh || die "rescue did not come up"; say "rescue up: tests/vm/rc ssh" ;;
+  rescue) running && die "a VM is running"; [[ -f $WD/env.qcow2 ]] || fresh_state; qemu env; wait_ssh || die "rescue did not come up"; say "rescue up: tests/vm/rc ssh" ;;
   ssh) running || die "no VM running"; exec ssh -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o LogLevel=ERROR \
          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null peter@127.0.0.1 "$@" ;;
   stop) stop_vm; say "stopped" ;;

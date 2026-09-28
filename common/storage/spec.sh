@@ -19,6 +19,11 @@ spec_load() {
   SPEC=() SPEC_PARTS=() SPEC_SUBVOLS=() SPEC_NESTED=()
   while IFS= read -r line; do
     [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    # A trailing "  # comment" is stripped: a value is never compared with its comment
+    # attached. The second release-candidate rehearsal wrote one after rescue.root-uuid, and
+    # the never gate's rescue-root check silently matched nothing. No value here contains
+    # whitespace followed by '#'.
+    line=$(sed 's/[[:space:]]\{1,\}#.*$//' <<<"$line")
     key=${line%%[[:space:]]*}
     val=${line#"$key"}; val=${val#"${val%%[![:space:]]*}"}; val=${val%"${val##*[![:space:]]}"}
     case $key in
