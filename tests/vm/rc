@@ -131,8 +131,10 @@ build() {
   [[ ! -e $WD/env.raw ]] || die "$WD exists -- 'tests/vm/rc destroy' first"
   mkdir -p "$WD/vm-secrets" && chmod 700 "$WD/vm-secrets"
   ssh-keygen -q -t ed25519 -N '' -C nomarchy-rc -f "$WD/id_ed25519"
-  # VM-only secrets, unmistakably so. Alphanumeric: they travel inside a QEMU argument.
-  printf 'VMREHEARSALONLY%s' "$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)" > "$WD/vm-secrets/luks-passphrase"
+  # VM-only secrets, unmistakably so. No commas: they travel inside a QEMU argument. The LUKS
+  # passphrase is TYPEABLE -- `gui` asks a human for it at the Plymouth prompt, with no paste.
+  # The first version was 39 random mixed-case characters, which is secure and was miserable.
+  printf 'vm-rehearsal-only-%s' "$(shuf -i 1000-9999 -n 1)" > "$WD/vm-secrets/luks-passphrase"
   printf 'vmrehearsalonly%s' "$(tr -dc 'a-z0-9' </dev/urandom | head -c 12)" > "$WD/vm-secrets/user-password"
   cp "$WD/id_ed25519.pub" "$WD/vm-secrets/authorized_keys"
   # The rescue disk: GPT, ESP (formatted inside the VM -- the host has no mkfs.fat), ext4 root.
