@@ -174,11 +174,21 @@ esp=$(spec_part esp); rootp=$(spec_part root)
 read -r espn _ espsize _ _ _ <<<"$esp"; read -r rootn _ _ _ _ _ <<<"$rootp"
 espdev=$(spec_part_dev "$espn"); rootdev=$(spec_part_dev "$rootn")
 mapper=${SPEC[luks.mapper]}
-sgargs=(--disk-guid="${SPEC[gpt.uuid]}")
+# Fixed-size partitions in one sgdisk call; the `rest` partition in a second, ending on the
+# last 4 KiB boundary. Running it to the last usable sector leaves a length that is not a
+# multiple of 4 KiB (the backup GPT takes the final 33 sectors), and cryptsetup refuses
+# --sector-size 4096 on it: "Device size is not aligned to requested sector size". Found by
+# the first VM rehearsal, on a synthetic XPG of the real one's exact size -- after the
+# disk had already been wiped. The real cutover would have failed at the same step.
+sgargs=(--disk-guid="${SPEC[gpt.uuid]}") restargs=() restdesc=''
 for p in "${SPEC_PARTS[@]}"; do
   read -r num _ size type label puuid <<<"$p"
-  [[ $size == rest ]] && end=0 || end="+${size%iB}"
-  sgargs+=(-n "$num:0:$end" -t "$num:$type" -c "$num:$label" -u "$num:$puuid")
+  if [[ $size == rest ]]; then
+    restargs=(-t "$num:$type" -c "$num:$label" -u "$num:$puuid"); restnum=$num
+    restdesc="then -n $num:0:<last 4 KiB-aligned sector> ${restargs[*]}"
+  else
+    sgargs+=(-n "$num:0:+${size%iB}" -t "$num:$type" -c "$num:$label" -u "$num:$puuid")
+  fi
 done
 nvlabel=${SPEC[boot.nvram-label]}
 
@@ -189,6 +199,7 @@ head1 "Plan"
 cat <<PLAN
   1. erase     wipefs --all on every partition, then sgdisk --zap-all $DISK_DEV
   2. partition sgdisk ${sgargs[*]} $DISK_DEV
+               ${restdesc:-(no rest-of-disk partition)}
   3. ESP       mkfs.fat -F 32 -i ${SPEC[esp.volid]} $espdev          -> UUID $(spec_esp_uuid)
   4. LUKS2     cryptsetup luksFormat ${SPEC[luks.format]} --uuid ${SPEC[luks.uuid]} --label ${SPEC[luks.label]} $rootdev
                ($( [[ -n $vmsecrets ]] && echo "VM passphrase from $vmsecrets" || echo "passphrase typed twice"))
@@ -230,6 +241,8 @@ spec_identity_ok || die "identity changed while the plan was on screen -- stoppi
 [[ -z $(lsblk -nrpo MOUNTPOINTS "$DISK_DEV" | tr -d '[:space:]') ]] || die "something on the disk got mounted -- stopping"
 
 set -e
+current='(before step 1)'
+trap 'printf "\033[31mprovision: FAILED during %s -- the disk is partly provisioned; fix the cause and run --apply again (it starts by erasing)\033[0m\n" "$current" >&2' ERR
 luksargs=(); openargs=(); enrollargs=()
 if [[ -n $vmsecrets ]]; then
   luksargs=(--key-file "$vmsecrets/luks-passphrase"); openargs=(--key-file "$vmsecrets/luks-passphrase")
@@ -244,26 +257,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step "1. erase"
+step "1. erase"; current="step 1 (erase)"
 for d in $(lsblk -nrpo NAME "$DISK_DEV" | tac); do wipefs --all --quiet "$d"; done
 sgdisk --zap-all "$DISK_DEV" >/dev/null
 
-step "2. partition"
+step "2. partition"; current="step 2 (partition)"
 sgdisk "${sgargs[@]}" "$DISK_DEV" >/dev/null
+if ((${#restargs[@]})); then
+  lbs=$(cat "/sys/block/${DISK_DEV##*/}/queue/logical_block_size"); per4k=$(( 4096 / lbs ))
+  last=$(sgdisk -E "$DISK_DEV" | tail -1)
+  end=$(( (last + 1) / per4k * per4k - 1 ))
+  sgdisk -n "$restnum:0:$end" "${restargs[@]}" "$DISK_DEV" >/dev/null
+  say "partition $restnum ends at sector $end (last usable $last): a whole number of 4 KiB sectors"
+fi
 partprobe "$DISK_DEV" 2>/dev/null || true; udevadm settle
 [[ -b $espdev && -b $rootdev ]] || die "partitions did not appear"
 
-step "3. ESP"
+step "3. ESP"; current="step 3 (ESP)"
 mkfs.fat -F 32 -i "${SPEC[esp.volid]}" "$espdev" >/dev/null
 
-step "4. LUKS2"
+step "4. LUKS2"; current="step 4 (LUKS2)"
 cryptsetup luksFormat --batch-mode ${SPEC[luks.format]} --uuid "${SPEC[luks.uuid]}" \
   --label "${SPEC[luks.label]}" "${luksargs[@]}" "$rootdev"
 say "Recovery key -- shown once. Write it down and store it OFFLINE; it opens the volume if the passphrase is lost:"
 systemd-cryptenroll "${enrollargs[@]}" --recovery-key "$rootdev"
 cryptsetup open "${openargs[@]}" "$rootdev" "$mapper"
 
-step "5. btrfs"
+step "5. btrfs"; current="step 5 (btrfs)"
 mkfs.btrfs -q -L "${SPEC[btrfs.label]}" -U "${SPEC[btrfs.uuid]}" "/dev/mapper/$mapper"
 top=$(mktemp -d); mount "/dev/mapper/$mapper" "$top"
 for s in "${SPEC_SUBVOLS[@]}"; do btrfs -q subvolume create "$top/${s%% *}"; done
@@ -276,7 +296,7 @@ done < <(printf '%s\n' "${SPEC_SUBVOLS[@]}" | awk '{print $1, $2}' | sort -k2)
 mkdir -p "$root${SPEC[esp.mount]}"
 mount -o umask=0077 "$espdev" "$root${SPEC[esp.mount]}"
 
-step "6. install"
+step "6. install"; current="step 6 (install)"
 # -c: use the running system's package cache rather than downloading everything again.
 pacstrap -c -K "$root" ${SPEC[pacstrap]}
 {
@@ -305,7 +325,7 @@ for n in "${SPEC_NESTED[@]+"${SPEC_NESTED[@]}"}"; do
   arch-chroot "$root" chown "$owner:$owner" "$path"
 done
 
-step "7. boot"
+step "7. boot"; current="step 7 (boot)"
 mkdir -p "$root/etc/mkinitcpio.conf.d"
 printf '# From hosts/%s/storage/layout (provision/provision).\nHOOKS=(%s)\n' "$host" "${SPEC[boot.hooks]}" \
   > "$root/etc/mkinitcpio.conf.d/nomarchy.conf"
@@ -343,7 +363,7 @@ if [[ -n $vmsecrets && -f $vmsecrets/authorized_keys ]]; then
   say "VM rehearsal: harness ssh key installed, sshd enabled"
 fi
 
-step "8. NVRAM"
+step "8. NVRAM"; current="step 8 (NVRAM)"
 if efi_available; then
   old=$(nvram_num_for_label "$nvlabel")
   if [[ -n $old ]]; then
@@ -360,7 +380,7 @@ else
   say "no EFI variables here: skipped. Add the entry from the firmware setup."
 fi
 
-step "9. finish"
+step "9. finish"; current="step 9 (finish)"
 if ((clone)); then
   arch-chroot "$root" sudo -u peter git clone -q https://github.com/litescript/nomarchy.git /home/peter/Projects/nomarchy
 fi

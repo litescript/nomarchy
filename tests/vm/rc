@@ -53,6 +53,8 @@ OVMF_CODE=/usr/share/edk2/x64/OVMF_CODE.4m.fd
 OVMF_VARS=/usr/share/edk2/x64/OVMF_VARS.4m.fd
 ENV_ROOT_PARTUUID=5e5c0e00-0000-4000-8000-00000000c0de    # VM-only, fixed so -append can name it
 XPG_BYTES=1024209543168
+RESCUE_SERIAL=S753NS0W941845F; RESCUE_ID=ata-Samsung_SSD_870_EVO_2TB_$RESCUE_SERIAL
+DECOY_SERIAL=240243800744;     DECOY_ID=nvme-WD_BLACK_SN850X_4000GB_$DECOY_SERIAL
 
 die() { printf '\033[31mrc: %s\033[0m\n' "$1" >&2; exit 1; }
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
@@ -161,8 +163,13 @@ qemu() {  # qemu env|target [gui]
   args=(-name "nomarchy-rc-$phase" -machine q35 -enable-kvm -cpu host -smp "$CPUS" -m "$MEM"
     -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
     -drive "if=pflash,format=raw,file=$WD/OVMF_VARS.fd"
-    -drive "file=$WD/env.raw,format=raw,if=none,id=env" -device "virtio-blk-pci,drive=env,serial=RESCUE-SATA"
-    -drive "file=$WD/decoy-win.raw,format=raw,if=none,id=decoy" -device "virtio-blk-pci,drive=decoy,serial=DECOY-WINDOWS"
+    # The rescue disk on SATA as caesar's real 870 EVO, the decoy as its SN850X: real models
+    # and serials, so the gates see proper identities and refuse them for the right reason.
+    # (The first run used virtio disks, which have no model; the spec loader rejected those
+    # test specs before any gate ran, which proved nothing.)
+    -device "ahci,id=ahci"
+    -drive "file=$WD/env.raw,format=raw,if=none,id=env" -device "ide-hd,drive=env,bus=ahci.0,model=Samsung SSD 870 EVO 2TB,serial=$RESCUE_SERIAL"
+    -drive "file=$WD/decoy-win.raw,format=raw,if=none,id=decoy" -device "nvme,drive=decoy,serial=$DECOY_SERIAL,model=WD_BLACK SN850X 4000GB"
     -drive "file=$WD/xpg.raw,format=raw,if=none,id=xpg" -device "nvme,drive=xpg,serial=2K0420036195,model=XPG SPECTRIX S40G"
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22"
     -virtfs "local,path=/var/cache/pacman/pkg,mount_tag=pkgcache,security_model=none,readonly=on"
@@ -197,7 +204,7 @@ clone_into_vm() {  # the committed HEAD of this checkout, with the ONE VM substi
   vm_scp "$WD/nomarchy.bundle" peter@127.0.0.1:
   vm_ssh "rm -rf ~/Projects/nomarchy && git clone -q -b $branch ~/nomarchy.bundle ~/Projects/nomarchy \
     && git -C ~/Projects/nomarchy remote set-url origin https://github.com/litescript/nomarchy.git"
-  local uuid; uuid=$(vm_ssh "lsblk -no UUID /dev/disk/by-id/virtio-RESCUE-SATA-part2")
+  local uuid; uuid=$(vm_ssh "lsblk -no UUID /dev/disk/by-id/$RESCUE_ID-part2")
   vm_ssh "sed -i 's/^rescue.root-uuid .*/rescue.root-uuid    $uuid   # VM substitution (tests\/vm\/rc)/' ~/Projects/nomarchy/hosts/caesar/storage/layout"
   echo "VM substitution: rescue.root-uuid -> $uuid" >>"$LOG"
 }
@@ -233,23 +240,25 @@ run() {
   check "rescue: LAN blackholed, NAS unreachable" \
     vm_ssh 'ip route show type blackhole | grep -q "^blackhole 192.168.1.0/24" && ! timeout 3 bash -c "</dev/tcp/192.168.1.208/2049"'
   step "rescue: caesar's firmware picture -- its own ESP with systemd-boot and a stand-in Windows loader"
-  vm_ssh 'set -e; esp=/dev/disk/by-id/virtio-RESCUE-SATA-part1
-    [ "$(lsblk -no FSTYPE $esp)" = vfat ] || sudo mkfs.fat -F 32 $esp >/dev/null
-    sudo mkdir -p /mnt/resc-esp && sudo mount $esp /mnt/resc-esp
+  vm_ssh "RESCUE_ID=$RESCUE_ID bash -s" <<'VMEOF' >>"$LOG" 2>&1
+set -e; esp=/dev/disk/by-id/${RESCUE_ID}-part1
+    [ "$(lsblk -no FSTYPE $esp)" = vfat ] || { sudo mkfs.fat -F 32 $esp >/dev/null; sudo udevadm settle; }
+    sudo mkdir -p /mnt/resc-esp && sudo mount -t vfat $esp /mnt/resc-esp
     sudo bootctl install --no-variables --esp-path=/mnt/resc-esp >/dev/null 2>&1
     sudo install -D /mnt/resc-esp/EFI/systemd/systemd-bootx64.efi /mnt/resc-esp/EFI/Microsoft/Boot/bootmgfw.efi
     sudo umount /mnt/resc-esp
     for pair in "Nomarchy|\EFI\systemd\systemd-bootx64.efi" "Windows Boot Manager|\EFI\Microsoft\Boot\bootmgfw.efi"; do
       l=${pair%%|*}; p=${pair#*|}
-      efibootmgr | grep -q "^Boot[0-9A-F]*\*\? $l\b" || sudo efibootmgr -q --create --disk /dev/disk/by-id/virtio-RESCUE-SATA --part 1 --label "$l" --loader "$p"
+      efibootmgr | grep -q "^Boot[0-9A-F]*\*\? $l\b" || sudo efibootmgr -q --create --disk /dev/disk/by-id/${RESCUE_ID} --part 1 --label "$l" --loader "$p"
     done
-    efibootmgr' >>"$LOG" 2>&1
+    efibootmgr
+VMEOF
   clone_into_vm
   vm_ssh 'install -d -m 700 ~/vm-secrets'; vm_scp "$WD"/vm-secrets/* peter@127.0.0.1:vm-secrets/
 
   step "gates: each must REFUSE"
-  gate_spec zz-rescue virtio-RESCUE-SATA RESCUE-SATA
-  gate_spec zz-decoy virtio-DECOY-WINDOWS DECOY-WINDOWS
+  gate_spec zz-rescue "$RESCUE_ID" "$RESCUE_SERIAL"
+  gate_spec zz-decoy "$DECOY_ID" "$DECOY_SERIAL"
   vm_ssh "cd ~/Projects/nomarchy && mkdir -p hosts/zz-wrong/storage && sed -e 's/^host .*/host zz-wrong/' -e 's/^disk.serial .*/disk.serial 2K0420036196/' hosts/caesar/storage/layout > hosts/zz-wrong/storage/layout"
   check "never gate refuses the rescue disk (its root, and the Windows ESP on it)" \
     vm_expect 'cd ~/Projects/nomarchy && provision/provision zz-rescue' 'never gate: REFUSED' "rescue install's root" 'Microsoft'
@@ -352,6 +361,7 @@ case $cmd in
   build) build ;;
   run) run ;;
   gui) gui ;;
+  rescue) running && die "a VM is running"; qemu env; wait_ssh || die "rescue did not come up"; say "rescue up: tests/vm/rc ssh" ;;
   ssh) running || die "no VM running"; exec ssh -F /dev/null -p "$PORT" -i "$WD/id_ed25519" -o LogLevel=ERROR \
          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null peter@127.0.0.1 "$@" ;;
   stop) stop_vm; say "stopped" ;;
