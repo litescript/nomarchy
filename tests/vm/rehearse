@@ -56,7 +56,10 @@ build_root() {  # build_root <workdir> <host> <owner uid>
   local wd=$1 host=$2 owner=$3 mnt=$1/mnt
   mkdir -p "$mnt"
   mount -o loop "$wd/disk.raw" "$mnt"
-  trap "umount -R '$mnt'" EXIT   # expanded NOW: at exit this function's locals are gone
+  # Teardown, expanded NOW (at exit this function's locals are gone). pacstrap -K leaves
+  # a root gpg-agent running with its homedir INSIDE the target -- the new system's
+  # pacman keyring -- which holds the mount busy; the first build failed exactly so.
+  trap "gpgconf --homedir '$mnt/etc/pacman.d/gnupg' --kill all 2>/dev/null; pkill -f -- '--homedir $mnt/' 2>/dev/null; sleep 1; umount -R '$mnt'" EXIT
 
   echo "==> pacstrap: base linux sudo git openssh networkmanager (the host's cache is used)"
   pacstrap -c -K "$mnt" base linux sudo git openssh networkmanager >"$wd/pacstrap.log" 2>&1 \
