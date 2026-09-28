@@ -9,6 +9,10 @@ enable logrotate.timer
 # for smartspeaker.local, raspberrypi.local, jetson.local.
 enable avahi-daemon.service
 # UPS client. Starts only once upsmon.conf has the password -- see the NUT check in ./checks.
+# nut-monitor is WantedBy nut.target, and nut.target is WantedBy multi-user.target but ships
+# DISABLED: enabling only the monitor started it once and never again at boot -- found by the
+# VM rehearsal, whose UPS monitor was inactive after its first reboot. Both, in this order.
+enable nut.target
 enable nut-monitor.service
 # An always-on desktop: the old install masked every sleep target, and so does this.
 # The power button half is ../systemd/logind-nomarchy.conf.

@@ -42,6 +42,12 @@ set -uo pipefail
 repo="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 cd "$repo" || exit 1
 
+# What `link` installs lives in ~/.local/bin, and checks call it by name (irides, above all).
+# A shell that has not logged in since link ran -- a console on a fresh host, or ssh, whose
+# non-interactive shell never reads the PATH line -- does not have it on PATH, so a fix
+# failed with "irides: command not found" in the VM rehearsal. nomarchy puts it there itself.
+[[ -d $HOME/.local/bin && ":$PATH:" != *":$HOME/.local/bin:"* ]] && PATH="$HOME/.local/bin:$PATH"
+
 die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
 
 ok=0; todo=0; conflict=0

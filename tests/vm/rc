@@ -355,6 +355,14 @@ VMEOF
   check "graphical session: umbriel and noctalia running from tty1 autologin" vm_ssh 'pgrep -x umbriel >/dev/null && pgrep -x noctalia >/dev/null'
   vm_ssh "grep -q '^\[location\]' ~/.local/state/noctalia/settings.toml || printf '\n[location]\nlatitude = 0.0\nlongitude = 0.0\n' >> ~/.local/state/noctalia/settings.toml" >>"$LOG" 2>&1
 
+  step "Noctalia's settings after first start: the seed must have carried everything"
+  # A VM has different displays from caesar, so Noctalia adds widgets for its own (Virtual-1)
+  # and the repo-capture check cannot pass here. What CAN be proven: that the only drift from
+  # the seeded settings is the VM's display. Then the operator's "review and commit" step is
+  # stood in for by snapshotting in the VM's own clone -- never pushed anywhere.
+  check "Noctalia's seed carried every setting: the only drift is the VM's display" vm_ssh 'cd ~/Projects/nomarchy && d=$(diff <(awk "/^\[location\]/{s=1;next} /^\[/{s=0} !s" ~/.local/state/noctalia/settings.toml) hosts/caesar/noctalia/settings.toml | grep "^<" | grep -vE "Virtual-1|^< *\]$|^< *\"lockscreen-login-box@|^< *widget_order = \[$|^< *$|^< +(box_|cx|cy|output|placement_|rotation|type|background_|center_|input_|layout|show_)"); echo "$d"; [ -z "$d" ]'
+  vm_ssh 'cd ~/Projects/nomarchy && common/scripts/noctalia-snapshot >/dev/null' >>"$LOG" 2>&1
+
   step "nomarchy link, after first login (the Noctalia-side checks)"
   check "nomarchy link --yes after first login" vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy link --yes'
 
