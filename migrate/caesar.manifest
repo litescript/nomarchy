@@ -1,0 +1,96 @@
+# caesar's cutover migration: what migrate/migrate carries from the running SATA install into
+# the freshly provisioned XPG. The machine-readable form of docs/cutover/03 §1–§3 and §11 --
+# the document says why, this file says exactly what. Nothing that is not named here moves.
+#
+#   user    <name>                         whose home; ids must match on both systems
+#   entry   <phase> <scope> <path> [opt]   one tree or file
+#     phase   bulk   copied in the bulk pass AND again in the final pass (after the freeze)
+#             final  copied only in the final pass: live app state that is never copied
+#                    while the app may be running
+#     scope   home   <path> is relative to the user's home, on both sides
+#             root   <path> is absolute, from / on SATA to / on the XPG
+#     opt     exclude=<p>     not carried; <p> is relative to the entry (glob allowed)
+#             authorize=<p>   a nomarchy-owned path inside the entry that may be carried
+#             from=<p>        source path, when it differs from <path> (same scope)
+#             digest          sha256 of every file recorded; acceptance on the new system
+#                             requires every one unchanged
+#             private         owner and mode of every path recorded; acceptance requires
+#                             them unchanged
+#             private=<p>     the same, for one path inside a directory entry
+#             optional        a missing source is skipped, not a refusal
+#             overwrite       may replace what the clean install already created there
+#   quiesce <process>...                   must not be running at the freeze or the final pass
+#   dump    <name> project=<p> container=<c> compose=<home path> service=<s>
+#                                          a PostgreSQL database, dumped at the freeze
+#                                          (pg_dump -Fc inside the container) and restored on
+#                                          the new system by `migrate <host> restore-<name>`
+#   count   <name> <home dir> <glob>       files matching <glob> under <dir> (hidden
+#                                          directories skipped), recorded and re-counted
+#
+# Always, whatever this file says: directories carrying a valid CACHEDIR.TAG (cargo's target/,
+# mypy/pytest/ruff caches) are not carried -- the directory declares itself regenerable, which
+# is safer than excluding by name (a tracked build/ would be lost). Nothing may be carried from
+# or onto a keep.untouched filesystem (sda3), nothing that nomarchy owns (its links, seeds, build
+# outputs, ~/.local/bin) unless authorized, and nothing over what the clean install created
+# unless marked overwrite. Entries may not overlap. %20 in a path is a space.
+
+user peter
+
+# ── Working trees: moved whole, never re-cloned (§3). ─────────────────────────────────────
+# ~/code/browse_alias is a nomarchy link. shelf and irides are nomarchy's build checkouts:
+# carried on purpose, so `nomarchy link` builds the migrated trees instead of cloning.
+# .stfolder is a Syncthing marker, and Syncthing is not installed (§0 4f).
+entry bulk home code                      exclude=browse_alias exclude=.stfolder authorize=shelf authorize=irides
+entry bulk home Projects/nomarchy
+entry bulk home .password-store
+
+# ── User data (§1). ───────────────────────────────────────────────────────────────────────
+entry bulk home Legal                     digest
+entry bulk home Notes                     digest
+entry bulk home Pictures                  digest
+entry bulk home Archive                   digest
+
+# ── Private state (§2, §11): preserved exactly -- bytes, owner, mode. ─────────────────────
+# ~/.ssh/config is a nomarchy link; ~/.ssh/agent/ is the dead-glob leftover.
+entry bulk home .gnupg                    private
+entry bulk home .ssh                      private exclude=config exclude=agent
+entry bulk home .config/gh/hosts.yml      private
+entry bulk home .config/subliminal/subliminal.toml  private
+
+# ── Small user choices. ───────────────────────────────────────────────────────────────────
+# Which RGB devices follow the theme -- chosen in Irides' Lighting dialog, not generated.
+entry bulk home .config/irides/lighting.toml
+# OpenDeck's profiles, restored from the old install's archive into where OpenDeck 2.x keeps
+# them (its own log names ~/.config/opendeck). §8 B4.
+entry bulk home .config/opendeck          from=Archive/omarchy-rescue/opendeck/config
+
+# ── Live application state: final pass only, with every app stopped (§0 cutover). ─────────
+entry final home .thunderbird
+entry final home .config/obsidian
+entry final home .claude                  private=.credentials.json exclude=cache exclude=shell-snapshots exclude=paste-cache exclude=file-history exclude=backups exclude=*.bak
+entry final home .claude.json             private
+# Codex: history and config, not its binaries (openai-codex-bin now) or runtime state.
+# state_5.sqlite, thread_history_1.sqlite and session_index.jsonl index the threads.
+entry final home .codex                   private=auth.json exclude=packages exclude=cache exclude=.tmp exclude=tmp exclude=logs_* exclude=queue_* exclude=models_cache.json exclude=shell_snapshots exclude=thread-writer-locks exclude=version.json
+# After the last SATA shell activity: run `history -a` first (§0 6).
+entry final home .bash_history
+
+# ── The server identity: new caesar is the same host (§11). ───────────────────────────────
+# No host keys exist on the XPG until sshd first starts; `overwrite` covers a system that
+# was booted before the final pass, whose sshd generated its own.
+entry final root /etc/ssh/ssh_host_ed25519_key      private overwrite
+entry final root /etc/ssh/ssh_host_ed25519_key.pub  private overwrite
+entry final root /etc/ssh/ssh_host_ecdsa_key        private overwrite
+entry final root /etc/ssh/ssh_host_ecdsa_key.pub    private overwrite
+entry final root /etc/ssh/ssh_host_rsa_key          private overwrite
+entry final root /etc/ssh/ssh_host_rsa_key.pub      private overwrite
+
+# ── The freeze (§9 step 4). ───────────────────────────────────────────────────────────────
+quiesce thunderbird firefox obsidian claude codex nvim vim
+dump revline project=revline container=revline-db-1 compose=code/revline/infra/docker-compose.yml service=db
+
+# ── Counted for acceptance. ───────────────────────────────────────────────────────────────
+count obsidian-notes     Legal/Revline/Revline%20HQ  *.md
+count claude-sessions    .claude/projects            *.jsonl
+count codex-sessions     .codex/sessions             *.jsonl
+count pass-entries       .password-store             *.gpg

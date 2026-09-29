@@ -1,0 +1,784 @@
+#!/usr/bin/env bash
+# migrate -- the cutover migration (docs/cutover/03 §9): carry a host's declared entries from
+# the running SATA install into its freshly provisioned disk, prove the copy, and accept it on
+# the new system. Cutover tooling, not part of nomarchy: nothing here is linked or installed.
+#
+# On the SATA install, in this order (all but plan and status need sudo):
+#   migrate/migrate <host> plan        read-only: every gate, every entry, nothing touched
+#   migrate/migrate <host> open        unlock the new disk by its LUKS UUID and mount it
+#   migrate/migrate <host> bulk        pass 1, while SATA is in use
+#   migrate/migrate <host> freeze      apps closed? dump the databases, stop them, record evidence
+#   migrate/migrate <host> final       pass 2: every entry again, plus live app state, host keys
+#   migrate/migrate <host> verify      the new disk equals SATA for every entry, byte for byte
+#   migrate/migrate <host> close       seal the ledger (after verify), unmount, lock
+#   migrate/migrate <host> status      what has run, from the ledger
+# On the new system, after its first boot and the nomarchy stages, as the user (no sudo):
+#   migrate/migrate <host> restore-<dump>   restore a frozen database into its fresh stack
+#   migrate/migrate <host> accept           the new system against the recorded evidence
+#   migrate/migrate <host> accept-remote    SSH identity against the real remotes (keys loaded)
+#
+# Options: --manifest FILE (default migrate/<host>.manifest), --mount DIR (default
+# /mnt/<host>-new), --key-file FILE (open: unlock from a file -- a rehearsal's unattended run).
+# Environment: MIGRATE_RSYNC_EXTRA, extra rsync options (a rehearsal slows a copy with
+# --bwlimit to interrupt it on purpose).
+#
+# What it refuses, whatever the manifest says (and says so, and copies nothing):
+#   - a source or destination on a keep.untouched filesystem (caesar's sda3), by UUID;
+#     a source not on the rescue install's root, a destination not on the new btrfs
+#     (migrate/guard.sh); a filesystem mounted anywhere inside a source tree
+#   - an entry that is, or carries, something nomarchy owns -- its links, seeds, build
+#     checkouts and outputs, ~/.local/bin -- unless the manifest excludes or authorizes it
+#   - writing over anything the clean install created (recorded when the disk is first
+#     opened) unless the entry says overwrite; any copy at all once the ledger is sealed
+#   - a missing source (unless optional); overlapping entries; ids that differ between the
+#     two systems (ownership is carried by number)
+#   - the freeze or the final pass while a quiesce'd app runs or a dumped stack is up
+#
+# Every step is appended to <new home>/cutover-evidence/ledger, with the evidence beside it.
+# A copy that fails or is interrupted leaves the ledger saying so; verify then refuses until
+# the pass has been run again to completion. rsync is idempotent, so a rerun resumes.
+
+set -uo pipefail
+
+repo="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+. "$repo/common/storage/spec.sh" || exit 1
+. "$repo/migrate/guard.sh" || exit 1
+
+die()   { printf '\033[31mmigrate: %s\033[0m\n' "$1" >&2; exit 1; }
+say()   { printf '  %s\n' "$*"; }
+head1() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+okl()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+badl()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAILS=$((FAILS + 1)); }
+FAILS=0
+
+host='' cmd='' manifest='' MNT='' keyfile=''
+args=()
+while (($#)); do
+  case $1 in
+    --manifest) manifest=$2; shift ;;
+    --mount)    MNT=$2; shift ;;
+    --key-file) keyfile=$2; shift ;;
+    -h|--help)  sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*)         die "unknown option $1" ;;
+    *)          args+=("$1") ;;
+  esac
+  shift
+done
+((${#args[@]} == 2)) || { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+host=${args[0]} cmd=${args[1]}
+[[ -f $repo/hosts/$host/storage/layout ]] || die "no storage spec for host '$host'"
+spec_load "$repo/hosts/$host/storage/layout" >/dev/null || die "hosts/$host/storage/layout does not parse"
+manifest=${manifest:-$repo/migrate/$host.manifest}
+[[ -f $manifest ]] || die "no manifest: $manifest"
+MNT=${MNT:-/mnt/$host-new}
+MAP="$host-new"
+EVD_NAME=cutover-evidence
+
+# ── The manifest ────────────────────────────────────────────────────────────────────────
+M_USER='' ENTRIES=0
+E_PHASE=() E_SCOPE=() E_PATH=() E_FROM=() E_EXCL=() E_AUTH=() E_PRIV=() E_FLAGS=()
+QUIESCE=() DUMPS=() COUNTS=() PARSE_ERR=()
+dec() { printf '%s' "${1//%20/ }"; }
+parse_manifest() {
+  local line f i o n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    line=${line%%#*}
+    [[ $line =~ ^[[:space:]]*$ ]] && continue
+    read -ra f <<<"$line"
+    case ${f[0]} in
+      user) M_USER=${f[1]:-} ;;
+      entry)
+        if ((${#f[@]} < 4)) || [[ ${f[1]} != bulk && ${f[1]} != final ]] || [[ ${f[2]} != home && ${f[2]} != root ]]; then
+          PARSE_ERR+=("line $n: entry <bulk|final> <home|root> <path> [options]"); continue
+        fi
+        i=$ENTRIES; ENTRIES=$((ENTRIES + 1))
+        E_PHASE[i]=${f[1]} E_SCOPE[i]=${f[2]} E_PATH[i]=$(dec "${f[3]}") E_FROM[i]='' E_EXCL[i]='' E_AUTH[i]='' E_PRIV[i]='' E_FLAGS[i]=' '
+        for o in "${f[@]:4}"; do
+          case $o in
+            exclude=*)   E_EXCL[i]+=$(dec "${o#exclude=}")$'\n' ;;
+            authorize=*) E_AUTH[i]+=$(dec "${o#authorize=}")$'\n' ;;
+            private=*)   E_PRIV[i]+=$(dec "${o#private=}")$'\n' ;;
+            from=*)      E_FROM[i]=$(dec "${o#from=}") ;;
+            digest|private|optional|overwrite) E_FLAGS[i]+="$o " ;;
+            *) PARSE_ERR+=("line $n: unknown option '$o'") ;;
+          esac
+        done
+        [[ ${E_SCOPE[i]} == root && ${E_PATH[i]} != /* ]] && PARSE_ERR+=("line $n: a root entry needs an absolute path")
+        [[ ${E_SCOPE[i]} == home && ${E_PATH[i]} == /* ]] && PARSE_ERR+=("line $n: a home entry is relative to the home")
+        [[ /${E_PATH[i]}/ == */../* || /${E_FROM[i]}/ == */../* ]] && PARSE_ERR+=("line $n: '..' is not allowed")
+        [[ ${E_SCOPE[i]} == home && ( ${E_PATH[i]} == "$EVD_NAME" || ${E_PATH[i]} == "$EVD_NAME"/* ) ]] && PARSE_ERR+=("line $n: $EVD_NAME is the migration's own")
+        ;;
+      quiesce) QUIESCE+=("${f[@]:1}") ;;
+      dump)
+        local name=${f[1]:-} kv project='' container='' compose='' service=''
+        for kv in "${f[@]:2}"; do
+          case $kv in project=*) project=${kv#*=} ;; container=*) container=${kv#*=} ;;
+                      compose=*) compose=$(dec "${kv#*=}") ;; service=*) service=${kv#*=} ;;
+                      *) PARSE_ERR+=("line $n: unknown dump field '$kv'") ;; esac
+        done
+        [[ -n $name && -n $project && -n $container && -n $compose && -n $service ]] \
+          || { PARSE_ERR+=("line $n: dump <name> project= container= compose= service="); continue; }
+        DUMPS+=("$name|$project|$container|$compose|$service") ;;
+      count)
+        ((${#f[@]} == 4)) || { PARSE_ERR+=("line $n: count <name> <dir> <glob>"); continue; }
+        COUNTS+=("${f[1]}|$(dec "${f[2]}")|${f[3]}") ;;
+      *) PARSE_ERR+=("line $n: unknown keyword '${f[0]}'") ;;
+    esac
+  done < "$manifest"
+  [[ -n $M_USER ]] || PARSE_ERR+=("no 'user' line")
+  ((ENTRIES)) || PARSE_ERR+=("no entries")
+}
+parse_manifest
+if ((${#PARSE_ERR[@]})); then printf '  %s\n' "${PARSE_ERR[@]}" >&2; die "$manifest does not parse"; fi
+has() { [[ ${E_FLAGS[$1]} == *" $2 "* ]]; }
+lines() { printf '%s' "$1" | sed '/^$/d'; }
+
+# ── The two systems ─────────────────────────────────────────────────────────────────────
+pw=$(getent passwd "$M_USER") || die "no user '$M_USER' on this system"
+IFS=: read -r _ _ U_UID U_GID _ U_HOME _ <<<"$pw"
+# On SATA, SRC_HOME is the user's home here; on the new system the same path is home too.
+SRC_HOME=$U_HOME
+DEST_ROOT=$MNT/root
+DEST_HOME=''    # set by dest_resolve
+EVD=''          # evidence dir: on SATA inside DEST_HOME, on the new system in $HOME
+
+dest_mounted() {
+  [[ $(findmnt -rn -o UUID -M "$MNT/home" 2>/dev/null) == "${SPEC[btrfs.uuid]}" ]] &&
+  [[ $(findmnt -rn -o UUID -M "$MNT/root" 2>/dev/null) == "${SPEC[btrfs.uuid]}" ]] &&
+  [[ $(findmnt -rn -o SOURCE -M "$MNT/home") == *"[/@home]" ]] &&
+  [[ $(findmnt -rn -o SOURCE -M "$MNT/root") == *"[/@]" ]]
+}
+dest_resolve() {  # after open: the user's home on the new disk, by the NEW system's passwd
+  local dpw duid dgid dhome
+  dpw=$(grep "^$M_USER:" "$DEST_ROOT/etc/passwd" 2>/dev/null) || die "no user '$M_USER' in the new system's /etc/passwd"
+  IFS=: read -r _ _ duid dgid _ dhome _ <<<"$dpw"
+  [[ $duid == "$U_UID" && $dgid == "$U_GID" ]] \
+    || die "$M_USER is $duid:$dgid on the new system but $U_UID:$U_GID here -- ownership is carried by number, so they must match"
+  [[ $dhome == /home/* ]] || die "the new system's home for $M_USER is $dhome, not under /home"
+  DEST_HOME=$MNT/home/${dhome#/home/}
+  [[ -d $DEST_HOME ]] || die "$DEST_HOME does not exist on the new disk"
+  EVD=$DEST_HOME/$EVD_NAME
+}
+need_root() { ((EUID == 0)) || die "'$cmd' needs root: sudo $0 $host $cmd"; }
+need_user() { ((EUID == U_UID)) || die "'$cmd' runs as $M_USER, on the new system, without sudo"; }
+as_user() {  # a command as the user, with the user's environment and nothing of root's
+  if ((EUID == 0)); then
+    runuser -u "$M_USER" -- env -i HOME="$U_HOME" USER="$M_USER" LOGNAME="$M_USER" LANG=C.UTF-8 \
+      PATH=/usr/local/bin:/usr/bin XDG_RUNTIME_DIR="/run/user/$U_UID" GIT_OPTIONAL_LOCKS=0 "$@"
+  else
+    GIT_OPTIONAL_LOCKS=0 "$@"
+  fi
+}
+
+src_of() { local i=$1 p=${E_FROM[$1]:-${E_PATH[$1]}}; [[ ${E_SCOPE[i]} == home ]] && printf '%s/%s' "$SRC_HOME" "$p" || printf '%s' "$p"; }
+dst_of() { local i=$1; [[ ${E_SCOPE[i]} == home ]] && printf '%s/%s' "$DEST_HOME" "${E_PATH[i]}" || printf '%s%s' "$DEST_ROOT" "${E_PATH[i]}"; }
+key_of() { local i=$1; [[ ${E_SCOPE[i]} == home ]] && printf 'home:%s' "${E_PATH[i]}" || printf 'root:%s' "${E_PATH[i]}"; }
+in_phase() { [[ $2 == final || ${E_PHASE[$1]} == bulk ]]; }   # final copies everything
+
+# ── What nomarchy owns (read from its own manifests, never restated here) ──────────────
+OWNED=()   # "kind<TAB>path" -- home-relative for home, absolute for root
+owned_load() {
+  local f src dst rest cmdn
+  for f in "$repo/common/bootstrap/links" "$repo/hosts/$host/bootstrap/links"; do
+    [[ -f $f ]] || continue
+    while read -r src dst; do [[ $dst == \~/* ]] && OWNED+=("link"$'\t'"${dst#\~/}"); done < <(grep -vE '^\s*#|^\s*$' "$f")
+  done
+  for f in "$repo/common/bootstrap/seeds" "$repo/hosts/$host/bootstrap/seeds"; do
+    [[ -f $f ]] || continue
+    while read -r src dst; do [[ $dst == \~/* ]] && OWNED+=("seed"$'\t'"${dst#\~/}"); done < <(grep -vE '^\s*#|^\s*$' "$f")
+  done
+  for f in "$repo/common/bootstrap/builds" "$repo/hosts/$host/bootstrap/builds"; do
+    [[ -f $f ]] || continue
+    while read -r cmdn dst rest; do [[ $dst == \~/* ]] && OWNED+=("build checkout"$'\t'"${dst#\~/}"); done < <(grep -vE '^\s*#|^\s*$' "$f")
+  done
+  OWNED+=("build outputs and script links"$'\t'".local/bin")
+  for f in "$repo"/common/stages/*/copies "$repo/hosts/$host/bootstrap/copies"; do
+    [[ -f $f ]] || continue
+    while read -r src dst rest; do [[ $dst == /* ]] && OWNED+=("copy"$'\t'"$dst"); done < <(grep -vE '^\s*#|^\s*$' "$f")
+  done
+}
+matches_any() {  # matches_any <relpath> <newline-separated globs>: the path or an ancestor matches
+  local rel=$1 pats=$2 pat part
+  while IFS= read -r pat; do
+    [[ -n $pat ]] || continue
+    part=$rel
+    while :; do
+      # shellcheck disable=SC2053
+      [[ $part == $pat ]] && return 0
+      [[ $part == */* ]] || break
+      part=${part%/*}
+    done
+  done <<<"$pats"
+  return 1
+}
+
+# ── Validation: everything that makes a pass refuse before it copies anything ──────────
+VIOL=()
+validate_static() {  # the manifest against nomarchy's ownership and against itself
+  local i j o kind path p q
+  owned_load
+  for ((i = 0; i < ENTRIES; i++)); do
+    p=${E_PATH[i]}
+    for o in "${OWNED[@]}"; do
+      kind=${o%%$'\t'*} path=${o#*$'\t'}
+      [[ ( ${E_SCOPE[i]} == home && $path == /* ) || ( ${E_SCOPE[i]} == root && $path != /* ) ]] && continue
+      if [[ $p == "$path" || $p == "$path"/* ]]; then
+        VIOL+=("$(key_of "$i"): is nomarchy-owned ($kind $path) -- the clean install makes it; never carried")
+      elif [[ $path == "$p"/* ]]; then
+        q=${path#"$p"/}
+        matches_any "$q" "${E_EXCL[i]}" || grep -qxF -- "$q" <<<"${E_AUTH[i]}" \
+          || VIOL+=("$(key_of "$i"): would carry nomarchy-owned $path ($kind) -- exclude=$q, or authorize=$q if it is meant")
+      fi
+    done
+    for ((j = i + 1; j < ENTRIES; j++)); do
+      [[ ${E_SCOPE[i]} == "${E_SCOPE[j]}" ]] || continue
+      q=${E_PATH[j]}
+      [[ $p == "$q" || $p == "$q"/* || $q == "$p"/* ]] && VIOL+=("$(key_of "$i") and $(key_of "$j") overlap")
+    done
+  done
+}
+MOUNTS=()
+mounts_load() { local m; while IFS= read -r m; do MOUNTS+=("$(printf '%b' "$m")"); done < <(findmnt -rn -o TARGET); }
+CLEAN=()   # what the clean install had, from the ledger's first open
+clean_load() { [[ -f $EVD/clean-install ]] && mapfile -t CLEAN < "$EVD/clean-install"; }
+in_clean() { local k=$1 c; for c in "${CLEAN[@]+"${CLEAN[@]}"}"; do [[ $c == "$k" ]] && return 0; done; return 1; }
+validate_pass() {  # validate_pass <bulk|final>: sources, gates, mounts, the clean install
+  local pass=$1 i s d m
+  mounts_load; clean_load
+  for ((i = 0; i < ENTRIES; i++)); do
+    in_phase "$i" "$pass" || continue
+    s=$(src_of "$i"); d=$(dst_of "$i")
+    if [[ ! -e $s && ! -L $s ]]; then
+      has "$i" optional || VIOL+=("$(key_of "$i"): source $s does not exist")
+      continue
+    fi
+    migrate_path_ok source "$s" >/dev/null || VIOL+=("$(key_of "$i"): $(migrate_path_ok source "$s")")
+    migrate_path_ok dest "$d" >/dev/null || VIOL+=("$(key_of "$i"): $(migrate_path_ok dest "$d")")
+    for m in "${MOUNTS[@]}"; do
+      [[ $m == "$(readlink -f "$s")"/* ]] && VIOL+=("$(key_of "$i"): a filesystem is mounted inside it, at $m -- unmount it; nothing is copied across a mount")
+    done
+    if [[ -e $d || -L $d ]] && in_clean "$(key_of "$i")" && ! has "$i" overwrite; then
+      VIOL+=("$(key_of "$i"): $d was created by the clean install -- never written over (move it aside, or mark the entry overwrite)")
+    fi
+  done
+}
+report_viol() {  # prints and refuses if anything was found
+  ((${#VIOL[@]})) || return 0
+  head1 "REFUSED -- nothing was copied:"
+  printf '  \033[31m✗\033[0m %s\n' "${VIOL[@]}"
+  exit 1
+}
+
+# ── The ledger ──────────────────────────────────────────────────────────────────────────
+ledger() { printf '%s %s\n' "$(date -Is)" "$*" >> "$EVD/ledger"; }
+last_event() { grep -E " ($1)( |$)" "$EVD/ledger" 2>/dev/null | tail -1; }
+line_of() { grep -nE " ($1)( |$)" "$EVD/ledger" 2>/dev/null | tail -1 | cut -d: -f1; }
+sealed() { [[ -n $(last_event sealed) ]]; }
+lock() { exec 9>"$EVD/.lock"; flock -n 9 || die "another migrate is running on this disk"; }
+
+# ── Copying ─────────────────────────────────────────────────────────────────────────────
+CACHETAG='Signature: 8a477f597d28d172789f06886806bc55'
+cache_dirs() {  # cache_dirs <dir>: every directory under it carrying a valid CACHEDIR.TAG, relative
+  local f
+  [[ -d $1 ]] || return 0
+  find "$1" -xdev -type f -name CACHEDIR.TAG -print0 2>/dev/null | while IFS= read -r -d '' f; do
+    head -c ${#CACHETAG} "$f" 2>/dev/null | grep -qxF "$CACHETAG" && { f=${f%/CACHEDIR.TAG}; printf '%s\n' "${f#"$1"/}"; }
+  done
+}
+exclude_file() {  # exclude_file <i> <src>: an rsync exclude-from file (caller removes it)
+  local x p; x=$(mktemp)
+  while IFS= read -r p; do [[ -n $p ]] && printf '/%s\n' "$p"; done <<<"${E_EXCL[$1]}" >> "$x"
+  cache_dirs "$2" | while IFS= read -r p; do printf '/%s/\n' "$p"; done >> "$x"
+  printf '%s\n' "$x"
+}
+ensure_parents() {  # parents of an entry's destination, made as their SOURCE counterparts are
+  local i=$1 base rel cur='' comp c o m sbase
+  if [[ ${E_SCOPE[i]} == home ]]; then base=$DEST_HOME sbase=$SRC_HOME rel=${E_PATH[i]}
+  else base=$DEST_ROOT sbase='' rel=${E_PATH[i]#/}; fi
+  [[ $rel == */* ]] || return 0
+  IFS=/ read -ra comp <<<"${rel%/*}"
+  for c in "${comp[@]}"; do
+    cur+=/$c
+    [[ -d $base$cur ]] && continue
+    if [[ -d $sbase$cur ]]; then o=$(stat -c %u:%g "$sbase$cur"); m=$(stat -c %a "$sbase$cur")
+    else o=$U_UID:$U_GID m=755; fi
+    install -d -o "${o%:*}" -g "${o#*:}" -m "$m" "$base$cur" || return 1
+  done
+}
+CURRENT='' CURPASS=''
+on_interrupt() { [[ -n $CURRENT ]] && ledger "interrupted $CURPASS $CURRENT"; printf '\n\033[31mmigrate: interrupted during %s -- the ledger says so; run the pass again\033[0m\n' "${CURRENT:-setup}" >&2; exit 130; }
+copy_pass() {  # copy_pass <bulk|final>
+  local pass=$1 i s d x rc
+  trap on_interrupt INT TERM
+  ledger "start-pass $pass"
+  for ((i = 0; i < ENTRIES; i++)); do
+    in_phase "$i" "$pass" || continue
+    s=$(src_of "$i"); d=$(dst_of "$i")
+    if [[ ! -e $s && ! -L $s ]]; then say "skip $(key_of "$i") (optional, no source)"; continue; fi
+    CURRENT=$(key_of "$i") CURPASS=$pass
+    head1 "$CURRENT"
+    ledger "start $pass $CURRENT"
+    ensure_parents "$i" || { ledger "fail $pass $CURRENT parents"; die "could not make the parents of $d"; }
+    x=$(exclude_file "$i" "$s")
+    [[ -s $x ]] && say "not carried: $(tr '\n' ' ' < "$x")"
+    # shellcheck disable=SC2086
+    if [[ -d $s && ! -L $s ]]; then
+      rsync -aHAX --numeric-ids -x --delete --exclude-from="$x" ${MIGRATE_RSYNC_EXTRA:-} "$s/" "$d/"; rc=$?
+    else
+      rsync -aHAX --numeric-ids ${MIGRATE_RSYNC_EXTRA:-} "$s" "$d"; rc=$?
+    fi
+    rm -f "$x"
+    # 24 = files vanished during the transfer: normal while SATA is in use, never after the freeze.
+    if ((rc == 0)) || { ((rc == 24)) && [[ $pass == bulk ]]; }; then
+      ((rc == 24)) && say "(some files vanished while copying -- expected in the bulk pass; the final pass is exact)"
+      ledger "done $pass $CURRENT"; okl "copied"
+    else
+      ledger "fail $pass $CURRENT rsync=$rc"
+      CURRENT=''
+      die "copying $(key_of "$i") failed (rsync exit $rc). The ledger records it; fix the cause and run '$pass' again -- it resumes."
+    fi
+    CURRENT=''
+  done
+  trap - INT TERM
+  ledger "$pass-complete"
+}
+
+# ── Evidence: recorded at the freeze from SATA, compared on the new system ─────────────
+filter_caches() {  # filter_caches <cache list>  (stdin: git porcelain / ls-files lines)
+  local caches=$1 l p c skip
+  while IFS= read -r l; do
+    p=$l; [[ $p == [\ MADRCU?!][\ MADRCU?!]\ * ]] && p=${p:3}
+    skip=0
+    while IFS= read -r c; do [[ -n $c && ( $p == "$c" || $p == "$c"/ || $p == "$c"/* ) ]] && { skip=1; break; }; done <<<"$caches"
+    ((skip)) || printf '%s\n' "$l"
+  done
+}
+git_record() {  # git_record <repo dir>: its whole local state, cache directories left out
+  local r=$1 caches
+  caches=$(cache_dirs "$r")
+  echo "head $(as_user git -C "$r" symbolic-ref -q --short HEAD || echo DETACHED) $(as_user git -C "$r" rev-parse -q --verify HEAD || echo none)"
+  as_user git -C "$r" for-each-ref --format='ref %(refname) %(objectname)' | LC_ALL=C sort
+  as_user git -C "$r" stash list --format='stash %H'
+  as_user git -C "$r" status --porcelain=v1 --untracked-files=all | filter_caches "$caches" | LC_ALL=C sort | sed 's/^/status /'
+  as_user git -C "$r" ls-files --others --ignored --exclude-standard --directory | filter_caches "$caches" | LC_ALL=C sort | sed 's/^/ignored /'
+}
+repos_under() {  # repos_under <home>: every git repository inside a home entry, home-relative
+  local home=$1 i s g
+  for ((i = 0; i < ENTRIES; i++)); do
+    [[ ${E_SCOPE[i]} == home ]] || continue
+    s=$home/${E_PATH[i]}; [[ -d $s ]] || continue
+    find "$s" -xdev -name .git -prune -print 2>/dev/null | while IFS= read -r g; do
+      g=${g%/.git}; g=${g#"$home"/}
+      matches_any "${g#"${E_PATH[i]}"/}" "${E_EXCL[i]}" && continue
+      printf '%s\n' "$g"
+    done
+  done | LC_ALL=C sort
+}
+digest_of() {  # digest_of <home> <i>: sha256 of every file in a digest entry
+  local home=$1 i=$2 s f
+  s=$home/${E_PATH[i]}
+  ( cd "$s" 2>/dev/null && find . -xdev -type f -print0 | LC_ALL=C sort -z | while IFS= read -r -d '' f; do
+      matches_any "${f#./}" "${E_EXCL[i]}" || sha256sum -- "$f"
+    done )
+}
+private_of() {  # private_of <home> <root> <i>: owner and mode of every private path
+  local home=$1 root=$2 i=$3 s p base
+  if [[ ${E_SCOPE[i]} == home ]]; then base=$home; s=$home/${E_PATH[i]}; else base=$root; s=$root${E_PATH[i]}; fi
+  if has "$i" private; then
+    if [[ -d $s && ! -L $s ]]; then
+      find "$s" -xdev -printf '%P\t%U:%G\t%m\t%y\n' 2>/dev/null | while IFS=$'\t' read -r p o m t; do
+        [[ -n $p ]] && matches_any "$p" "${E_EXCL[i]}" && continue
+        printf '%s\t%s\t%s\t%s\n' "${E_PATH[i]}${p:+/$p}" "$o" "$m" "$t"
+      done
+    else
+      printf '%s\t%s\n' "${E_PATH[i]}" "$(stat -c '%u:%g	%a	%F' "$s" 2>/dev/null | sed 's/regular file/f/;s/directory/d/;s/symbolic link/l/')"
+    fi
+  fi
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    printf '%s\t%s\n' "${E_PATH[i]}/$p" "$(stat -c '%u:%g	%a	%F' "$s/$p" 2>/dev/null | sed 's/regular file/f/;s/directory/d/;s/symbolic link/l/')"
+  done <<<"${E_PRIV[i]}"
+}
+count_of() {  # count_of <home> <dir> <glob>
+  local d=$1/$2
+  [[ -d $d ]] || { echo 0; return; }
+  find "$d" -xdev \( -type d -name '.*' ! -path "$d" -prune \) -o -type f -name "$3" -print 2>/dev/null | wc -l
+}
+ssh_fps() {  # ssh_fps <home> <root>: every client and host key fingerprint
+  local f
+  for f in "$1"/.ssh/*.pub "$2"/etc/ssh/ssh_host_*_key.pub; do
+    [[ -f $f ]] && printf '%s %s\n' "${f#"$2"}" "$(ssh-keygen -lf "$f" 2>/dev/null | awk '{print $2, $NF}')"
+  done | sed "s|^$1/|~/|"
+}
+gpg_fps() { as_user gpg --batch --no-auto-check-trustdb --with-colons --list-secret-keys 2>/dev/null | awk -F: '$1 == "fpr" {print $10}' | LC_ALL=C sort -u; }
+ssh_hosts() {  # the aliases acceptance will reach, from the user's ssh config and config.local
+  cat "$SRC_HOME/.ssh/config" "$SRC_HOME/.ssh/config.local" 2>/dev/null \
+    | awk 'tolower($1) == "host" {for (i = 2; i <= NF; i++) print $i}' \
+    | grep -vE '[*?!]' | grep -vxF -e "$host" -e github.com | LC_ALL=C sort -u
+}
+record_evidence() {
+  local i r slug e name dir glob
+  mkdir -p "$EVD/git" "$EVD/digest"
+  head1 "Evidence -> $EVD"
+  {
+    echo "host $host"; echo "recorded $(date -Is)"
+    echo "tool $(as_user git -C "$repo" rev-parse HEAD)$(as_user git -C "$repo" diff --quiet HEAD 2>/dev/null || echo ' (dirty)')"
+    echo "source-root ${SPEC[rescue.root-uuid]:-}"; echo "dest-btrfs ${SPEC[btrfs.uuid]}"
+  } > "$EVD/summary"
+  repos_under "$SRC_HOME" > "$EVD/git/repos"
+  while IFS= read -r r; do
+    slug=${r//\//__}
+    git_record "$SRC_HOME/$r" > "$EVD/git/$slug.rec" 2>&1
+  done < "$EVD/git/repos"
+  okl "git: $(wc -l < "$EVD/git/repos") repositories, each with its branch, refs, stash, dirty, untracked and ignored state"
+  : > "$EVD/private"
+  for ((i = 0; i < ENTRIES; i++)); do
+    if has "$i" digest; then digest_of "$SRC_HOME" "$i" > "$EVD/digest/${E_PATH[i]//\//__}.sha256"; fi
+    private_of "$SRC_HOME" "" "$i" >> "$EVD/private"
+  done
+  okl "digests: $(cat "$EVD"/digest/*.sha256 2>/dev/null | wc -l) files; owners and modes: $(wc -l < "$EVD/private") private paths"
+  ssh_fps "$SRC_HOME" "" > "$EVD/ssh-fingerprints"; okl "ssh: $(wc -l < "$EVD/ssh-fingerprints") key fingerprints"
+  gpg_fps > "$EVD/gpg-secret-keys"; okl "gpg: $(wc -l < "$EVD/gpg-secret-keys") secret key(s)"
+  : > "$EVD/counts"
+  for e in "${COUNTS[@]+"${COUNTS[@]}"}"; do
+    IFS='|' read -r name dir glob <<<"$e"
+    printf '%s %s\n' "$name" "$(count_of "$SRC_HOME" "$dir" "$glob")" >> "$EVD/counts"
+  done
+  okl "counts: $(tr '\n' ' ' < "$EVD/counts")"
+  ssh_hosts > "$EVD/ssh-hosts"; okl "ssh hosts for accept-remote: $(tr '\n' ' ' < "$EVD/ssh-hosts")"
+  if [[ -f $SRC_HOME/.thunderbird/profiles.ini ]]; then
+    sed -n 's/^Default=//p' "$SRC_HOME/.thunderbird/profiles.ini" | sort -u > "$EVD/thunderbird-profiles"
+  fi
+}
+
+# ── Databases ───────────────────────────────────────────────────────────────────────────
+ROWCOUNT_SQL="SELECT table_schema||'.'||table_name||' '||(xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', table_schema, table_name), false, true, '')))[1]::text FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type = 'BASE TABLE' ORDER BY 1"
+dexec() { as_user docker exec "$@"; }
+psql_in() { dexec "$1" sh -c 'psql -X -q -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$0"' "$2"; }
+db_up() {  # db_up <container> <compose file> <service>: running and healthy
+  local c=$1 compose=$2 svc=$3 i st
+  if [[ $(as_user docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null) != true ]]; then
+    say "starting $svc ($compose)"
+    as_user docker compose -f "$compose" up -d "$svc" >/dev/null || return 1
+  fi
+  for i in $(seq 90); do
+    st=$(as_user docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$c" 2>/dev/null)
+    [[ $st == healthy || $st == running ]] && dexec "$c" sh -c 'pg_isready -q -U "$POSTGRES_USER"' && return 0
+    sleep 1
+  done
+  return 1
+}
+project_running() { as_user docker ps -q --filter "label=com.docker.compose.project=$1"; }
+freeze_dump() {  # freeze_dump <name|project|container|compose|service>
+  local name project c compose svc d
+  IFS='|' read -r name project c compose svc <<<"$1"
+  d=$EVD/$name; mkdir -p "$d"
+  head1 "Database $name ($c)"
+  db_up "$c" "$SRC_HOME/$compose" "$svc" || die "$c is not up and healthy -- cannot dump $name"
+  dexec "$c" postgres --version > "$d/postgres-version" || die "cannot read $c's PostgreSQL version"
+  psql_in "$c" "$ROWCOUNT_SQL" > "$d/rowcounts" || die "cannot count $name's rows"
+  dexec "$c" sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$d/$name.dump" || die "pg_dump of $name failed"
+  dexec -i "$c" pg_restore --list < "$d/$name.dump" > "$d/toc" || die "the $name dump does not read back (pg_restore --list)"
+  sha256sum "$d/$name.dump" | awk '{print $1}' > "$d/$name.dump.sha256"
+  printf 'container %s\nproject %s\ncompose %s\nservice %s\n' "$c" "$project" "$compose" "$svc" > "$d/meta"
+  okl "$(cat "$d/postgres-version"); $(wc -l < "$d/rowcounts") tables, $(awk '{s += $2} END {print s + 0}' "$d/rowcounts") rows; dump $(du -h "$d/$name.dump" | cut -f1), $(grep -c 'TABLE DATA' "$d/toc") table-data entries read back"
+  local ids; ids=$(project_running "$project")
+  [[ -n $ids ]] && { as_user docker stop $ids >/dev/null || die "could not stop $project"; }
+  [[ -z $(project_running "$project") ]] || die "$project is still running"
+  okl "$project stopped (its volumes stay on SATA as the fallback)"
+}
+quiesce_check() {
+  local p pids
+  for p in "${QUIESCE[@]+"${QUIESCE[@]}"}"; do
+    pids=$(pgrep -u "$U_UID" -x "$p" | tr '\n' ' ')
+    [[ -n $pids ]] && VIOL+=("$p is running (pid $pids) -- close it: live app state is never copied")
+  done
+  local e name project
+  if [[ ${1:-} == stacks ]]; then
+    for e in "${DUMPS[@]+"${DUMPS[@]}"}"; do
+      IFS='|' read -r name project _ <<<"$e"
+      [[ -n $(project_running "$project") ]] && VIOL+=("$project containers are running again since the freeze -- stop them: the dump would no longer be the last word")
+    done
+  fi
+}
+
+# ── Commands ────────────────────────────────────────────────────────────────────────────
+do_open() {
+  need_root
+  head1 "Open the new disk -- ${SPEC[disk.by-id]}"
+  spec_identity_ok || die "identity gate: /dev/disk/by-id/${SPEC[disk.by-id]} is absent or not the declared disk"
+  okl "identity: model, serial and size match ($DISK_DEV)"
+  local luks=/dev/disk/by-uuid/${SPEC[luks.uuid]} parent
+  [[ -e $luks ]] || die "no LUKS container ${SPEC[luks.uuid]} -- has the disk been provisioned?"
+  parent=/dev/$(lsblk -no PKNAME "$(readlink -f "$luks")")
+  [[ $parent == "$DISK_DEV" ]] || die "LUKS ${SPEC[luks.uuid]} is on $parent, not on the declared disk $DISK_DEV"
+  if [[ -e /dev/mapper/$MAP ]]; then
+    cryptsetup status "$MAP" | grep -q "device:.*$(readlink -f "$luks")" || die "/dev/mapper/$MAP is open on something else"
+    okl "already unlocked as /dev/mapper/$MAP"
+  else
+    cryptsetup open ${keyfile:+--key-file "$keyfile"} "$luks" "$MAP" || die "could not unlock ${SPEC[luks.uuid]}"
+    okl "unlocked as /dev/mapper/$MAP"
+  fi
+  [[ $(lsblk -dno FSTYPE,UUID "/dev/mapper/$MAP" | xargs) == "btrfs ${SPEC[btrfs.uuid]}" ]] \
+    || { cryptsetup close "$MAP"; die "the unlocked device is not the declared btrfs ${SPEC[btrfs.uuid]} -- locked again"; }
+  mkdir -p "$MNT/home" "$MNT/root"
+  findmnt -M "$MNT/home" >/dev/null || mount -o "subvol=@home,${SPEC[btrfs.options]}" "/dev/mapper/$MAP" "$MNT/home" || die "mount @home failed"
+  findmnt -M "$MNT/root" >/dev/null || mount -o "subvol=@,${SPEC[btrfs.options]}" "/dev/mapper/$MAP" "$MNT/root" || die "mount @ failed"
+  dest_mounted || die "$MNT is not mounted as declared"
+  dest_resolve
+  migrate_path_ok dest "$DEST_HOME" >/dev/null || die "$(migrate_path_ok dest "$DEST_HOME")"
+  okl "@home on $MNT/home, @ on $MNT/root; $M_USER is $U_UID:$U_GID on both systems"
+  if [[ ! -d $EVD ]]; then
+    install -d -o "$U_UID" -g "$U_GID" -m 0700 "$EVD"
+    # What the clean install made, before any pass: never written over (unless overwrite).
+    local i
+    {
+      find "$DEST_HOME" -mindepth 1 -maxdepth 6 -not -path "$EVD" -not -path "$EVD/*" -printf 'home:%P\n'
+      for ((i = 0; i < ENTRIES; i++)); do
+        [[ ${E_SCOPE[i]} == root && ( -e $DEST_ROOT${E_PATH[i]} || -L $DEST_ROOT${E_PATH[i]} ) ]] && printf 'root:%s\n' "${E_PATH[i]}"
+      done
+    } > "$EVD/clean-install"
+    ledger "opened first $(wc -l < "$EVD/clean-install") clean-install paths"
+    okl "first open: recorded the clean install's $(wc -l < "$EVD/clean-install") paths; they are never written over"
+  else
+    ledger "opened"
+    sealed && say "note: this ledger is SEALED ($(last_event sealed | cut -d' ' -f1)) -- no copy pass will run"
+  fi
+}
+open_state() {  # for every other SATA command: the disk must be open, the ledger present
+  dest_mounted || die "the new disk is not open -- sudo $0 $host open"
+  dest_resolve
+  [[ -d $EVD ]] || die "no ledger at $EVD -- run open first"
+}
+do_copy() {  # do_copy bulk|final
+  local pass=$1
+  need_root; open_state; lock
+  sealed && die "the ledger is SEALED ($(last_event sealed | cut -d' ' -f1)): the new system may have booted and written its own state since. A copy now could overwrite it. Start a new migration deliberately (move $EVD aside)."
+  if [[ $pass == final ]]; then
+    [[ -n $(last_event frozen) ]] || die "not frozen -- sudo $0 $host freeze first"
+    quiesce_check stacks
+  fi
+  validate_static; validate_pass "$pass"; report_viol
+  head1 "$pass pass: $SRC_HOME -> $DEST_HOME"
+  copy_pass "$pass"
+  chown "$U_UID:$U_GID" "$EVD/ledger"
+  head1 "$pass pass complete."
+  [[ $pass == bulk ]] && say "next: close the apps, then  sudo $0 $host freeze" || say "next:  sudo $0 $host verify"
+}
+do_freeze() {
+  need_root; open_state; lock
+  sealed && die "the ledger is sealed"
+  validate_static; quiesce_check; report_viol
+  local e; for e in "${DUMPS[@]+"${DUMPS[@]}"}"; do freeze_dump "$e"; done
+  record_evidence
+  chown -R "$U_UID:$U_GID" "$EVD"
+  ledger "frozen"
+  head1 "Frozen. From here until the final pass: no app opened, no repository touched."
+  say "next:  history -a   then  sudo $0 $host final"
+}
+do_verify() {
+  need_root; open_state
+  head1 "Verify: the new disk against SATA, byte for byte (rsync --checksum, dry run)"
+  local fc fr lc i s d x out n e name
+  fc=$(line_of 'final-complete'); fr=$(line_of 'frozen')
+  lc=$(line_of 'start|done|fail|interrupted|start-pass|bulk-complete|final-complete')
+  if [[ -z $fc || -z $fr || $fr -gt $fc || $lc != "$fc" ]]; then
+    badl "the ledger does not end in a complete final pass after the freeze -- last: $(tail -1 "$EVD/ledger" | cut -d' ' -f2-)"
+  else
+    okl "ledger: frozen, then a complete final pass, nothing after it"
+  fi
+  for ((i = 0; i < ENTRIES; i++)); do
+    s=$(src_of "$i"); d=$(dst_of "$i")
+    [[ -e $s || -L $s ]] || continue
+    x=$(exclude_file "$i" "$s")
+    if [[ -d $s && ! -L $s ]]; then out=$(rsync -aHAXn --numeric-ids -x --checksum --delete --itemize-changes --exclude-from="$x" "$s/" "$d/" 2>&1)
+    else out=$(rsync -aHAXn --numeric-ids --checksum --itemize-changes "$s" "$d" 2>&1); fi
+    rm -f "$x"
+    if [[ -z $out ]]; then okl "$(key_of "$i")"
+    else n=$(wc -l <<<"$out"); badl "$(key_of "$i"): $n difference(s)"; head -5 <<<"$out" | sed 's/^/      /'; fi
+  done
+  for e in "${DUMPS[@]+"${DUMPS[@]}"}"; do
+    IFS='|' read -r name _ <<<"$e"
+    [[ $(sha256sum "$EVD/$name/$name.dump" | awk '{print $1}') == "$(cat "$EVD/$name/$name.dump.sha256")" ]] \
+      && okl "$name dump intact" || badl "$name dump does not match its recorded sha256"
+  done
+  if ((FAILS)); then ledger "verify-failed $FAILS"; head1 "VERIFY FAILED ($FAILS). Do not close and boot: run the pass again, then verify."; exit 1; fi
+  ledger "verified"; chown "$U_UID:$U_GID" "$EVD/ledger"
+  head1 "Verified: every entry is identical on the new disk."
+  say "next:  sudo $0 $host close"
+}
+do_close() {
+  need_root
+  if dest_mounted; then
+    dest_resolve
+    local v s; v=$(line_of verified); s=$(line_of 'start|done|fail|interrupted|start-pass|final-complete|frozen')
+    if [[ -n $v && ( -z $s || $v -gt $s ) ]] && ! sealed; then ledger "sealed"; okl "ledger sealed: verified, nothing copied since"; fi
+    sealed || say "note: NOT sealed -- the last pass was not verified"
+    sync; umount "$MNT/root" "$MNT/home" || die "could not unmount $MNT"
+  fi
+  if [[ -e /dev/mapper/$MAP ]]; then cryptsetup close "$MAP" || die "could not lock /dev/mapper/$MAP"; fi
+  [[ ! -e /dev/mapper/$MAP ]] && ! findmnt -M "$MNT/home" >/dev/null && okl "unmounted and locked"
+  say "next:  sudo provision/provision $host --boot-next && systemctl reboot"
+}
+do_status() {
+  if dest_mounted; then dest_resolve; else EVD=$SRC_HOME/$EVD_NAME; fi
+  [[ -f $EVD/ledger ]] || { say "no ledger at $EVD (on SATA: the disk is not open, or never was)"; return 0; }
+  head1 "Ledger: $EVD/ledger"
+  tail -25 "$EVD/ledger" | sed 's/^/  /'
+}
+do_plan() {
+  head1 "migrate plan -- host $host, user $M_USER ($U_UID:$U_GID), manifest ${manifest#"$repo"/}"
+  local i s d state sz mounted=0
+  if dest_mounted; then dest_resolve; mounted=1; okl "new disk open: $DEST_HOME"
+  else say "new disk not open: destination checks wait for 'open'"; DEST_HOME=$MNT/home/$M_USER; EVD=$DEST_HOME/$EVD_NAME; fi
+  validate_static
+  ((mounted)) && validate_pass final
+  printf '\n  %-6s %-52s %8s  %s\n' phase entry size "destination"
+  for ((i = 0; i < ENTRIES; i++)); do
+    s=$(src_of "$i"); d=$(dst_of "$i")
+    if [[ -e $s || -L $s ]]; then sz=$(du -sh "$s" 2>/dev/null | cut -f1); else sz=missing; fi
+    if ((mounted)); then
+      if [[ -e $d || -L $d ]]; then in_clean "$(key_of "$i")" && state='CLEAN INSTALL' || state='copied before'; else state=absent; fi
+    else state='-'; fi
+    printf '  %-6s %-52s %8s  %s\n' "${E_PHASE[i]}" "$(key_of "$i")${E_FROM[i]:+ <- ${E_FROM[i]}}" "$sz" "$state"
+  done
+  ((${#VIOL[@]})) && { head1 "Would refuse:"; printf '  \033[31m✗\033[0m %s\n' "${VIOL[@]}"; } || { head1 "No refusals."; }
+  local pids p; for p in "${QUIESCE[@]+"${QUIESCE[@]}"}"; do pids=$(pgrep -u "$U_UID" -x "$p" | tr '\n' ' '); [[ -n $pids ]] && say "running now (must be closed for the freeze): $p ($pids)"; done
+  ((mounted)) && [[ -f $EVD/ledger ]] && { head1 "Ledger (last 5)"; tail -5 "$EVD/ledger" | sed 's/^/  /'; }
+  return 0
+}
+
+# ── On the new system ───────────────────────────────────────────────────────────────────
+new_state() {
+  need_user
+  DEST_HOME=$HOME EVD=$HOME/$EVD_NAME
+  [[ -f $EVD/ledger ]] || die "no evidence at $EVD -- is this the new system?"
+}
+do_restore() {  # do_restore <name>
+  local name=$1 e project c compose svc d want got
+  new_state
+  for e in "${DUMPS[@]+"${DUMPS[@]}"}"; do [[ ${e%%|*} == "$name" ]] && IFS='|' read -r _ project c compose svc <<<"$e"; done
+  [[ -n ${c:-} ]] || die "no dump named '$name' in the manifest"
+  d=$EVD/$name
+  head1 "Restore $name into a fresh $c"
+  [[ $(sha256sum "$d/$name.dump" | awk '{print $1}') == "$(cat "$d/$name.dump.sha256")" ]] || die "the dump does not match its recorded sha256"
+  okl "dump intact ($(du -h "$d/$name.dump" | cut -f1))"
+  db_up "$c" "$HOME/$compose" "$svc" || die "$c did not come up healthy"
+  want=$(grep -oE '[0-9]+' "$d/postgres-version" | head -1); got=$(dexec "$c" postgres --version | grep -oE '[0-9]+' | head -1)
+  [[ $want == "$got" ]] || die "PostgreSQL $got here, $want at the freeze -- restore refuses across major versions"
+  okl "PostgreSQL major $got, as at the freeze"
+  [[ $(psql_in "$c" "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')") == 0 ]] \
+    || die "$c already has tables -- restore never merges into an existing database"
+  okl "the database is empty"
+  dexec -i "$c" sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error --single-transaction' < "$d/$name.dump" \
+    || die "pg_restore failed -- nothing was committed (single transaction)"
+  psql_in "$c" "$ROWCOUNT_SQL" > "$d/rowcounts.restored"
+  if cmp -s "$d/rowcounts" "$d/rowcounts.restored"; then
+    okl "restored: $(wc -l < "$d/rowcounts") tables, row counts identical to the freeze"
+    ledger "restored $name"
+  else
+    diff "$d/rowcounts" "$d/rowcounts.restored" | head -10 | sed 's/^/      /'
+    die "row counts differ from the freeze"
+  fi
+}
+do_accept() {
+  new_state
+  head1 "Accept: this system against the evidence recorded at the freeze ($(sed -n 's/^recorded //p' "$EVD/summary"))"
+  [[ -n $(last_event verified) ]] && okl "the copy was verified byte for byte before the first boot" || badl "the ledger has no verified pass"
+  [[ -n $(last_event sealed) ]] && okl "the ledger was sealed at close" || badl "the ledger was never sealed"
+  local r slug diffs i f want got n e name
+  while IFS= read -r r; do
+    slug=${r//\//__}
+    if [[ ! -d $HOME/$r ]]; then badl "git $r: missing"; continue; fi
+    diffs=$(diff <(cat "$EVD/git/$slug.rec") <(git_record "$HOME/$r" 2>&1))
+    if [[ -z $diffs ]]; then okl "git $r: $(sed -n 's/^head //p' "$EVD/git/$slug.rec" | cut -c1-40)$(grep -c '^stash' "$EVD/git/$slug.rec" | sed 's/^0$//;s/^\(.\+\)$/, \1 stash/')$(grep -c '^status' "$EVD/git/$slug.rec" | sed 's/^0$//;s/^\(.\+\)$/, \1 dirty or untracked/')"
+    else badl "git $r differs from the freeze:"; head -6 <<<"$diffs" | sed 's/^/      /'; fi
+  done < "$EVD/git/repos"
+  for ((i = 0; i < ENTRIES; i++)); do
+    has "$i" digest || continue
+    f=$EVD/digest/${E_PATH[i]//\//__}.sha256
+    diffs=$(diff "$f" <(digest_of "$HOME" "$i"))
+    [[ -z $diffs ]] && okl "${E_PATH[i]}: $(wc -l < "$f") files, every sha256 identical" \
+                    || { badl "${E_PATH[i]}: content differs"; head -6 <<<"$diffs" | sed 's/^/      /'; }
+  done
+  # Every path recorded must still have its owner and mode; paths that exist only now are not
+  # this check's business (nomarchy's own ~/.ssh/config link, a gpg lock file).
+  local path om mode typ now bad=0
+  while IFS=$'\t' read -r path om mode typ; do
+    [[ $path == /* ]] && f=$path || f=$HOME/$path
+    now=$(stat -c '%u:%g	%a' "$f" 2>/dev/null) || now=missing
+    [[ $now == "$om	$mode" ]] || { ((bad++ < 6)) && say "    $path: $now, was $om $mode"; }
+  done < "$EVD/private"
+  ((bad == 0)) && okl "private: $(wc -l < "$EVD/private") paths, owner and mode identical" \
+               || badl "private: $bad path(s) with a different owner or mode, or missing"
+  diffs=$(diff "$EVD/ssh-fingerprints" <(ssh_fps "$HOME" ""))
+  [[ -z $diffs ]] && okl "ssh: $(wc -l < "$EVD/ssh-fingerprints") client and host key fingerprints identical" \
+                  || { badl "ssh fingerprints differ"; head -6 <<<"$diffs" | sed 's/^/      /'; }
+  diffs=$(diff "$EVD/gpg-secret-keys" <(gpg_fps))
+  [[ -z $diffs ]] && okl "gpg: secret key(s) $(tr '\n' ' ' < "$EVD/gpg-secret-keys")present" \
+                  || { badl "gpg secret keys differ"; head -4 <<<"$diffs" | sed 's/^/      /'; }
+  while read -r name want; do
+    got='?'
+    for e in "${COUNTS[@]}"; do [[ ${e%%|*} == "$name" ]] && { IFS='|' read -r _ f r <<<"$e"; got=$(count_of "$HOME" "$f" "$r"); }; done
+    [[ $got == "$want" ]] && okl "count $name: $got" || badl "count $name: $got here, $want at the freeze"
+  done < "$EVD/counts"
+  if [[ -f $EVD/thunderbird-profiles ]]; then
+    while IFS= read -r f; do [[ -d $HOME/.thunderbird/$f ]] && okl "thunderbird default profile $f present" || badl "thunderbird profile $f missing"; done < "$EVD/thunderbird-profiles"
+  fi
+  for e in "${DUMPS[@]+"${DUMPS[@]}"}"; do
+    name=${e%%|*}
+    [[ -n $(last_event "restored $name") ]] && okl "database $name restored, row counts identical" || badl "database $name not restored -- $0 $host restore-$name"
+  done
+  local p; p=$(ls "$HOME"/.password-store/*.gpg 2>/dev/null | head -1)
+  if [[ -n $p ]]; then
+    say "decrypting one pass entry (a pinentry prompt may appear: your GPG passphrase)"
+    if gpg --quiet --decrypt "$p" >/dev/null 2>&1; then okl "pass decrypts ($(basename "$p"))"
+    else badl "pass entry $(basename "$p") does not decrypt"; fi
+  fi
+  local st; st=$("$repo/common/scripts/nomarchy" status 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  if grep -qE '^[0-9]+ ok, [0-9]+ to do, 0 conflicts' <<<"$st"; then okl "nomarchy status: $(grep -E '^[0-9]+ ok' <<<"$st" | tail -1)"
+  else badl "nomarchy status: $(grep -E '^[0-9]+ ok' <<<"$st" | tail -1)"; fi
+  grep -E '^\s+→' <<<"$st" | sed 's/^/      /'
+  head1 "Still by hand (not automatable here):"
+  say "$0 $host accept-remote      after: ssh-add ~/.ssh/id_ed25519_github ~/.ssh/id_ed25519_waylab ~/.ssh/id_ed25519_homelab ~/.ssh/id_ed25519_vps ~/.ssh/id_ed25519_caesar_to_rigel"
+  say "on rigel: ssh -o BatchMode=yes -o StrictHostKeyChecking=yes caesar true   (no host-key warning)"
+  say "from rigel: ssh meanpete@caesar   (his password is accepted)"
+  say "open Thunderbird, Obsidian (vault: Revline HQ), OpenDeck (profiles); sign Firefox in to Sync"
+  if ((FAILS)); then ledger "accept-failed $FAILS"; head1 "ACCEPTANCE FAILED ($FAILS)."; exit 1; fi
+  ledger "accepted"; head1 "Accepted."
+}
+do_accept_remote() {
+  new_state
+  head1 "Accept, remote: this system's SSH identity against the real hosts"
+  [[ -n $(ssh-add -l 2>/dev/null | grep -v 'no identities') ]] || die "the agent holds no keys -- ssh-add them first (BatchMode cannot prompt)"
+  local out rc h unproven=0
+  out=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -T git@github.com 2>&1)
+  # GitHub has no shell and exits 1 even on success: its reply is the verdict.
+  grep -q 'successfully authenticated' <<<"$out" && okl "github.com: $(grep -o 'Hi [^!]*' <<<"$out")" || badl "github.com: $out"
+  while IFS= read -r h; do
+    out=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "$h" true 2>&1); rc=$?
+    if ((rc == 0)); then okl "$h"
+    elif grep -qiE 'timed out|no route|unreachable|could not resolve|connection refused' <<<"$out"; then
+      printf '  \033[33m?\033[0m %s: NOT PROVEN -- %s\n' "$h" "$(tail -1 <<<"$out")"; unproven=$((unproven + 1))
+    else badl "$h (exit $rc): $(tail -1 <<<"$out")"; fi
+  done < "$EVD/ssh-hosts"
+  if ((FAILS)); then ledger "accept-remote-failed $FAILS"; head1 "IDENTITY FAILURES ($FAILS)."; exit 1; fi
+  ((unproven)) && { ledger "accept-remote-incomplete $unproven"; head1 "No identity failures; $unproven host(s) unreachable, so NOT PROVEN -- rerun when they are up."; exit 2; }
+  ledger "accepted-remote"; head1 "Remote identity accepted."
+}
+
+case $cmd in
+  plan)          do_plan ;;
+  open)          do_open ;;
+  bulk)          do_copy bulk ;;
+  freeze)        do_freeze ;;
+  final)         do_copy final ;;
+  verify)        do_verify ;;
+  close)         do_close ;;
+  status)        do_status ;;
+  restore-*)     do_restore "${cmd#restore-}" ;;
+  accept)        do_accept ;;
+  accept-remote) do_accept_remote ;;
+  *)             die "unknown command '$cmd' (--help)" ;;
+esac

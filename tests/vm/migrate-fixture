@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# migrate-fixture -- disposable "SATA" data for the migration rehearsal. Runs INSIDE the
+# rescue VM, as peter (tests/vm/rc runs it); every secret here is generated on the spot and
+# named VM-REHEARSAL-ONLY. It stands in for each kind of thing docs/cutover/03 migrates, with
+# the state that is easy to lose:
+#   git       a repo with an unpushed commit, a local-only branch, a stash, a dirty tracked
+#             file, an untracked file, an ignored .env, an ignored node_modules (carried) and a
+#             CACHEDIR.TAG'd target/ (not carried); shelf as a migrated build checkout
+#   private   ssh keys 0600 in a 0700 dir, a gpg key, config.local, gh and subliminal logins,
+#             Claude and Codex credentials -- with nomarchy's ~/.ssh/config link beside them
+#   data      Legal with an Obsidian vault (a space in its name), a unicode file name, a
+#             hard-linked pair, an xattr, a 0640 file; Notes; Archive with OpenDeck profiles
+#             and a 600 MB file big enough to interrupt; pass entries encrypted to the key
+#   database  a Revline stand-in: the same postgres:16-alpine image, rows in two schemas
+# Expects ~/Pictures (the wallpapers) and ~/rigel.pub (rigel's PUBLIC key) already copied in.
+set -euo pipefail
+cd ~
+
+# ── Tools the rescue image lacks (a throwaway overlay; the real SATA has rsync and docker). ─
+sudo pacman -Sy --noconfirm --needed rsync docker docker-compose >/dev/null
+sudo systemctl start docker
+sudo usermod -aG docker peter          # the freeze runs docker as peter; a new login has the group
+
+# ── git ─────────────────────────────────────────────────────────────────────────────────
+mkdir -p remotes code
+git init -q --bare remotes/demo.git
+git init -q -b main code/demo
+cd code/demo
+git config user.email rc@invalid; git config user.name 'VM-REHEARSAL-ONLY'
+printf 'target/\nnode_modules/\n.env\n' > .gitignore
+echo one > a.txt; git add .; git commit -qm one
+git remote add origin ~/remotes/demo.git; git push -q origin main
+echo two >> a.txt; git commit -qam 'two (unpushed)'
+git switch -qc wip; echo w > w.txt; git add w.txt; git commit -qm 'wip (local-only branch)'; git switch -q main
+echo stashed >> a.txt; git stash -q
+echo dirty >> a.txt
+echo untracked > u.txt
+echo 'SECRET=VM-REHEARSAL-ONLY' > .env
+mkdir -p node_modules/x && echo 'module.exports = 1' > node_modules/x/index.js
+mkdir -p target/debug && printf 'Signature: 8a477f597d28d172789f06886806bc55\n' > target/CACHEDIR.TAG
+head -c 1M /dev/urandom > target/debug/artifact
+cd ~
+git clone -q https://github.com/litescript/shelf.git code/shelf
+echo VM-REHEARSAL-ONLY > code/shelf/.rc-migrated-marker
+ln -s ~/Projects/nomarchy/common/browse_alias code/browse_alias    # nomarchy's link, as on SATA
+mkdir -p code/.stfolder
+echo 'VM-REHEARSAL-ONLY working notes' > Projects/nomarchy/CLAUDE_NOTES.md   # ignored, precious
+
+# ── gpg + pass ──────────────────────────────────────────────────────────────────────────
+gpg --batch --quiet --passphrase '' --quick-gen-key 'VM-REHEARSAL-ONLY <rc@invalid>' default default never
+fpr=$(gpg --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')
+mkdir -p .password-store/email .password-store/web
+echo "$fpr" > .password-store/.gpg-id
+for e in email/example web/forum; do
+  echo "VM-REHEARSAL-ONLY $e" | gpg --batch --yes --quiet -e -r "$fpr" -o ".password-store/$e.gpg"
+done
+git -C .password-store init -q -b main
+git -C .password-store -c user.email=rc@invalid -c user.name=rc add . && git -C .password-store -c user.email=rc@invalid -c user.name=rc commit -qm init
+
+# ── ssh ─────────────────────────────────────────────────────────────────────────────────
+chmod 700 .ssh
+cat rigel.pub >> .ssh/authorized_keys && rm rigel.pub          # the harness key is already there
+for k in github homelab waylab vps caesar_to_rigel; do
+  ssh-keygen -q -t ed25519 -N '' -C "VM-REHEARSAL-ONLY $k" -f ".ssh/id_ed25519_$k"
+done
+printf '# VM-REHEARSAL-ONLY\nHost vps\n  HostName 192.0.2.1\n' > .ssh/config.local; chmod 600 .ssh/config.local
+echo 'rc.invalid ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIVMREHEARSALONLYVMREHEARSALONLYxxxxxxxxxxx' > .ssh/known_hosts; chmod 600 .ssh/known_hosts
+ln -s ~/Projects/nomarchy/common/ssh/config .ssh/config            # nomarchy's link, as on SATA
+mkdir -p .ssh/agent && touch .ssh/agent/s.dead
+
+# ── .config ─────────────────────────────────────────────────────────────────────────────
+install -d -m 711 .config/gh;          printf 'github.com:\n    user: vm-rehearsal-only\n' > .config/gh/hosts.yml; chmod 600 .config/gh/hosts.yml
+install -d -m 700 .config/subliminal;  echo '# VM-REHEARSAL-ONLY' > .config/subliminal/subliminal.toml; chmod 600 .config/subliminal/subliminal.toml
+mkdir -p .config/irides;               printf '[devices]\ng213 = true\n' > .config/irides/lighting.toml
+mkdir -p .config/obsidian;             echo '{"vaults":{"rc":{"path":"/home/peter/Legal/Revline/Revline HQ","open":true}}}' > .config/obsidian/obsidian.json
+
+# ── user data ───────────────────────────────────────────────────────────────────────────
+v='Legal/Revline/Revline HQ'
+mkdir -p "$v/.obsidian" "$v/Clients" Notes Archive/omarchy-rescue/opendeck/config/profiles
+for n in Index Pricing Clients/Acme; do echo "# $n -- VM-REHEARSAL-ONLY" > "$v/$n.md"; done
+echo '{"theme":"obsidian"}' > "$v/.obsidian/app.json"
+echo 'unicode' > 'Legal/Übersicht – ☃.md'
+echo 'linked' > Legal/hardlink-a; ln Legal/hardlink-a Legal/hardlink-b
+echo 'tagged' > Legal/xattr.txt; setfattr -n user.nomarchy -v rc Legal/xattr.txt
+echo 'restricted' > Legal/restricted.txt; chmod 640 Legal/restricted.txt
+for n in 1 2 3; do echo "note $n" > "Notes/note-$n.md"; done
+ln -s note-1.md Notes/latest.md
+echo '{"deviceSettings":{}}' > Archive/omarchy-rescue/opendeck/config/settings.json
+echo '{"name":"Default","keys":[]}' > Archive/omarchy-rescue/opendeck/config/profiles/Default.json
+head -c 600M /dev/urandom > Archive/big.bin
+
+# ── live app state (final pass) ─────────────────────────────────────────────────────────
+mkdir -p .thunderbird/m4xrexpp.default-release
+printf '[Profile0]\nName=default-release\nIsRelative=1\nPath=m4xrexpp.default-release\nDefault=1\n\n[Install0]\nDefault=m4xrexpp.default-release\n' > .thunderbird/profiles.ini
+echo 'user_pref("mail.rc", "VM-REHEARSAL-ONLY");' > .thunderbird/m4xrexpp.default-release/prefs.js
+mkdir -p .claude/projects/-home-peter-code-demo .claude/cache .claude/shell-snapshots
+echo '{"claudeAiOauth":"VM-REHEARSAL-ONLY"}' > .claude/.credentials.json; chmod 600 .claude/.credentials.json
+for s in s1 s2; do echo '{"type":"user","message":"VM-REHEARSAL-ONLY"}' > ".claude/projects/-home-peter-code-demo/$s.jsonl"; done
+echo '{"display":"rc"}' > .claude/history.jsonl
+echo '{}' > .claude/settings.json; echo 'old' > .claude/history.jsonl.pre-merge.bak
+echo 'cache' > .claude/cache/x; echo 'snap' > .claude/shell-snapshots/x
+echo '{"oauthAccount":"VM-REHEARSAL-ONLY"}' > .claude.json; chmod 600 .claude.json
+mkdir -p .codex/sessions/2026/09/28 .codex/packages/standalone/bin
+echo '{"tokens":"VM-REHEARSAL-ONLY"}' > .codex/auth.json; chmod 600 .codex/auth.json
+echo '{"id":"r1"}' > .codex/sessions/2026/09/28/rollout-1.jsonl
+echo '{"text":"rc"}' > .codex/history.jsonl; echo 'model = "rc"' > .codex/config.toml
+head -c 64K /dev/urandom > .codex/state_5.sqlite; head -c 64K /dev/urandom > .codex/logs_2.sqlite
+head -c 1M /dev/urandom > .codex/packages/standalone/bin/codex
+printf 'ls\ncd code\n' > .bash_history
+
+# ── the Revline stand-in ────────────────────────────────────────────────────────────────
+mkdir -p code/revline/infra
+cat > code/revline/infra/docker-compose.yml <<'YAML'
+name: revline
+services:
+  db:
+    image: postgres:16-alpine@sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416
+    environment:
+      POSTGRES_USER: revline
+      POSTGRES_PASSWORD: vm-rehearsal-only
+      POSTGRES_DB: revline
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U revline -d revline"]
+      interval: 2s
+      retries: 60
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+volumes:
+  pg_data:
+YAML
+git -C code/revline init -q -b dev
+printf '.env\n' > code/revline/.gitignore; echo 'POSTGRES_PASSWORD=VM-REHEARSAL-ONLY' > code/revline/.env
+git -C code/revline -c user.email=rc@invalid -c user.name=rc add . && git -C code/revline -c user.email=rc@invalid -c user.name=rc commit -qm stack
+sudo docker compose -f code/revline/infra/docker-compose.yml up -d --wait db >/dev/null
+sudo docker exec revline-db-1 psql -q -U revline -d revline -c "
+  CREATE TABLE vehicles (id serial PRIMARY KEY, name text);
+  INSERT INTO vehicles (name) SELECT 'car ' || g FROM generate_series(1, 1234) g;
+  CREATE SCHEMA audit;
+  CREATE TABLE audit.\"Log\" (id serial PRIMARY KEY, at timestamptz DEFAULT now());
+  INSERT INTO audit.\"Log\" DEFAULT VALUES; INSERT INTO audit.\"Log\" DEFAULT VALUES;"
+echo "fixture ready: $(du -sh ~ 2>/dev/null | cut -f1) in ~; revline-db-1 $(sudo docker inspect -f '{{.State.Health.Status}}' revline-db-1)"

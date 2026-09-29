@@ -26,12 +26,14 @@
 #
 # The chain `run` drives: rescue boots -> gate tests (the never gate must refuse the rescue
 # and decoy disks, the identity gate a wrong serial) -> provision/provision caesar --apply
-# (the serial typed back through a real tty) -> docs/cutover/03 §9 in miniature: the XPG
-# opened on the rescue system, the migration's path gate, a bulk pass of stand-in user data
-# into it -> power off -> firmware boots the XPG via BootNext -> systemd-boot -> initramfs
-# -> sd-encrypt -> btrfs -> nomarchy install base, desktop, host (after an account
+# (the serial typed back through a real tty) -> the cutover migration with the real tool
+# (docs/cutover/03 §9, migrate/migrate) on disposable data from tests/vm/migrate-fixture:
+# every hostile case refused, then open, bulk (interrupted once), freeze, final (failing
+# once), verify, close -> power off -> firmware boots the XPG via BootNext -> systemd-boot ->
+# initramfs -> sd-encrypt -> btrfs -> nomarchy install base, desktop, host (after an account
 # collision that must refuse it whole), storage, link, host again -> reboot into the
-# graphical session -> link again -> --finalize-nvram -> tests/snapper-recovery -> status.
+# graphical session -> restore-revline, accept (and two tamperings it must catch) -> link
+# again -> --finalize-nvram -> tests/snapper-recovery -> status.
 #
 # VM-only, never on metal, all of it rehearsal plumbing rather than nomarchy:
 #   - secrets in <dir>/vm-secrets/, generated per build and named VM-REHEARSAL-ONLY. The
@@ -45,10 +47,11 @@
 #   - ONE more, keep.untouched becomes the FreeSpace stand-in's UUID, for the same reason.
 #   - NOPASSWD sudo, a harness ssh key, a blackhole route for 192.168.1.0/24 (caesar's NAS,
 #     UPS and backups must not be reachable from a rehearsal), and stand-ins for the steps a
-#     human does by hand: the NUT password, a Noctalia location, and the private state
-#     nomarchy checks for but never carries -- ssh keys, config.local, logins -- all made
-#     here, named VM-REHEARSAL-ONLY. Two things are deliberately NOT stood in, and the final
-#     status must show exactly those two as to do: caesar's LAN address and Pete's GPG key.
+#     human does by hand: the NUT password and a Noctalia location. The private state
+#     nomarchy checks for but never carries -- ssh keys, config.local, logins, a gpg key --
+#     is made on the rescue system by tests/vm/migrate-fixture (VM-REHEARSAL-ONLY) and
+#     arrives the way Pete's will: migrated. The final status must show exactly two things
+#     to do: caesar's LAN address and Pete's own GPG key, which no rehearsal may have.
 
 set -uo pipefail
 
@@ -234,15 +237,16 @@ clone_into_vm() {  # the committed HEAD of this checkout, with the ONE VM substi
   vm_ssh "sed -i 's/^keep.untouched .*/# VM substitution by tests\/vm\/rc: the FreeSpace stand-in, not caesar'\\''s sda3\nkeep.untouched      $fu/' ~/Projects/nomarchy/hosts/caesar/storage/layout"
   echo "VM substitution: keep.untouched -> $fu" >>"$LOG"
 }
-status_to_do() {  # status_to_do <phrase>...: each phrase appears on a "to do" (→) line of status
-  local out p; out=$(vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy status' 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
-  printf '%s\n' "$out" | grep -E '^\s+(→|✗)'
-  for p; do grep -E '^\s+→ ' <<<"$out" | grep -qF -- "$p" || { echo "(not reported as to do: $p)"; return 1; }; done
-}
 vm_expect() {  # vm_expect <command> <phrase>...: output goes to the log; every phrase must appear
   local out p; out=$(vm_ssh "$1" 2>&1); printf '%s\n' "$out"; shift
   for p; do grep -qF -- "$p" <<<"$out" || { echo "(missing: $p)"; return 1; }; done
 }
+hostile() {  # hostile <description> <manifest body> <phrase>...: a manifest that must be refused
+  local d=$1 body=$2; shift 2
+  printf 'user peter\n%s\n' "$body" | vm_ssh 'cat > /tmp/rc-hostile.manifest'
+  check "$d" vm_expect "cd ~/Projects/nomarchy && sudo migrate/migrate caesar bulk --manifest /tmp/rc-hostile.manifest; echo exit=\$?" "$@" 'REFUSED -- nothing was copied' 'exit=1'
+}
+dest_unchanged() { diff "$WD/dest-before" <(vm_ssh 'sudo find /mnt/caesar-new/home/peter -mindepth 1 -not -path "*/cutover-evidence*" | sort'); }
 typed_serial_refused() {  # a wrong serial at the prompt: refused, and the XPG still blank
   local out; out=$(vm_tty 'nope
 ' 'cd ~/Projects/nomarchy && sudo provision/provision caesar --apply --vm-secrets ~/vm-secrets' 2>&1)
@@ -343,38 +347,81 @@ VMEOF
   check "NVRAM: new entry, BootNext set, BootOrder not led by it" \
     vm_ssh 'o=$(efibootmgr); n=$(sed -n "s/^Boot\([0-9A-F]*\)\*\? Nomarchy (caesar XPG).*/\1/p" <<<"$o"); [ -n "$n" ] && grep -q "^BootNext: $n" <<<"$o" && ! grep -q "^BootOrder: $n" <<<"$o"'
 
-  step "docs/cutover/03 §9 in miniature: the new disk opened on the rescue system, the path gate, a bulk pass"
-  # Stand-in user data on the rescue system: the wallpapers the Irides blueprints pin, and a
-  # git working tree with state GitHub does not have (an untracked file), as a migrated
-  # checkout would. `link` must build shelf from it rather than cloning.
-  vm_ssh 'mkdir -p ~/Pictures ~/code' && for f in f40.png synthwave-nsx.jpg cyberpunk-countach.jpg; do vm_scp "$HOME/Pictures/$f" peter@127.0.0.1:Pictures/; done
-  vm_ssh 'git clone -q https://github.com/litescript/shelf.git ~/code/shelf && echo VM-REHEARSAL-ONLY > ~/code/shelf/.rc-migrated-marker' >>"$LOG" 2>&1
-  # The real SATA install has rsync (base stage); a rescue image built before it was added
-  # to build_root's list does not. A throwaway overlay, so a -Sy here harms nothing.
-  vm_ssh 'command -v rsync >/dev/null || sudo pacman -Sy --noconfirm --needed rsync' >>"$LOG" 2>&1
-  # A must: every check below judges paths by the filesystem under them, so with nothing
-  # mounted they would be judging the rescue root's empty directories.
-  must "the new disk opened by its LUKS UUID, @home and the stand-in mounted" \
-    vm_ssh "sudo cryptsetup open /dev/disk/by-uuid/df147db6-fe3c-4385-9a3b-6140dc390f29 cryptnew --key-file ~/vm-secrets/luks-passphrase \
-    && sudo mkdir -p /mnt/caesar-new/home /mnt/freespace && sudo mount -o subvol=@home /dev/mapper/cryptnew /mnt/caesar-new/home \
-    && sudo mount -o ro,noload /dev/disk/by-id/$FREE_ID-part1 /mnt/freespace && ln -sfn /mnt/freespace ~/rc-link-to-freespace \
-    && findmnt -n /mnt/caesar-new/home && findmnt -n /mnt/freespace"
-  check "path gate allows §9's topology: source on the rescue root, destination on the new btrfs" \
-    vm_expect 'cd ~/Projects/nomarchy && migrate/check-path caesar source /home/peter/Pictures /home/peter/code && migrate/check-path caesar dest /mnt/caesar-new/home/peter; echo "exit=$?"' \
-      'ok      source /home/peter/Pictures' 'ok      dest /mnt/caesar-new/home/peter' 'exit=0'
-  check "path gate refuses the keep-untouched filesystem as source and as destination, and a link onto it" \
-    vm_expect 'cd ~/Projects/nomarchy; migrate/check-path caesar source /mnt/freespace; echo "a=$?"; migrate/check-path caesar dest /mnt/freespace/new; echo "b=$?"; migrate/check-path caesar source ~/rc-link-to-freespace; echo "c=$?"' \
-      'REFUSED source /mnt/freespace: on a keep-untouched' 'a=1' 'REFUSED dest /mnt/freespace/new: on a keep-untouched' 'b=1' 'REFUSED source /home/peter/rc-link-to-freespace: on a keep-untouched' 'c=1'
-  check "path gate refuses the directions §9 does not have: a destination on SATA, a source on the new disk, a device" \
-    vm_expect 'cd ~/Projects/nomarchy; migrate/check-path caesar dest /home/peter/x; echo "a=$?"; migrate/check-path caesar source /mnt/caesar-new/home/peter; echo "b=$?"; migrate/check-path caesar source /dev/sda; echo "c=$?"' \
-      "REFUSED dest /home/peter/x: not on the new system's btrfs" 'a=1' "REFUSED source /mnt/caesar-new/home/peter: not on the rescue install's root" 'b=1' 'REFUSED source /dev/sda: a device node' 'c=1'
-  vm_ssh 'cd ~/Projects/nomarchy && migrate/check-path caesar source ~/Pictures ~/code && migrate/check-path caesar dest /mnt/caesar-new/home/peter \
-    && sudo rsync -aHAX --numeric-ids -x ~/Pictures ~/code /mnt/caesar-new/home/peter/' >>"$LOG" 2>&1
-  check "bulk pass landed on the new disk, owned by peter by number (uid 1000), untracked file included" \
-    vm_ssh '[ "$(sudo stat -c %u:%g /mnt/caesar-new/home/peter/Pictures/f40.png /mnt/caesar-new/home/peter/code/shelf/.rc-migrated-marker | sort -u)" = 1000:1000 ]'
-  vm_ssh "rm -f ~/rc-link-to-freespace; sudo umount /mnt/freespace /mnt/caesar-new/home && sudo cryptsetup close cryptnew" >>"$LOG" 2>&1
-  must "the new disk closed again, the stand-in unmounted, before the first boot" \
-    vm_ssh "[ ! -e /dev/mapper/cryptnew ] && ! findmnt -S /dev/disk/by-id/$FREE_ID-part1 >/dev/null"
+  step "docs/cutover/03 §9 with the real tool: disposable SATA data (tests/vm/migrate-fixture)"
+  vm_ssh 'mkdir -p ~/Pictures' && for f in f40.png synthwave-nsx.jpg cyberpunk-countach.jpg; do vm_scp "$HOME/Pictures/$f" peter@127.0.0.1:Pictures/; done
+  # rigel's PUBLIC key, which caesar's E check identifies by fingerprint. The VM is reachable
+  # only on 127.0.0.1 of this machine; a public key grants nothing the harness key does not.
+  grep ' peter@rigel$' "$HOME/.ssh/authorized_keys" | vm_ssh 'cat > ~/rigel.pub'
+  must "fixture built on the rescue system" vm_ssh 'cd ~/Projects/nomarchy && tests/vm/migrate-fixture'
+  vm_ssh "sudo mkdir -p /mnt/freespace && sudo mount -o ro,noload /dev/disk/by-id/$FREE_ID-part1 /mnt/freespace && ln -sfn /mnt/freespace ~/rc-link-to-freespace" >>"$LOG" 2>&1
+  local M='cd ~/Projects/nomarchy && sudo migrate/migrate caesar'
+  must "migrate open: identity, unlocked by LUKS UUID, mounted, the clean install recorded" \
+    vm_expect "$M open --key-file ~/vm-secrets/luks-passphrase" 'identity: model, serial and size match' 'first open: recorded the clean install'
+  vm_ssh 'sudo find /mnt/caesar-new/home/peter -mindepth 1 -not -path "*/cutover-evidence*" | sort' > "$WD/dest-before"
+
+  step "migration: every hostile case must REFUSE and copy nothing"
+  check "the clean install's ~/.ssh (the provisioner's VM harness key) is never written over" \
+    vm_expect "$M bulk; echo exit=\$?" 'home:.ssh: /mnt/caesar-new/home/peter/.ssh was created by the clean install' 'REFUSED -- nothing was copied' 'exit=1'
+  hostile "an entry that IS nomarchy-owned (~/.bashrc, its link)" 'entry bulk home .bashrc' 'home:.bashrc: is nomarchy-owned (link .bashrc)'
+  hostile "an entry that CARRIES nomarchy-owned state (~/.ssh without excluding its config link)" \
+    'entry bulk home .ssh private exclude=agent' 'would carry nomarchy-owned .ssh/config (link)'
+  hostile "a missing source" 'entry bulk home Nonexistent' 'home:Nonexistent: source /home/peter/Nonexistent does not exist'
+  hostile "the sda3 stand-in as a source (a root entry)" 'entry bulk root /mnt/freespace' 'on a keep-untouched filesystem'
+  hostile "the sda3 stand-in reached through a symlink in the home" 'entry bulk home rc-link-to-freespace' 'on a keep-untouched filesystem'
+  vm_ssh "mkdir -p ~/Notes/rc-mount && sudo mount -o ro,noload /dev/disk/by-id/$FREE_ID-part1 ~/Notes/rc-mount" >>"$LOG" 2>&1
+  hostile "a filesystem (the sda3 stand-in) mounted inside a source tree" 'entry bulk home Notes' 'a filesystem is mounted inside it, at /home/peter/Notes/rc-mount'
+  vm_ssh 'sudo umount ~/Notes/rc-mount && rmdir ~/Notes/rc-mount' >>"$LOG" 2>&1
+  hostile "overlapping entries" $'entry bulk home Legal\nentry bulk home Legal/Revline' 'home:Legal and home:Legal/Revline overlap'
+  check "an optional missing source is skipped, not refused" \
+    vm_expect "printf 'user peter\nentry bulk home Nonexistent optional\n' > /tmp/rc-opt.manifest && $M bulk --manifest /tmp/rc-opt.manifest; echo exit=\$?" 'skip home:Nonexistent (optional, no source)' 'exit=0'
+  check "no refused run wrote anything to the new disk" dest_unchanged
+
+  step "migration: the real run -- bulk (interrupted once), freeze, final (failing once), verify, close"
+  # VM plumbing, not migration: the provisioner put the harness key in the new home
+  # (--vm-secrets). The migrated ~/.ssh carries the harness key too, so that VM-only
+  # clean-install ~/.ssh is moved aside -- what the refusal above told the operator to do.
+  vm_ssh 'sudo rm -rf /mnt/caesar-new/home/peter/.ssh' >>"$LOG" 2>&1
+  # Interrupted: SIGINT to the whole process group -- a Ctrl+C -- while the 600 MB file
+  # copies, slowed so the moment is not a race.
+  vm_ssh "cd ~/Projects/nomarchy && sudo bash -c 'MIGRATE_RSYNC_EXTRA=--bwlimit=40m setsid migrate/migrate caesar bulk > /tmp/rc-bulk1.log 2>&1 & echo \$! > /tmp/rc-bulk1.pid'" >>"$LOG" 2>&1
+  vm_ssh 'l=/mnt/caesar-new/home/peter/cutover-evidence/ledger; for i in $(seq 480); do sudo grep -q " start bulk home:Archive$" $l && break; sleep 0.5; done; sleep 3
+          sudo kill -INT -- -$(cat /tmp/rc-bulk1.pid); for i in $(seq 60); do sudo kill -0 $(cat /tmp/rc-bulk1.pid) 2>/dev/null || break; sleep 0.5; done; cat /tmp/rc-bulk1.log' >>"$LOG" 2>&1
+  check "an interrupted pass is recorded as such, and nothing claims it finished" \
+    vm_ssh 'l=/mnt/caesar-new/home/peter/cutover-evidence/ledger; sudo tail -3 $l; sudo tail -1 $l | grep -qE " (interrupted|fail) bulk home:Archive" && ! sudo grep -q " done bulk home:Archive" $l'
+  check "verify refuses after an interrupted pass" vm_expect "$M verify; echo exit=\$?" 'the ledger does not end in a complete final pass' 'VERIFY FAILED' 'exit=1'
+  check "the bulk pass, run again, resumes and completes" vm_expect "$M bulk" 'bulk pass complete.'
+  # As nomarchy's link would be: a nomarchy-owned path inside a migrated directory. The final
+  # pass deletes whatever SATA does not have -- but never an excluded path.
+  vm_ssh 'sudo ln -s /home/peter/Projects/nomarchy/common/ssh/config /mnt/caesar-new/home/peter/.ssh/config && sudo chown -h 1000:1000 /mnt/caesar-new/home/peter/.ssh/config' >>"$LOG" 2>&1
+  vm_ssh 'cp /usr/bin/sleep /tmp/thunderbird && { setsid /tmp/thunderbird 600 >/dev/null 2>&1 & }' >>"$LOG" 2>&1
+  check "the freeze refuses while a quiesce'd app runs (a 'thunderbird')" vm_expect "$M freeze; echo exit=\$?" 'thunderbird is running' 'exit=1'
+  vm_ssh 'pkill -x thunderbird' >>"$LOG" 2>&1
+  check "the freeze: Revline dumped and read back, its stack stopped, the evidence recorded" \
+    vm_expect "$M freeze" '2 tables, 1236 rows' 'table-data entries read back' 'revline stopped' 'repositories, each with' 'Frozen.'
+  vm_ssh 'sudo chattr +i /mnt/caesar-new/home/peter/.config' >>"$LOG" 2>&1
+  check "a failing copy stops the final pass, and the ledger says so" vm_expect "$M final; echo exit=\$?" 'failed (rsync exit' 'exit=1'
+  check "verify refuses after a failed final pass" vm_expect "$M verify; echo exit=\$?" 'VERIFY FAILED' 'exit=1'
+  vm_ssh 'sudo chattr -i /mnt/caesar-new/home/peter/.config' >>"$LOG" 2>&1
+  check "the final pass, run again, completes" vm_expect "$M final" 'final pass complete.'
+  check "verify: every entry byte-identical to SATA, the dump intact" vm_expect "$M verify" 'Verified: every entry is identical'
+  check "nomarchy's link inside a migrated directory survived the final pass's --delete" vm_ssh '[ -L /mnt/caesar-new/home/peter/.ssh/config ]'
+  check "carried: .env, node_modules, modes, host keys, xattr, hard link, OpenDeck; not: caches, links, junk" vm_ssh '
+    h=/mnt/caesar-new/home/peter r=/mnt/caesar-new/root
+    sudo test -f $h/code/demo/.env && sudo test -f $h/code/demo/node_modules/x/index.js && ! sudo test -e $h/code/demo/target \
+    && ! sudo test -e $h/code/browse_alias && ! sudo test -e $h/code/.stfolder && ! sudo test -e $h/.ssh/agent \
+    && ! sudo test -e $h/.claude/cache && ! sudo test -e $h/.claude/history.jsonl.pre-merge.bak \
+    && ! sudo test -e $h/.codex/packages && ! sudo test -e $h/.codex/logs_2.sqlite && sudo test -f $h/.codex/state_5.sqlite \
+    && [ "$(sudo stat -c "%a %u:%g" $h/.ssh $h/.ssh/id_ed25519_github $h/.config/subliminal/subliminal.toml $h/.claude/.credentials.json | tr "\n" " ")" = "700 1000:1000 600 1000:1000 600 1000:1000 600 1000:1000 " ] \
+    && sudo cmp /etc/ssh/ssh_host_ed25519_key $r/etc/ssh/ssh_host_ed25519_key && [ "$(sudo stat -c %a $r/etc/ssh/ssh_host_ed25519_key)" = 600 ] \
+    && [ "$(sudo getfattr --only-values -n user.nomarchy $h/Legal/xattr.txt)" = rc ] \
+    && [ "$(sudo stat -c %i $h/Legal/hardlink-a)" = "$(sudo stat -c %i $h/Legal/hardlink-b)" ] \
+    && sudo test -f $h/.config/opendeck/profiles/Default.json'
+  check "close: sealed (verified, nothing copied since), unmounted, locked" vm_expect "$M close" 'ledger sealed' 'unmounted and locked'
+  check "a sealed migration refuses any further copy" \
+    vm_expect "$M open --key-file ~/vm-secrets/luks-passphrase >/dev/null && $M bulk; r=\$?; $M close >/dev/null; echo exit=\$r" 'the ledger is SEALED' 'exit=1'
+  vm_ssh "rm -f ~/rc-link-to-freespace; sudo umount /mnt/freespace" >>"$LOG" 2>&1
+  must "the new disk locked again, the stand-in unmounted, before the first boot" \
+    vm_ssh "[ ! -e /dev/mapper/caesar-new ] && ! findmnt -S /dev/disk/by-id/$FREE_ID-part1 >/dev/null"
   vm_ssh "sudo sha256sum /dev/disk/by-id/$FREE_ID-part1 | cut -d' ' -f1" > "$WD/freespace.sha"
   stop_vm
 
@@ -397,7 +444,9 @@ VMEOF
     | vm_ssh 'sudo install -m 0644 /dev/stdin /etc/systemd/system/rehearsal-no-lan.service && sudo systemctl daemon-reload && sudo systemctl enable --now rehearsal-no-lan.service' >>"$LOG" 2>&1
   must "target: LAN blackholed before any nomarchy stage" \
     vm_ssh 'ip route show type blackhole | grep -q "^blackhole 192.168.1.0/24"'
-  clone_into_vm
+  # No clone here: nomarchy's working tree arrived with the migration, as it will on metal.
+  must "the migrated nomarchy checkout is this release candidate's commit" \
+    vm_ssh "[ \"\$(git -C ~/Projects/nomarchy rev-parse HEAD)\" = $(git -C "$repo" rev-parse HEAD) ]"
 
   local s
   vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy status' >>"$LOG" 2>&1
@@ -431,6 +480,8 @@ VMEOF
       "install desktop --yes")
         check "Claude Code and Codex run from their AUR packages; Claude's updater is off" \
           vm_ssh '[ "$(command -v claude)" = /usr/bin/claude ] && grep -qx "export DISABLE_UPDATES=1" /usr/bin/claude && claude --version && [ "$(command -v codex)" = /usr/bin/codex ] && codex --version'
+        check "tests/umbriel-cli on the fresh install (post-RC fix 3bace98): every CLI generation, and the installed build" \
+          vm_ssh 'cd ~/Projects/nomarchy && tests/umbriel-cli'
         check "python declared, and umbriel's build deps owned (not orphans)" \
           vm_ssh 'for p in python meson nlohmann-json; do [ "$(pacman -Qi $p | sed -n "s/^Install Reason *: //p")" = "Explicitly installed" ] || { echo "$p not explicit"; exit 1; }; done' ;;
       "install host --yes")
@@ -463,22 +514,6 @@ VMEOF
   check "nomarchy install host --yes (after link)" vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy install host --yes'
   check "Irides' lighting rule installed from its checkout; nomarchy's retired G213 rule absent" \
     vm_ssh 'cmp ~/code/irides/data/udev/70-irides-lighting.rules /etc/udev/rules.d/70-irides-lighting.rules && [ ! -e /etc/udev/rules.d/70-logitech-g213.rules ]'
-  step "private state: absent on a fresh machine -- status must SAY so, never pass it"
-  check "every private-state check reports to do before anything is restored" \
-    status_to_do 'SSH client keys present, 0600' 'rigel may log in' 'config.local defines the vps host' 'GPG secret key 8B52A5D2637434B3' \
-      'subliminal credentials present' 'GitHub CLI logged in' 'Claude Code and Codex logins present' 'caesar has its reserved address'
-  step "stand-ins for restoring private state (VM only, VM-REHEARSAL-ONLY): all but the GPG key"
-  vm_ssh 'set -e; for k in github homelab waylab vps caesar_to_rigel; do [ -f ~/.ssh/id_ed25519_$k ] || ssh-keygen -q -t ed25519 -N "" -C "VM-REHEARSAL-ONLY $k" -f ~/.ssh/id_ed25519_$k; done
-    printf "# VM-REHEARSAL-ONLY\nHost vps\n  HostName 192.0.2.1\n" > ~/.ssh/config.local && chmod 600 ~/.ssh/config.local
-    install -d -m 700 ~/.config/subliminal ~/.config/gh ~/.claude ~/.codex
-    printf "# VM-REHEARSAL-ONLY\n" > ~/.config/subliminal/subliminal.toml
-    printf "github.com:\n    user: vm-rehearsal-only\n" > ~/.config/gh/hosts.yml
-    echo "{}" > ~/.claude/.credentials.json; echo "{}" > ~/.codex/auth.json
-    chmod 600 ~/.config/subliminal/subliminal.toml ~/.config/gh/hosts.yml ~/.claude/.credentials.json ~/.codex/auth.json' >>"$LOG" 2>&1
-  # rigel's PUBLIC key, which the check identifies by fingerprint. A VM reachable only on
-  # 127.0.0.1 of this machine; a public key grants nothing the harness key does not.
-  grep ' peter@rigel$' "$HOME/.ssh/authorized_keys" | vm_ssh 'cat >> ~/.ssh/authorized_keys' >>"$LOG" 2>&1
-
   step "reboot into the graphical session"
   # Before --finalize-nvram the firmware still leads to the rescue system: ask for the new
   # one for this restart, as an operator would.
@@ -488,6 +523,23 @@ VMEOF
   local i; for i in $(seq 60); do vm_ssh 'pgrep -x umbriel >/dev/null && pgrep -x noctalia >/dev/null' && break; sleep 3; done
   check "graphical session: umbriel and noctalia running from tty1 autologin" vm_ssh 'pgrep -x umbriel >/dev/null && pgrep -x noctalia >/dev/null'
   vm_ssh "grep -q '^\[location\]' ~/.local/state/noctalia/settings.toml || printf '\n[location]\nlatitude = 0.0\nlongitude = 0.0\n' >> ~/.local/state/noctalia/settings.toml" >>"$LOG" 2>&1
+
+  step "migration, on the new system: restore Revline, then accept against the evidence"
+  # Before anything below writes into a migrated tree (the Noctalia snapshot step does).
+  check "restore-revline: a fresh stack, the same PostgreSQL major, row counts identical to the freeze" \
+    vm_expect 'cd ~/Projects/nomarchy && migrate/migrate caesar restore-revline' 'PostgreSQL major 16' 'the database is empty' 'row counts identical to the freeze'
+  check "restore refuses to merge into a database that already has tables" \
+    vm_expect 'cd ~/Projects/nomarchy && migrate/migrate caesar restore-revline; echo exit=$?' 'already has tables' 'exit=1'
+  check "accept: git, digests, private modes, fingerprints, gpg, counts, database, pass, nomarchy status" \
+    vm_expect 'cd ~/Projects/nomarchy && migrate/migrate caesar accept' 'git code/demo:' 'every sha256 identical' 'owner and mode identical' \
+      'fingerprints identical' 'gpg: secret key' 'count obsidian-notes: 3' 'pass decrypts' 'database revline restored' ' 0 conflicts' 'Accepted.'
+  check "accept catches a changed file in a digest tree" \
+    vm_expect 'cd ~/Projects/nomarchy && cp -p ~/Notes/note-2.md /tmp/n2 && echo x >> ~/Notes/note-2.md; migrate/migrate caesar accept; r=$?; cp -p /tmp/n2 ~/Notes/note-2.md; echo exit=$r' 'Notes: content differs' 'exit=1'
+  check "accept catches lost git state (a local-only branch gone)" \
+    vm_expect 'cd ~/Projects/nomarchy && git -C ~/code/demo branch -m wip wip-moved; migrate/migrate caesar accept; r=$?; git -C ~/code/demo branch -m wip-moved wip; echo exit=$r' 'git code/demo differs from the freeze' 'exit=1'
+  check "accept passes again once both are put back" vm_expect 'cd ~/Projects/nomarchy && migrate/migrate caesar accept' 'Accepted.'
+  check "accept-remote refuses while the agent holds no keys (it cannot prompt)" \
+    vm_expect 'cd ~/Projects/nomarchy && SSH_AUTH_SOCK=/nonexistent migrate/migrate caesar accept-remote; echo exit=$?' 'the agent holds no keys' 'exit=1'
 
   step "Noctalia's settings after first start: the seed must have carried everything"
   # A VM has different displays from caesar, so Noctalia adds widgets for its own (Virtual-1)
@@ -527,6 +579,7 @@ VMEOF
   check "umbriel accepts the live config (incl. Noctalia's palette)" grep -qi 'accepts the live config' <(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep '✓')
 
   printf '\n\033[1mRelease-candidate result (%s)\033[0m\n' "$(git -C "$repo" rev-parse --short HEAD)" | tee -a "$LOG"
+  printf '  tested with: %s\n' "$(vm_ssh 'pacman -Q noctalia umbriel-git xdg-desktop-portal-umbriel-git linux | tr "\n" " "')" | tee -a "$LOG"
   printf '  %s\n' "${RESULTS[@]}" | tee -a "$LOG"
   printf '  not done / to do in the final status:\n' | tee -a "$LOG"
   sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep -E '^\s+(→|✗)' | sed 's/^/    /' | tee -a "$LOG"
