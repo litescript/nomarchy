@@ -17,16 +17,25 @@ git log --oneline -1                            # <C>
 sudo pacman -S --needed gptfdisk dosfstools parted
 ```
 
-The coordinated umbriel/Noctalia update, if not already done:
+The coordinated umbriel/Noctalia update, if not already done. Noctalia moves first: SATA's
+5.0.1 writes palette keys (`scratchpad_*`) the pinned umbriel 6bf03a0 does not have, so no
+umbriel can pass the gate until Noctalia 5.2.0 has rewritten the palette. Between the
+`pacman -Syu` and the reboot, do not change the wallpaper or theme (the still-running 5.0.1
+would add the palette to `[include]` too; 5.2.0 repairs that, but the order below avoids it).
 
 ```bash
-sudo pacman -Syu                                # brings a Noctalia whose palette speaks the pinned umbriel
-# log out of the desktop and back in (tty1 autologin restarts it) -- the NEW Noctalia rewrites its palette
+sudo pacman -Syu                                # Noctalia 5.2.0 (and a kernel, likely)
+systemctl reboot                                # autologin brings the desktop back with the NEW Noctalia
+irides apply NSX                                # Noctalia applies the theme: its 5.2.0 hook rewrites the palette
 grep scratchpad ~/.config/umbriel/noctalia.toml # prints NOTHING (6bf03a0 has no scratchpad keys)
-umbriel-update --sync --apply                   # builds 6bf03a0, gates it on the live config, installs
-# log out and back in -- the new compositor only runs after a restart
+git -C ~/Projects/nomarchy status --short       # prints NOTHING: the host config is already 5.2.0's fixed point
+umbriel-update --sync --apply                   # builds 6bf03a0, gates it on the live config, installs it and the portal
+systemctl reboot                                # a new compositor only runs after a restart
 umbriel-update --check-pins && umbriel-update --check-config   # "= pin" twice, then "config: ok"
 ```
+
+If `--sync --apply` refuses, it now says which file was rejected and what to do; do not run
+`--merge-config` unless it names base.toml.
 
 ## 1. Provision the XPG (destroys it)
 
@@ -36,10 +45,11 @@ provision/provision caesar                      # dry run: every gate passes, "t
 sudo provision/provision caesar --apply
 ```
 
-It asks, in order: the LUKS passphrase twice (the one you will type at every boot); then it
-shows the **recovery key once** — write it down and store it offline; then the password for
-`peter` on the new system; then the disk serial — type `2K0420036195`. It must end with
-`... unmounted, /dev/mapper/cryptroot closed` and `Provisioned.`
+It asks, in order: the disk serial — type `2K0420036195`; the new LUKS passphrase, twice (the
+one you will type at every boot); the same passphrase once more to enroll the recovery key,
+then it shows the **recovery key once** — write it down and store it offline; the passphrase
+once more to open the volume; then the password for `peter` on the new system, twice. It must
+end with `... unmounted, /dev/mapper/cryptroot closed` and `Provisioned.`
 
 ## 2. Bulk copy, while you keep using SATA
 

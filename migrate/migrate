@@ -83,8 +83,11 @@ parse_manifest() {
   local line f i o n=0
   while IFS= read -r line; do
     n=$((n + 1))
-    line=${line%%#*}
-    [[ $line =~ ^[[:space:]]*$ ]] && continue
+    # A comment starts a line or follows whitespace: a # inside a value is the value's. (The
+    # first version cut at any #, and exclude=**/.#lk* silently became **/. -- the rehearsal's
+    # acceptance found the gpg lock file it should have excluded.)
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    line=${line%%[[:space:]]#*}
     read -ra f <<<"$line"
     case ${f[0]} in
       user) M_USER=${f[1]:-} ;;
@@ -471,7 +474,10 @@ record_evidence() {
   okl "counts: $(tr '\n' ' ' < "$EVD/counts")"
   ssh_hosts > "$EVD/ssh-hosts"; okl "ssh hosts for accept-remote: $(tr '\n' ' ' < "$EVD/ssh-hosts")"
   if [[ -f $SRC_HOME/.thunderbird/profiles.ini ]]; then
-    sed -n 's/^Default=//p' "$SRC_HOME/.thunderbird/profiles.ini" | sort -u > "$EVD/thunderbird-profiles"
+    # The profile Thunderbird opens is the [Install...] section's Default=; every [Profile]
+    # Path= must exist too. (Default=1 inside a [Profile] is a flag, not a path.)
+    awk -F= '/^\[/ {sec = $0} sec ~ /^\[Install/ && $1 == "Default" {print $2} sec ~ /^\[Profile/ && $1 == "Path" {print $2}' \
+      "$SRC_HOME/.thunderbird/profiles.ini" | LC_ALL=C sort -u > "$EVD/thunderbird-profiles"
   fi
 }
 
@@ -749,7 +755,7 @@ do_accept() {
     [[ $got == "$want" ]] && okl "count $name: $got" || badl "count $name: $got here, $want at the freeze"
   done < "$EVD/counts"
   if [[ -f $EVD/thunderbird-profiles ]]; then
-    while IFS= read -r f; do [[ -d $HOME/.thunderbird/$f ]] && okl "thunderbird default profile $f present" || badl "thunderbird profile $f missing"; done < "$EVD/thunderbird-profiles"
+    while IFS= read -r f; do [[ -d $HOME/.thunderbird/$f ]] && okl "thunderbird profile $f present" || badl "thunderbird profile $f missing"; done < "$EVD/thunderbird-profiles"
   fi
   for e in "${DUMPS[@]+"${DUMPS[@]}"}"; do
     name=${e%%|*}
