@@ -335,7 +335,11 @@ VMEOF
   step "provision the XPG (the serial typed back through a real tty)"
   vm_tty '2K0420036195
 ' 'cd ~/Projects/nomarchy && sudo provision/provision caesar --apply --vm-secrets ~/vm-secrets' >>"$LOG" 2>&1
-  check "provisioner finished" grep -q 'Provisioned\.' "$LOG"
+  # Not just "Provisioned.": step 9 once printed FAILED and then that, leaving the new root
+  # mounted and its mapping open -- unnoticed for seven runs, because this looked only here.
+  check "provisioner finished, and said nothing FAILED" bash -c 'grep -q "Provisioned\." "$1" && ! grep -q "provision: FAILED" "$1"' _ "$LOG"
+  must "the new disk left closed and unmounted by the provisioner" \
+    vm_ssh '[ ! -e /dev/mapper/cryptroot ] && ! findmnt /mnt/nomarchy-caesar >/dev/null'
   check "NVRAM: new entry, BootNext set, BootOrder not led by it" \
     vm_ssh 'o=$(efibootmgr); n=$(sed -n "s/^Boot\([0-9A-F]*\)\*\? Nomarchy (caesar XPG).*/\1/p" <<<"$o"); [ -n "$n" ] && grep -q "^BootNext: $n" <<<"$o" && ! grep -q "^BootOrder: $n" <<<"$o"'
 
@@ -348,9 +352,13 @@ VMEOF
   # The real SATA install has rsync (base stage); a rescue image built before it was added
   # to build_root's list does not. A throwaway overlay, so a -Sy here harms nothing.
   vm_ssh 'command -v rsync >/dev/null || sudo pacman -Sy --noconfirm --needed rsync' >>"$LOG" 2>&1
-  vm_ssh "sudo cryptsetup open /dev/disk/by-uuid/df147db6-fe3c-4385-9a3b-6140dc390f29 cryptnew --key-file ~/vm-secrets/luks-passphrase \
+  # A must: every check below judges paths by the filesystem under them, so with nothing
+  # mounted they would be judging the rescue root's empty directories.
+  must "the new disk opened by its LUKS UUID, @home and the stand-in mounted" \
+    vm_ssh "sudo cryptsetup open /dev/disk/by-uuid/df147db6-fe3c-4385-9a3b-6140dc390f29 cryptnew --key-file ~/vm-secrets/luks-passphrase \
     && sudo mkdir -p /mnt/caesar-new/home /mnt/freespace && sudo mount -o subvol=@home /dev/mapper/cryptnew /mnt/caesar-new/home \
-    && sudo mount -o ro,noload /dev/disk/by-id/$FREE_ID-part1 /mnt/freespace && ln -sfn /mnt/freespace ~/rc-link-to-freespace" >>"$LOG" 2>&1
+    && sudo mount -o ro,noload /dev/disk/by-id/$FREE_ID-part1 /mnt/freespace && ln -sfn /mnt/freespace ~/rc-link-to-freespace \
+    && findmnt -n /mnt/caesar-new/home && findmnt -n /mnt/freespace"
   check "path gate allows §9's topology: source on the rescue root, destination on the new btrfs" \
     vm_expect 'cd ~/Projects/nomarchy && migrate/check-path caesar source /home/peter/Pictures /home/peter/code && migrate/check-path caesar dest /mnt/caesar-new/home/peter; echo "exit=$?"' \
       'ok      source /home/peter/Pictures' 'ok      dest /mnt/caesar-new/home/peter' 'exit=0'

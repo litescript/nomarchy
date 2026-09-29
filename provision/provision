@@ -422,7 +422,27 @@ step "9. finish"; current="step 9 (finish)"
 if ((clone)); then
   arch-chroot "$root" sudo -u peter git clone -q https://github.com/litescript/nomarchy.git /home/peter/Projects/nomarchy
 fi
-cleanup; trap - EXIT
+# Explicitly, NOT through cleanup(): cleanup ignores failures, and when this step called it,
+# a failed unmount printed "FAILED during step 9" and then "Provisioned." -- with the new
+# root still mounted and its LUKS mapping open. Every rehearsal did that until the one on
+# 2026-09-28 that reopened the disk for the migration (docs/cutover/03 §9) and found it
+# "already mapped". The holder: pacstrap -K starts gpg-agent (and keyboxd) with the NEW
+# root's keyring as their home, and they outlive pacstrap. tests/vm/rc's build_root kills
+# them for the same reason.
+gpgconf --homedir "$root/etc/pacman.d/gnupg" --kill all 2>/dev/null || true
+pkill -f -- "--homedir $root/" 2>/dev/null || true
+sleep 1
+if ! umount -R "$root"; then
+  say "  still holding $root (pid, command):"
+  for p in /proc/[0-9]*; do
+    ls -l "$p/cwd" "$p/root" "$p/fd" 2>/dev/null | grep -q -- " $root" && printf '    %s %s\n' "${p#/proc/}" "$(cat "$p/comm" 2>/dev/null)"
+  done
+  false
+fi
+cryptsetup close "$mapper"
+[[ ! -e /dev/mapper/$mapper ]]
+trap - EXIT
+say "  $root unmounted, /dev/mapper/$mapper closed"
 head1 "Provisioned."
 cat <<NEXT
   Reboot. The firmware boots the new system ONCE (BootNext); it asks for the LUKS passphrase.
