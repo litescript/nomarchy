@@ -374,6 +374,18 @@ binary which spelling it speaks. The commands elsewhere in this file still say `
 validate`, which is right for the builds installed on 2026-09-27 (caesar `5eb49b6`, rigel
 `31601e0`); once a host runs a newer build, the same checks are `umbriel config validate`.
 
+**How each binary is asked lives in `common/umbriel/cli.sh`, and `tests/umbriel-cli` holds it
+to the real `--help` of every generation seen (`tests/fixtures/umbriel-help/`).** Upstream
+`206038c0` regrouped `--help` by purpose and dropped the `umbriel ` prefix from each command;
+the detection had matched that prefix, so b9301a6 was asked the old `validate` and the gate
+refused with no verdict (2026-09-28). It matches the command now, and refuses a binary that
+lists neither spelling instead of guessing. The same day showed the gate's advice was wrong
+for half its cases: it prescribed `--merge-config` for every rejection, but a rejection that
+is all in `~/.config/umbriel/noctalia.toml` is Noctalia's palette — the compatibility case —
+which a merge cannot touch. It now names the file and the remedy (move Noctalia, let it
+rewrite the palette), and the test pins that a palette rejection never prescribes a merge.
+When a new CLI generation appears: capture its `--help` into the fixtures and add a row.
+
 **Ordering: merge the config first, then install.** The new binary wants the new
 vocabulary and the running one wants the old, so whichever moves first is briefly
 mismatched. Writing `base.toml` is the survivable direction — umbriel treats unknown keys

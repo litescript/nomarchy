@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# umbriel-cli -- regression test for how umbriel-update asks an umbriel binary to validate
+# a config (common/umbriel/cli.sh), across every CLI generation seen on these machines.
+#
+#   tests/umbriel-cli            fixtures, plus every real umbriel binary it can find
+#
+# Read-only, no sudo, no network. Written 2026-09-28 after b9301a6: upstream 206038c0
+# regrouped `umbriel --help`, the detection matched the old layout, and the gate refused a
+# build without ever asking it about the config. Then it advised a base.toml merge for a
+# rejection that was entirely in Noctalia's palette -- which a merge cannot touch.
+#
+# Two legs:
+#   fixtures  tests/fixtures/umbriel-help/<rev>.txt, each the VERBATIM --help of a real build,
+#             served by a stand-in binary that records how it was invoked. Every generation
+#             must get its spelling; an unknown layout must be refused, not guessed.
+#   real      each real binary found (the installed one, the staged build, the rollback
+#             packages): validate_with an empty config must return that binary's verdict
+#             (config: ok) -- never its usage text.
+# When a new generation appears: capture its --help into the fixtures, add a row below.
+
+set -uo pipefail
+repo="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+. "$repo/common/umbriel/cli.sh" || exit 1
+fx=$repo/tests/fixtures/umbriel-help
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+pass=0 fail=0
+ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass + 1)); }
+nok() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=$((fail + 1)); }
+
+stand_in() {  # stand_in <help file> -> path of a fake umbriel that serves it
+  local f=$tmp/umbriel-$(basename "$1" .txt)
+  printf '#!/bin/sh\ncase "$1" in --help|-h|help) cat %q ;; *) echo "INVOKED: $*" ;; esac\n' "$1" > "$f"
+  chmod +x "$f"; printf '%s\n' "$f"
+}
+
+printf '\033[1mfixtures: the spelling each generation gets\033[0m\n'
+while read -r rev want; do
+  bin=$(stand_in "$fx/$rev.txt")
+  got=$(umbriel_validate_spelling "$bin") || got='(refused)'
+  [[ $got == "$want" ]] && ok "$rev: '$want'" || nok "$rev: wanted '$want', got '$got'"
+  out=$(validate_with "$bin" /cfg.toml)
+  [[ $out == "INVOKED: $want -c /cfg.toml" ]] && ok "$rev: invoked as '$out'" || nok "$rev: invoked as '$out'"
+done <<'ROWS'
+ac83d8e validate
+5eb49b6 validate
+6bf03a0 config validate
+b9301a6 config validate
+ROWS
+
+printf '\033[1mfixtures: a layout that names neither spelling is refused\033[0m\n'
+printf 'umbriel 9.9.9: a wayland compositor\n\nCommands:\n  check-config    check the config file\n' > "$tmp/unknown.txt"
+bin=$(stand_in "$tmp/unknown.txt")
+out=$(validate_with "$bin" /cfg.toml); rc=$?
+[[ $rc == 2 && $out == Usage:* && $out != *INVOKED* ]] \
+  && ok "unknown layout: refused (status 2, reads as 'Usage:' -- no verdict), binary never invoked" \
+  || nok "unknown layout: status $rc, output '$out'"
+# The `Usage: umbriel [-s <command>] [-c <config>]` header must not pass for a command line.
+printf 'Usage: umbriel [-s <command>] [-c <config>]   run the compositor\n' > "$tmp/header.txt"
+bin=$(stand_in "$tmp/header.txt")
+umbriel_validate_spelling "$bin" >/dev/null && nok "a usage header alone was read as a validate command" \
+                                            || ok "a usage header alone is not mistaken for a validate command"
+
+printf '\033[1mfixtures: which file a rejection is in (decides the advice)\033[0m\n'
+cd_=/home/u/.config/umbriel
+real=$(sed "s|@CONFIG_DIR@|$cd_|g" "$fx/reject-palette-b9301a6.txt")
+[[ $(umbriel_rejection_source "$cd_/noctalia.toml" <<<"$real") == palette ]] \
+  && ok "b9301a6 vs a Noctalia 5.0.1 palette (captured on SATA caesar): palette -- not a merge" \
+  || nok "the captured palette rejection was not classified 'palette'"
+cfg="warning: /home/u/nomarchy/common/umbriel/base.toml:559:24: unknown key layout.new_exits_fullscreen
+configuration invalid"
+[[ $(umbriel_rejection_source "$cd_/noctalia.toml" <<<"$cfg") == config ]] && ok "base.toml unknown key: config" || nok "base.toml rejection not classified 'config'"
+[[ $(umbriel_rejection_source "$cd_/noctalia.toml" <<<"$real"$'\n'"$cfg") == both ]] && ok "both files: both" || nok "mixed rejection not classified 'both'"
+[[ $(umbriel_rejection_source "$cd_/noctalia.toml" <<<"configuration invalid") == unknown ]] && ok "no file named: unknown (no advice)" || nok "fileless output not classified 'unknown'"
+
+printf '\033[1mfixtures: the advice for each (a palette rejection must never prescribe a merge)\033[0m\n'
+adv=$(umbriel_rejection_advice "$cd_/noctalia.toml" palette)
+[[ $adv == *'pacman -Syu'* && $adv != *merge-config* ]] && ok "palette: move Noctalia, then its palette -- no merge" || nok "palette advice: $adv"
+adv=$(umbriel_rejection_advice "$cd_/noctalia.toml" config)
+[[ $adv == *'--merge-config --apply'* && $adv != *'pacman -Syu'* ]] && ok "config: merge base.toml forward" || nok "config advice: $adv"
+adv=$(umbriel_rejection_advice "$cd_/noctalia.toml" both)
+[[ $adv == *'pacman -Syu'* && $adv == *'--merge-config --apply'* ]] && ok "both: both remedies" || nok "both advice: $adv"
+adv=$(umbriel_rejection_advice "$cd_/noctalia.toml" unknown)
+[[ $adv != *'pacman -Syu'* && $adv != *merge-config* ]] && ok "unknown: no remedy offered" || nok "unknown advice: $adv"
+
+printf '\033[1mreal binaries: validate_with gets a verdict, never usage\033[0m\n'
+: > "$tmp/empty.toml"
+bins=()
+command -v umbriel >/dev/null && bins+=("installed:$(command -v umbriel)")
+staged=${UMBRIEL_BUILDS:-$HOME/builds}/umbriel-git/pkg/umbriel-git/usr/bin/umbriel
+[[ -x $staged ]] && bins+=("staged:$staged")
+for p in "${UMBRIEL_BUILDS:-$HOME/builds}"/.rollback/umbriel-git/umbriel-git-*.pkg.tar.zst; do
+  [[ -f $p ]] || continue
+  d=$tmp/$(basename "$p" .pkg.tar.zst); mkdir -p "$d"
+  tar -C "$d" -xf "$p" usr/bin/umbriel 2>/dev/null && bins+=("rollback:$d/usr/bin/umbriel")
+done
+((${#bins[@]})) || printf '  (none found -- fixtures only)\n'
+for e in "${bins[@]+"${bins[@]}"}"; do
+  bin=${e#*:}; ver=$("$bin" --version 2>/dev/null | head -1)
+  out=$(validate_with "$bin" "$tmp/empty.toml" 2>&1); rc=$?
+  if [[ $rc == 0 && $out == *'config: ok'* && $out != *Usage:* ]]; then ok "${e%%:*} $ver: $(umbriel_validate_spelling "$bin") -> config: ok"
+  else nok "${e%%:*} $ver: status $rc, $(head -1 <<<"$out")"; fi
+done
+
+printf '\n\033[1m%d passed, %d failed\033[0m\n' "$pass" "$fail"
+((fail == 0))

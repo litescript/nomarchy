@@ -1,0 +1,3 @@
+warning: @CONFIG_DIR@/noctalia.toml:15:22: unknown key colors.border.scratchpad_focused
+warning: @CONFIG_DIR@/noctalia.toml:16:24: unknown key colors.border.scratchpad_unfocused
+configuration invalid

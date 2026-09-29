@@ -121,21 +121,12 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; ((conflict++)); }
 head1() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die()  { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
 
-# Validate a config with a given umbriel binary, in whichever spelling THAT binary speaks.
-# Upstream f66d6a8 moved `umbriel validate` to `umbriel config validate`. A binary asked in
-# the wrong spelling prints its usage and exits nonzero -- indistinguishable, by exit code,
-# from "configuration invalid". On rigel 2026-09-27 that made the gate refuse a good build
-# without validating anything: the new binary did not know `validate`, and the script read
-# its help text as a rejection. Mid-update the installed and staged binaries disagree, so
-# each is asked separately; the help text is the signal that states which one it is.
-validate_with() {  # validate_with <binary> [config]
-  local bin=$1 cfg=${2:-}
-  if "$bin" --help 2>&1 | grep -qE '^[[:space:]]*umbriel config validate'; then
-    "$bin" config validate ${cfg:+-c "$cfg"}
-  else
-    "$bin" validate ${cfg:+-c "$cfg"}
-  fi
-}
+# Validating with a given binary, in whichever CLI generation THAT binary speaks, and reading
+# a rejection: common/umbriel/cli.sh (validate_with, umbriel_rejection_source), where
+# tests/umbriel-cli can check it against every generation's real --help. Upstream f66d6a8
+# moved `umbriel validate` to `umbriel config validate`; 206038c0 regrouped --help, which is
+# what the gate tripped over at b9301a6 on 2026-09-28.
+. "$repo/common/umbriel/cli.sh" || die "cannot read $repo/common/umbriel/cli.sh"
 
 apply=0; mode=survey; arg=''
 while (($#)); do
@@ -715,9 +706,12 @@ do_install() {
       bad "the new binary REJECTS the live config. Nothing installed."
       printf '%s\n' "$out" | while read -r l; do say "    $l"; done
       echo
-      say "This is the breaking-change case. Bring the config forward first:"
-      say "    umbriel-update --merge-config --apply"
-      say "Then re-run --apply. The built package is kept, so the rebuild is cheap."
+      # The remedy depends on WHICH file holds the rejected keys: a merge brings base.toml
+      # forward, and cannot touch the palette Noctalia generates.
+      local palette src
+      palette="$(dirname "$LIVE")/noctalia.toml"
+      src=$(umbriel_rejection_source "$palette" <<<"$out")
+      umbriel_rejection_advice "$palette" "$src" | while IFS= read -r l; do say "$l"; done
       exit 1
     fi
   fi
