@@ -8,3 +8,5 @@ enable NetworkManager.service
 # caesar's cache was 2.2 GB and 1,295 packages after three weeks without it.
 enable paccache.timer
 enable plocate-updatedb.timer
+# Regenerates the mirrorlist weekly from ./files/reflector.conf.
+enable reflector.timer

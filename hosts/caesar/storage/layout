@@ -91,6 +91,11 @@ boot.plymouth-theme nomarchy
 rescue.root-uuid    5a369b57-0cf0-4dfb-8746-4a19bbb408a9
 rescue.nvram-label  Nomarchy
 windows.nvram-label Windows Boot Manager
+# Filesystems nothing may ever touch, by UUID (space-separated). sda3, "FreeSpace": ~453 G of
+# deliberate archive on the SATA disk -- not copied, not mounted, not altered by the cutover
+# (docs/cutover/03 §0). The provisioner's never gate refuses any disk carrying one, and the
+# migration's path gate (migrate/) refuses any source or destination on one.
+keep.untouched      1953f264-eed7-4b82-acc9-7e0f23ac8b34
 
 # Packages the provisioner pacstraps: a bootable, unlockable minimal Arch -- everything
 # above needs to be present before the first boot. Everything else is nomarchy's.

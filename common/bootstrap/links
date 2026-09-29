@@ -34,3 +34,9 @@ common/scripts/spotify-limited		~/.local/bin/spotify-limited
 common/scripts/subget			~/.local/bin/subget
 common/scripts/umbriel-update		~/.local/bin/umbriel-update
 common/scripts/universal-clipboard	~/.local/bin/universal-clipboard
+# Authored git config (manifest §8 D). git writes `git config --global` THROUGH the link
+# (a lock file renamed onto the resolved target -- tested, 2026-09-28), so a link is safe
+# here where it would not be for an app that renames over the path. git never writes
+# ignore. Not declared: ~/.config/bat/config, which Noctalia's bat template generates.
+common/git/gitconfig		~/.gitconfig
+common/git/ignore		~/.config/git/ignore

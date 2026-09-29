@@ -1,4 +1,6 @@
-# Root-owned copies: <repo path>  <system path>  [mode, default 0644]
+# Root-owned copies: <source>  <system path>  [mode, default 0644]  [owner:group]
+#
+# The source is a repo path, or a path inside a declared build checkout (~/code/irides/...).
 #
 # These cannot be symlinks -- a mount unit for /mnt/nas has to be a system unit, and
 # /etc is not ours to link into. So they are copies, and copies drift silently, which is
@@ -16,8 +18,21 @@ common/udev/99-streamdeck-no-keyboard.rules	/etc/udev/rules.d/99-streamdeck-no-k
 hosts/caesar/netconsole/netconsole-listener.service	/etc/systemd/system/netconsole-listener.service
 hosts/caesar/netconsole/netconsole-proxmox.logrotate	/etc/logrotate.d/netconsole-proxmox
 hosts/caesar/modprobe/nvidia.conf	/etc/modprobe.d/nvidia.conf
-hosts/caesar/udev/70-logitech-g213.rules	/etc/udev/rules.d/70-logitech-g213.rules
 hosts/caesar/systemd/zram-generator.conf	/etc/systemd/zram-generator.conf
 hosts/caesar/systemd/logind-nomarchy.conf	/etc/systemd/logind.conf.d/10-nomarchy.conf
 hosts/caesar/nss/nsswitch.conf	/etc/nsswitch.conf
 hosts/caesar/nut/nut.conf	/etc/nut/nut.conf
+# Irides' lighting rule: hidraw access for the G213, G502 and ASUS Aura it drives. The
+# rule is Irides' file, so it is installed from the Irides checkout, not duplicated here.
+# It superseded nomarchy's own 70-logitech-g213.rules (keyboard-rgb's, retired 2026-09-28),
+# whose one rule is the first line of this one.
+~/code/irides/data/udev/70-irides-lighting.rules	/etc/udev/rules.d/70-irides-lighting.rules
+# meanpete's envelope (hosts/caesar/meanpete/README.md), owned by him. His home is 0700,
+# so `status` cannot compare these without sudo and says so; `install host` compares them
+# under sudo when it runs. No sudo grant and no /usr/local/bin wrapper -- by design.
+hosts/caesar/meanpete/Scripts/movie		/home/meanpete/Scripts/movie		0755	meanpete:meanpete
+hosts/caesar/meanpete/Scripts/tv		/home/meanpete/Scripts/tv		0755	meanpete:meanpete
+hosts/caesar/meanpete/Scripts/move-to-plex.sh	/home/meanpete/Scripts/move-to-plex.sh	0755	meanpete:meanpete
+hosts/caesar/meanpete/Scripts/move-to-plex-tv.sh	/home/meanpete/Scripts/move-to-plex-tv.sh	0755	meanpete:meanpete
+hosts/caesar/meanpete/bashrc			/home/meanpete/.bashrc			0644	meanpete:meanpete
+hosts/caesar/meanpete/bash_profile		/home/meanpete/.bash_profile		0644	meanpete:meanpete

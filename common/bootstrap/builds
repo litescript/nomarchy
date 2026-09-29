@@ -42,8 +42,9 @@ shelf	~/code/shelf	git@github.com:litescript/shelf.git	make install
 # rustup fetches on first cargo run -- Arch's plain `rust` package would ignore the pin.
 #
 # The Noctalia plugin behind Mod+Alt+T is a check in ./user-checks: it needs Noctalia
-# running, so it passes from the first graphical login on. Still by hand:
-#   - the lighting template link (~/.config/noctalia/irides-lighting.toml), only on hosts
-#     with the RGB hardware, and only after this build (it runs irides-lighting).
+# running, so it passes from the first graphical login on. The lighting udev rule and
+# template link are installed FROM this checkout on hosts with the RGB hardware
+# (hosts/caesar/bootstrap/copies and links) -- which is why a manifest source may name a
+# path inside a declared checkout.
 irides	~/code/irides	git@github.com:litescript/irides.git	make install
 

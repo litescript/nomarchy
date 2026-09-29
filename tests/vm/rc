@@ -20,13 +20,18 @@
 #   the synthetic XPG: an NVMe device with the real model, serial and exact byte count, so
 #     /dev/disk/by-id/nvme-XPG_SPECTRIX_S40G_2K0420036195 exists and the identity gate is
 #     the real one
+#   a "FreeSpace" stand-in for caesar's sda3: a small ext4 the spec declares keep.untouched,
+#     which the provisioner and the migration's path gate must both refuse, and which must
+#     be byte-identical at the end of the run
 #
 # The chain `run` drives: rescue boots -> gate tests (the never gate must refuse the rescue
 # and decoy disks, the identity gate a wrong serial) -> provision/provision caesar --apply
-# (the serial typed back through a real tty) -> power off -> firmware boots the XPG via
-# BootNext -> systemd-boot -> initramfs -> sd-encrypt -> btrfs -> nomarchy install base,
-# desktop, host, storage, link -> reboot into the graphical session -> link again ->
-# --finalize-nvram -> tests/snapper-recovery -> nomarchy status.
+# (the serial typed back through a real tty) -> docs/cutover/03 §9 in miniature: the XPG
+# opened on the rescue system, the migration's path gate, a bulk pass of stand-in user data
+# into it -> power off -> firmware boots the XPG via BootNext -> systemd-boot -> initramfs
+# -> sd-encrypt -> btrfs -> nomarchy install base, desktop, host (after an account
+# collision that must refuse it whole), storage, link, host again -> reboot into the
+# graphical session -> link again -> --finalize-nvram -> tests/snapper-recovery -> status.
 #
 # VM-only, never on metal, all of it rehearsal plumbing rather than nomarchy:
 #   - secrets in <dir>/vm-secrets/, generated per build and named VM-REHEARSAL-ONLY. The
@@ -37,10 +42,13 @@
 #     disk's. Giving the VM caesar's real root UUID would put two filesystems with that UUID
 #     on caesar's host while the image is built. Every other line of hosts/caesar/storage/
 #     layout is used as committed.
+#   - ONE more, keep.untouched becomes the FreeSpace stand-in's UUID, for the same reason.
 #   - NOPASSWD sudo, a harness ssh key, a blackhole route for 192.168.1.0/24 (caesar's NAS,
 #     UPS and backups must not be reachable from a rehearsal), and stand-ins for the steps a
-#     human does by hand: the NUT password, the wallpapers the Irides blueprints pin, a
-#     Noctalia location.
+#     human does by hand: the NUT password, a Noctalia location, and the private state
+#     nomarchy checks for but never carries -- ssh keys, config.local, logins -- all made
+#     here, named VM-REHEARSAL-ONLY. Two things are deliberately NOT stood in, and the final
+#     status must show exactly those two as to do: caesar's LAN address and Pete's GPG key.
 
 set -uo pipefail
 
@@ -55,6 +63,7 @@ ENV_ROOT_PARTUUID=5e5c0e00-0000-4000-8000-00000000c0de    # VM-only, fixed so -a
 XPG_BYTES=1024209543168
 RESCUE_SERIAL=S753NS0W941845F; RESCUE_ID=ata-Samsung_SSD_870_EVO_2TB_$RESCUE_SERIAL
 DECOY_SERIAL=240243800744;     DECOY_ID=nvme-WD_BLACK_SN850X_4000GB_$DECOY_SERIAL
+FREE_SERIAL=VMFREESPACE01;     FREE_ID=ata-FreeSpace_stand-in_$FREE_SERIAL
 
 die() { printf '\033[31mrc: %s\033[0m\n' "$1" >&2; exit 1; }
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
@@ -94,7 +103,7 @@ build_root() {  # as ONE root process; <workdir> <owner uid>
   mount "${loop}p2" "$mnt"
   echo "==> pacstrap the rescue system (base + what provision/provision needs)"
   pacstrap -c -K "$mnt" base linux sudo git openssh networkmanager gptfdisk dosfstools parted \
-    cryptsetup btrfs-progs arch-install-scripts efibootmgr >"$wd/pacstrap.log" 2>&1 \
+    cryptsetup btrfs-progs arch-install-scripts efibootmgr rsync >"$wd/pacstrap.log" 2>&1 \
     || { tail -20 "$wd/pacstrap.log"; exit 1; }
   echo caesar > "$mnt/etc/hostname"
   printf 'PARTUUID=%s\t/\text4\trw,relatime\t0 1\n' "$(blkid -s PARTUUID -o value "${loop}p2")" > "$mnt/etc/fstab"
@@ -172,6 +181,7 @@ qemu() {  # qemu env|target [gui|inspect]
     -device "ahci,id=ahci"
     -drive "file=$WD/env.qcow2,format=qcow2,if=none,id=env" -device "ide-hd,drive=env,bus=ahci.0,model=Samsung SSD 870 EVO 2TB,serial=$RESCUE_SERIAL"
     -drive "file=$WD/decoy-win.raw,format=raw,if=none,id=decoy" -device "nvme,drive=decoy,serial=$DECOY_SERIAL,model=WD_BLACK SN850X 4000GB"
+    -drive "file=$WD/freespace.raw,format=raw,if=none,id=free" -device "ide-hd,drive=free,bus=ahci.1,model=FreeSpace stand-in,serial=$FREE_SERIAL"
     -drive "file=$WD/xpg.raw,format=raw,if=none,id=xpg" -device "nvme,drive=xpg,serial=2K0420036195,model=XPG SPECTRIX S40G$([[ $gui == inspect ]] && echo ',bootindex=0')"
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$PORT-:22"
     -virtfs "local,path=/var/cache/pacman/pkg,mount_tag=pkgcache,security_model=none,readonly=on"
@@ -188,6 +198,7 @@ qemu() {  # qemu env|target [gui|inspect]
     fi
   fi
   running && die "a VM is already running"
+  [[ -f $WD/freespace.raw ]] || make_freespace
   setsid -f qemu-system-x86_64 "${args[@]}" >"$WD/qemu-$phase.log" 2>&1
   sleep 2; running || die "qemu did not start: $(tail -3 "$WD/qemu-$phase.log")"
 }
@@ -218,6 +229,15 @@ clone_into_vm() {  # the committed HEAD of this checkout, with the ONE VM substi
   local uuid; uuid=$(vm_ssh "lsblk -no UUID /dev/disk/by-id/$RESCUE_ID-part2")
   vm_ssh "sed -i 's/^rescue.root-uuid .*/# VM substitution by tests\/vm\/rc: the VM rescue disk, not caesar'\\''s sda2\nrescue.root-uuid    $uuid/' ~/Projects/nomarchy/hosts/caesar/storage/layout"
   echo "VM substitution: rescue.root-uuid -> $uuid" >>"$LOG"
+  local fu; fu=$(vm_ssh "lsblk -no UUID /dev/disk/by-id/$FREE_ID-part1")
+  [[ -n $fu ]] || die "the FreeSpace stand-in has no filesystem -- keep.untouched cannot be substituted"
+  vm_ssh "sed -i 's/^keep.untouched .*/# VM substitution by tests\/vm\/rc: the FreeSpace stand-in, not caesar'\\''s sda3\nkeep.untouched      $fu/' ~/Projects/nomarchy/hosts/caesar/storage/layout"
+  echo "VM substitution: keep.untouched -> $fu" >>"$LOG"
+}
+status_to_do() {  # status_to_do <phrase>...: each phrase appears on a "to do" (→) line of status
+  local out p; out=$(vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy status' 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  printf '%s\n' "$out" | grep -E '^\s+(→|✗)'
+  for p; do grep -E '^\s+→ ' <<<"$out" | grep -qF -- "$p" || { echo "(not reported as to do: $p)"; return 1; }; done
 }
 vm_expect() {  # vm_expect <command> <phrase>...: output goes to the log; every phrase must appear
   local out p; out=$(vm_ssh "$1" 2>&1); printf '%s\n' "$out"; shift
@@ -246,7 +266,12 @@ preflight() {  # every QEMU device and display the run needs, before anything st
   qemu-system-x86_64 -display help 2>/dev/null | grep -qx 'egl-headless' || miss+=("display egl-headless")
   ((${#miss[@]} == 0)) || die "QEMU lacks: ${miss[*]} -- sudo pacman -S --needed qemu-ui-egl-headless qemu-ui-opengl qemu-ui-gtk qemu-hw-display-virtio-gpu qemu-hw-display-virtio-vga qemu-hw-display-virtio-gpu-pci qemu-hw-display-virtio-gpu-pci-gl qemu-hw-display-virtio-vga-gl qemu-hw-display-virtio-gpu-gl"
 }
+make_freespace() {  # the sda3 stand-in: GPT, one partition, formatted ext4 inside the VM
+  rm -f "$WD/freespace.raw"; truncate -s 64M "$WD/freespace.raw"
+  printf 'label: gpt\ntype=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name="FreeSpace"\n' | sfdisk -q "$WD/freespace.raw"
+}
 fresh_state() {  # a release candidate starts from pristine state: every run, not just the first
+  make_freespace
   rm -f "$WD/xpg.raw" "$WD/env.qcow2"
   truncate -s "$XPG_BYTES" "$WD/xpg.raw"                       # the blank synthetic XPG
   cp "$OVMF_VARS" "$WD/OVMF_VARS.fd"                            # empty NVRAM
@@ -268,8 +293,9 @@ run() {
   must "rescue: LAN blackholed, NAS unreachable" \
     vm_ssh 'ip route show type blackhole | grep -q "^blackhole 192.168.1.0/24" && ! timeout 3 bash -c "</dev/tcp/192.168.1.208/2049"'
   step "rescue: caesar's firmware picture -- its own ESP with systemd-boot and a stand-in Windows loader"
-  vm_ssh "RESCUE_ID=$RESCUE_ID bash -s" <<'VMEOF' >>"$LOG" 2>&1
-set -e; esp=/dev/disk/by-id/${RESCUE_ID}-part1
+  vm_ssh "RESCUE_ID=$RESCUE_ID FREE_ID=$FREE_ID bash -s" <<'VMEOF' >>"$LOG" 2>&1
+set -e; esp=/dev/disk/by-id/${RESCUE_ID}-part1; free=/dev/disk/by-id/${FREE_ID}-part1
+    [ "$(lsblk -no FSTYPE $free)" = ext4 ] || { sudo mkfs.ext4 -q -L FreeSpace $free; sudo udevadm settle; }
     [ "$(lsblk -no FSTYPE $esp)" = vfat ] || { sudo mkfs.fat -F 32 $esp >/dev/null; sudo udevadm settle; }
     sudo mkdir -p /mnt/resc-esp && sudo mount -t vfat $esp /mnt/resc-esp
     sudo bootctl install --no-variables --esp-path=/mnt/resc-esp >/dev/null 2>&1
@@ -287,6 +313,7 @@ VMEOF
   step "gates: each must REFUSE"
   gate_spec zz-rescue "$RESCUE_ID" "$RESCUE_SERIAL"
   gate_spec zz-decoy "$DECOY_ID" "$DECOY_SERIAL"
+  gate_spec zz-free "$FREE_ID" "$FREE_SERIAL"
   vm_ssh "cd ~/Projects/nomarchy && mkdir -p hosts/zz-wrong/storage && sed -e 's/^host .*/host zz-wrong/' -e 's/^disk.serial .*/disk.serial 2K0420036196/' hosts/caesar/storage/layout > hosts/zz-wrong/storage/layout"
   check "never gate refuses the rescue disk (its root, and the Windows ESP on it)" \
     vm_expect 'cd ~/Projects/nomarchy && provision/provision zz-rescue' 'never gate: REFUSED' "rescue install's root" 'Microsoft'
@@ -294,7 +321,15 @@ VMEOF
     vm_expect 'cd ~/Projects/nomarchy && provision/provision zz-decoy' 'never gate: REFUSED' 'Microsoft partition type'
   check "identity gate refuses the XPG under a serial one digit off" \
     vm_expect 'cd ~/Projects/nomarchy && provision/provision zz-wrong' 'identity gate: REFUSED'
-  vm_ssh 'cd ~/Projects/nomarchy && rm -rf hosts/zz-rescue hosts/zz-decoy hosts/zz-wrong'
+  check "never gate refuses a disk carrying a keep-untouched filesystem (the sda3 stand-in)" \
+    vm_expect 'cd ~/Projects/nomarchy && provision/provision zz-free' 'never gate: REFUSED' 'keep-untouched filesystem'
+  vm_ssh 'cd ~/Projects/nomarchy && rm -rf hosts/zz-rescue hosts/zz-decoy hosts/zz-wrong hosts/zz-free'
+  # The SATA install lacked gptfdisk, dosfstools and parted: the dry run must say so, with
+  # the packages, before anyone types a serial. sgdisk hidden for one dry run, in the VM.
+  check "the dry run reports a missing tool and the package that brings it" \
+    vm_expect 'sudo mv /usr/bin/sgdisk /usr/bin/sgdisk.rc-hidden; cd ~/Projects/nomarchy && provision/provision caesar; sudo mv /usr/bin/sgdisk.rc-hidden /usr/bin/sgdisk' \
+      'MISSING TOOLS: sgdisk' '--apply refuses until: sudo pacman -S --needed gptfdisk'
+  must "sgdisk back in place" vm_ssh 'command -v sgdisk'
   check "a wrong typed serial stops before anything is touched" typed_serial_refused
 
   step "provision the XPG (the serial typed back through a real tty)"
@@ -303,6 +338,36 @@ VMEOF
   check "provisioner finished" grep -q 'Provisioned\.' "$LOG"
   check "NVRAM: new entry, BootNext set, BootOrder not led by it" \
     vm_ssh 'o=$(efibootmgr); n=$(sed -n "s/^Boot\([0-9A-F]*\)\*\? Nomarchy (caesar XPG).*/\1/p" <<<"$o"); [ -n "$n" ] && grep -q "^BootNext: $n" <<<"$o" && ! grep -q "^BootOrder: $n" <<<"$o"'
+
+  step "docs/cutover/03 §9 in miniature: the new disk opened on the rescue system, the path gate, a bulk pass"
+  # Stand-in user data on the rescue system: the wallpapers the Irides blueprints pin, and a
+  # git working tree with state GitHub does not have (an untracked file), as a migrated
+  # checkout would. `link` must build shelf from it rather than cloning.
+  vm_ssh 'mkdir -p ~/Pictures ~/code' && for f in f40.png synthwave-nsx.jpg cyberpunk-countach.jpg; do vm_scp "$HOME/Pictures/$f" peter@127.0.0.1:Pictures/; done
+  vm_ssh 'git clone -q https://github.com/litescript/shelf.git ~/code/shelf && echo VM-REHEARSAL-ONLY > ~/code/shelf/.rc-migrated-marker' >>"$LOG" 2>&1
+  # The real SATA install has rsync (base stage); a rescue image built before it was added
+  # to build_root's list does not. A throwaway overlay, so a -Sy here harms nothing.
+  vm_ssh 'command -v rsync >/dev/null || sudo pacman -Sy --noconfirm --needed rsync' >>"$LOG" 2>&1
+  vm_ssh "sudo cryptsetup open /dev/disk/by-uuid/df147db6-fe3c-4385-9a3b-6140dc390f29 cryptnew --key-file ~/vm-secrets/luks-passphrase \
+    && sudo mkdir -p /mnt/caesar-new/home /mnt/freespace && sudo mount -o subvol=@home /dev/mapper/cryptnew /mnt/caesar-new/home \
+    && sudo mount -o ro,noload /dev/disk/by-id/$FREE_ID-part1 /mnt/freespace && ln -sfn /mnt/freespace ~/rc-link-to-freespace" >>"$LOG" 2>&1
+  check "path gate allows §9's topology: source on the rescue root, destination on the new btrfs" \
+    vm_expect 'cd ~/Projects/nomarchy && migrate/check-path caesar source /home/peter/Pictures /home/peter/code && migrate/check-path caesar dest /mnt/caesar-new/home/peter; echo "exit=$?"' \
+      'ok      source /home/peter/Pictures' 'ok      dest /mnt/caesar-new/home/peter' 'exit=0'
+  check "path gate refuses the keep-untouched filesystem as source and as destination, and a link onto it" \
+    vm_expect 'cd ~/Projects/nomarchy; migrate/check-path caesar source /mnt/freespace; echo "a=$?"; migrate/check-path caesar dest /mnt/freespace/new; echo "b=$?"; migrate/check-path caesar source ~/rc-link-to-freespace; echo "c=$?"' \
+      'REFUSED source /mnt/freespace: on a keep-untouched' 'a=1' 'REFUSED dest /mnt/freespace/new: on a keep-untouched' 'b=1' 'REFUSED source /home/peter/rc-link-to-freespace: on a keep-untouched' 'c=1'
+  check "path gate refuses the directions §9 does not have: a destination on SATA, a source on the new disk, a device" \
+    vm_expect 'cd ~/Projects/nomarchy; migrate/check-path caesar dest /home/peter/x; echo "a=$?"; migrate/check-path caesar source /mnt/caesar-new/home/peter; echo "b=$?"; migrate/check-path caesar source /dev/sda; echo "c=$?"' \
+      "REFUSED dest /home/peter/x: not on the new system's btrfs" 'a=1' "REFUSED source /mnt/caesar-new/home/peter: not on the rescue install's root" 'b=1' 'REFUSED source /dev/sda: a device node' 'c=1'
+  vm_ssh 'cd ~/Projects/nomarchy && migrate/check-path caesar source ~/Pictures ~/code && migrate/check-path caesar dest /mnt/caesar-new/home/peter \
+    && sudo rsync -aHAX --numeric-ids -x ~/Pictures ~/code /mnt/caesar-new/home/peter/' >>"$LOG" 2>&1
+  check "bulk pass landed on the new disk, owned by peter by number (uid 1000), untracked file included" \
+    vm_ssh '[ "$(sudo stat -c %u:%g /mnt/caesar-new/home/peter/Pictures/f40.png /mnt/caesar-new/home/peter/code/shelf/.rc-migrated-marker | sort -u)" = 1000:1000 ]'
+  vm_ssh "rm -f ~/rc-link-to-freespace; sudo umount /mnt/freespace /mnt/caesar-new/home && sudo cryptsetup close cryptnew" >>"$LOG" 2>&1
+  must "the new disk closed again, the stand-in unmounted, before the first boot" \
+    vm_ssh "[ ! -e /dev/mapper/cryptnew ] && ! findmnt -S /dev/disk/by-id/$FREE_ID-part1 >/dev/null"
+  vm_ssh "sudo sha256sum /dev/disk/by-id/$FREE_ID-part1 | cut -d' ' -f1" > "$WD/freespace.sha"
   stop_vm
 
   step "first boot of the target: firmware BootNext -> systemd-boot -> initramfs -> sd-encrypt -> btrfs"
@@ -331,6 +396,14 @@ VMEOF
   for s in "install base --yes" "install desktop --yes" "install host --yes"; do
     step "nomarchy $s"
     if [[ $s == "install host --yes" ]]; then
+      # Fail closed: an existing account holding a declared id stops EVERYTHING -- packages,
+      # files and units included -- because the files after it would be owned by the wrong uid.
+      vm_ssh 'sudo groupadd -g 1004 zz-collide && sudo useradd -M -N -u 1001 -g users -s /usr/bin/nologin zz-collide' >>"$LOG" 2>&1
+      check "accounts: an id collision refuses the whole install host, and nothing changes" \
+        vm_expect 'cd ~/Projects/nomarchy && common/scripts/nomarchy install host --yes; echo "exit=$?"; getent passwd meanpete || echo no-meanpete; getent group media || echo no-media; pacman -Q nut 2>/dev/null || echo no-nut' \
+          "gid 1004 is held by group 'zz-collide'" "uid 1001 is held by user 'zz-collide'" 'Refused: the accounts above collide' 'exit=1' 'no-meanpete' 'no-media' 'no-nut'
+      vm_ssh 'sudo userdel zz-collide; ! getent group zz-collide >/dev/null || sudo groupdel zz-collide' >>"$LOG" 2>&1
+      must "the collision stand-ins removed again" vm_ssh '! getent group 1004 && ! getent passwd 1001'
       # As an operator would: run it, do the by-hand step it prints (the NUT password --
       # here a VM stand-in), run it again. The second run is the one that must be clean.
       vm_ssh "cd ~/Projects/nomarchy && common/scripts/nomarchy $s" >>"$LOG" 2>&1
@@ -339,13 +412,64 @@ VMEOF
     fi
     check "nomarchy $s" vm_ssh "cd ~/Projects/nomarchy && common/scripts/nomarchy $s"
     [[ $s == "install base --yes" ]] && vm_ssh "sudo ufw allow from 10.0.2.2 to any port 22 proto tcp comment 'rehearsal: ssh from the QEMU host'" >>"$LOG" 2>&1
+    case $s in
+      "install base --yes")
+        check "pacman.conf: Color, ILoveCandy, and [multilib] enabled AND synced (lib32-glibc resolves)" \
+          vm_ssh 'grep -qx Color /etc/pacman.conf && grep -qx ILoveCandy /etc/pacman.conf && pacman-conf --repo-list | grep -qx multilib && pacman -Si lib32-glibc >/dev/null'
+        check "mirrorlist generated by the declared reflector policy; its weekly timer enabled" \
+          vm_ssh 'head -8 /etc/pacman.d/mirrorlist; grep -q "^# With: *reflector @/etc/xdg/reflector/reflector.conf" /etc/pacman.d/mirrorlist && grep -q "^Server = https://" /etc/pacman.d/mirrorlist && systemctl is-enabled -q reflector.timer'
+        check "provisioning tools installed by base (gptfdisk dosfstools parted arch-install-scripts)" \
+          vm_ssh 'command -v sgdisk mkfs.fat partprobe pacstrap arch-chroot' ;;
+      "install desktop --yes")
+        check "Claude Code and Codex run from their AUR packages; Claude's updater is off" \
+          vm_ssh '[ "$(command -v claude)" = /usr/bin/claude ] && grep -qx "export DISABLE_UPDATES=1" /usr/bin/claude && claude --version && [ "$(command -v codex)" = /usr/bin/codex ] && codex --version'
+        check "python declared, and umbriel's build deps owned (not orphans)" \
+          vm_ssh 'for p in python meson nlohmann-json; do [ "$(pacman -Qi $p | sed -n "s/^Install Reason *: //p")" = "Explicitly installed" ] || { echo "$p not explicit"; exit 1; }; done' ;;
+      "install host --yes")
+        check "accounts: meanpete and media created with the exact ids, peter in media" \
+          vm_expect 'id meanpete; id -nG peter | tr " " "\n" | grep -x media' 'uid=1001(meanpete) gid=1003(meanpete) groups=1003(meanpete),1004(media)' 'media'
+        check "meanpete's files: his, exact modes and content; his home still 0700" \
+          vm_ssh 'cd ~/Projects/nomarchy && for f in movie tv move-to-plex.sh move-to-plex-tv.sh; do sudo cmp -s hosts/caesar/meanpete/Scripts/$f /home/meanpete/Scripts/$f && [ "$(sudo stat -c "%U:%G %a" /home/meanpete/Scripts/$f)" = "meanpete:meanpete 755" ] || exit 1; done; sudo cmp -s hosts/caesar/meanpete/bashrc /home/meanpete/.bashrc && sudo cmp -s hosts/caesar/meanpete/bash_profile /home/meanpete/.bash_profile && [ "$(sudo stat -c "%U:%G %a" /home/meanpete/.bashrc /home/meanpete/Scripts /home/meanpete | tr "\n" " ")" = "meanpete:meanpete 644 meanpete:meanpete 755 meanpete:meanpete 700 " ]'
+        check "install host again: meanpete's files compared under sudo, left as they are" \
+          vm_expect 'cd ~/Projects/nomarchy && common/scripts/nomarchy install host --yes' 'unchanged'
+        check "caesar's own packages: OpenDeck, ffmpeg, the rehearsal's QEMU and OVMF" \
+          vm_ssh 'pacman -Q opendeck-bin ffmpeg qemu-base qemu-ui-egl-headless edk2-ovmf'
+        check "the Irides rule is reported as waiting for its checkout, not as a conflict" \
+          grep -q 'its source ~/code/irides/data/udev/70-irides-lighting.rules is not there yet' "$LOG" ;;
+    esac
   done
   step "nomarchy install storage --yes"
   check "nomarchy install storage --yes" vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy install storage --yes'
   step "nomarchy link --yes (before first login: the Noctalia-side checks cannot pass yet)"
   vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy link --yes' >>"$LOG" 2>&1
-  step "stand-in for restoring user data (VM only): the wallpapers the Irides blueprints pin"
-  vm_ssh 'mkdir -p ~/Pictures' && for f in f40.png synthwave-nsx.jpg cyberpunk-countach.jpg; do vm_scp "$HOME/Pictures/$f" peter@127.0.0.1:Pictures/; done
+  check "shelf built from the MIGRATED working tree, not a fresh clone" \
+    vm_ssh '[ -f ~/code/shelf/.rc-migrated-marker ] && [ -x ~/.local/bin/shelf ] && [ "$(git -C ~/code/shelf status --porcelain --ignored -- .rc-migrated-marker)" = "?? .rc-migrated-marker" ]'
+  check "Irides' lighting template linked from its checkout, in the same plan that cloned it" \
+    vm_ssh '[ "$(readlink -f ~/.config/noctalia/irides-lighting.toml)" = "$HOME/code/irides/data/noctalia/irides-lighting.toml" ]'
+  check "authored git config linked; git writes THROUGH the link and it stays a link" \
+    vm_ssh 'cd ~/Projects/nomarchy && [ "$(readlink -f ~/.gitconfig)" = "$PWD/common/git/gitconfig" ] && [ "$(readlink -f ~/.config/git/ignore)" = "$PWD/common/git/ignore" ] && git config --global nomarchy.rctest 1 && [ -L ~/.gitconfig ] && grep -q rctest common/git/gitconfig; r=$?; git checkout -q -- common/git/gitconfig; exit $r'
+  check "btop, herdr and ai-usagebar config seeded as the apps' own files, byte for byte" \
+    vm_ssh 'cd ~/Projects/nomarchy && for f in btop/btop.conf herdr/config.toml ai-usagebar/config.toml; do [ -f ~/.config/$f ] && [ ! -L ~/.config/$f ] && cmp -s common/$f ~/.config/$f || { echo "$f"; exit 1; }; done'
+  check "subliminal 2.7.1 from pipx" vm_ssh '~/.local/bin/subliminal --version 2>&1 | grep -q "2\.7\.1"'
+  step "install host again, now that link has built the Irides checkout its lighting rule comes from"
+  check "nomarchy install host --yes (after link)" vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy install host --yes'
+  check "Irides' lighting rule installed from its checkout; nomarchy's retired G213 rule absent" \
+    vm_ssh 'cmp ~/code/irides/data/udev/70-irides-lighting.rules /etc/udev/rules.d/70-irides-lighting.rules && [ ! -e /etc/udev/rules.d/70-logitech-g213.rules ]'
+  step "private state: absent on a fresh machine -- status must SAY so, never pass it"
+  check "every private-state check reports to do before anything is restored" \
+    status_to_do 'SSH client keys present, 0600' 'rigel may log in' 'config.local defines the vps host' 'GPG secret key 8B52A5D2637434B3' \
+      'subliminal credentials present' 'GitHub CLI logged in' 'Claude Code and Codex logins present' 'caesar has its reserved address'
+  step "stand-ins for restoring private state (VM only, VM-REHEARSAL-ONLY): all but the GPG key"
+  vm_ssh 'set -e; for k in github homelab waylab vps caesar_to_rigel; do [ -f ~/.ssh/id_ed25519_$k ] || ssh-keygen -q -t ed25519 -N "" -C "VM-REHEARSAL-ONLY $k" -f ~/.ssh/id_ed25519_$k; done
+    printf "# VM-REHEARSAL-ONLY\nHost vps\n  HostName 192.0.2.1\n" > ~/.ssh/config.local && chmod 600 ~/.ssh/config.local
+    install -d -m 700 ~/.config/subliminal ~/.config/gh ~/.claude ~/.codex
+    printf "# VM-REHEARSAL-ONLY\n" > ~/.config/subliminal/subliminal.toml
+    printf "github.com:\n    user: vm-rehearsal-only\n" > ~/.config/gh/hosts.yml
+    echo "{}" > ~/.claude/.credentials.json; echo "{}" > ~/.codex/auth.json
+    chmod 600 ~/.config/subliminal/subliminal.toml ~/.config/gh/hosts.yml ~/.claude/.credentials.json ~/.codex/auth.json' >>"$LOG" 2>&1
+  # rigel's PUBLIC key, which the check identifies by fingerprint. A VM reachable only on
+  # 127.0.0.1 of this machine; a public key grants nothing the harness key does not.
+  grep ' peter@rigel$' "$HOME/.ssh/authorized_keys" | vm_ssh 'cat >> ~/.ssh/authorized_keys' >>"$LOG" 2>&1
 
   step "reboot into the graphical session"
   # Before --finalize-nvram the firmware still leads to the rescue system: ask for the new
@@ -381,7 +505,16 @@ VMEOF
   vm_ssh 'cd ~/Projects/nomarchy && common/scripts/nomarchy status' > "$WD/logs/rc-$stamp-status.log" 2>&1
   cat "$WD/logs/rc-$stamp-status.log" >>"$LOG"
   local summary; summary=$(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep -E '^[0-9]+ ok, ' | tail -1)
-  check "status: 0 to do, 0 conflicts  ($summary)" grep -qE '^[0-9]+ ok, 0 to do, 0 conflicts' <(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log")
+  # Exactly the two things a VM must not have: caesar's LAN address and Pete's GPG key.
+  local todo expected
+  todo=$(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep -E '^\s+→ ' | sed 's/^\s*→ //' | LC_ALL=C sort)
+  expected=$(printf '%s\n' 'GPG secret key 8B52A5D2637434B3 (pass decrypts with it) -- by hand, see below' \
+    'caesar has its reserved address, 192.168.1.200/24 -- by hand, see below' | LC_ALL=C sort)
+  check "status: 0 conflicts, and to do ONLY caesar's address and the GPG key  ($summary)" \
+    bash -c '[[ $1 == "$2" ]] && grep -qE "^[0-9]+ ok, 2 to do, 0 conflicts" <(sed "s/\x1b\[[0-9;]*m//g" "$3")' _ "$todo" "$expected" "$WD/logs/rc-$stamp-status.log"
+  check "no orphaned packages after every stage (makepkg --rmdeps)" vm_ssh 'o=$(pacman -Qdtq); echo "$o"; [ -z "$o" ]'
+  check "the keep-untouched stand-in: never mounted by the new system, byte-identical to before" \
+    vm_ssh "! findmnt -S /dev/disk/by-id/$FREE_ID-part1 >/dev/null && [ \"\$(sudo sha256sum /dev/disk/by-id/$FREE_ID-part1 | cut -d' ' -f1)\" = $(cat "$WD/freespace.sha") ]"
   check "umbriel at the exact pins" grep -q 'umbriel and its portal installed at the pinned revisions' <(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep '✓')
   check "umbriel accepts the live config (incl. Noctalia's palette)" grep -qi 'accepts the live config' <(sed 's/\x1b\[[0-9;]*m//g' "$WD/logs/rc-$stamp-status.log" | grep '✓')
 

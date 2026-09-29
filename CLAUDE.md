@@ -46,6 +46,7 @@ immediately:
 | `~/.config/irides/blueprints` | `common/irides/blueprints` (whole dir; Irides' theme intent — generated Noctalia palettes are derived, never versioned) |
 | `~/code/browse_alias` | `common/browse_alias` (whole dir) |
 | `~/.ssh/config` | `common/ssh/config` |
+| `~/.gitconfig`, `~/.config/git/ignore` | `common/git/` (git writes `config --global` through the link — tested) |
 
 **The default is: version it here, symlink it into place.** If a config file is worth
 editing twice, it belongs in this repo at the path above, not loose in `$HOME`. Two
@@ -80,8 +81,11 @@ Some things are **copies, not symlinks**, and drift silently:
   mount unit for `/mnt/nas` has to be a system unit, not a `--user` one.
 - `~meanpete/Scripts/`, `~meanpete/.bashrc`, `~meanpete/.bash_profile` — another user's
   home, and `/home/peter` is `drwx------`, so a symlink into this repo would dangle for
-  him. See `hosts/caesar/meanpete/README.md`; that whole directory is temporary and gets
-  deleted after the NVMe cutover.
+  him. Installed **owned by him** by `nomarchy install host` (the `owner:group` column in
+  `hosts/caesar/bootstrap/copies`), and his account and `media` by
+  `hosts/caesar/bootstrap/accounts`, with exact ids. His home is `0700`, so `status` cannot
+  diff those copies without sudo and says so; `install host` compares them under sudo.
+  Permanent, deliberately — see `hosts/caesar/meanpete/README.md`.
 
 Two things deliberately live **outside** the repo because they hold credentials:
 `~/.config/subliminal/subliminal.toml` (opensubtitles login, `0600`) and `~/vpn/nord/`

@@ -27,8 +27,11 @@
 #
 #   repo.txt       official-repo packages               pacman -S --needed
 #   aur.txt        AUR packages, built in list order    ~/builds/<pkg>, makepkg -si
-#   copies         <repo path> <system path> [mode]     sudo install, then the reload
-#                                                       that path needs (see reload_for)
+#   accounts       host only: group/user/member lines   groupadd/useradd/gpasswd with the
+#                                                       declared ids; a collision stops
+#                                                       the whole install (see sec_accounts)
+#   copies         <source> <system path> [mode]        sudo install, then the reload
+#                    [owner:group]                      that path needs (see reload_for)
 #   system-units   enable <unit> | mask <unit>          systemctl enable --now | mask
 #   checks         check/probe/fix|manual blocks        probe: no sudo; fix: may sudo;
 #                                                       manual: printed for a human
@@ -36,6 +39,11 @@
 #
 # The user level (`link`) reads common/bootstrap/ and hosts/<host>/bootstrap/: toolchains,
 # builds, links, seeds, units, user-checks.
+#
+# A source in copies or links is a repo path, or -- for a file that belongs to another of
+# Peter's projects rather than to nomarchy -- a path inside a DECLARED build checkout
+# (bootstrap/builds), written with its ~/ prefix: ~/code/irides/data/udev/... Nothing else
+# outside the repo is accepted, so a manifest cannot install an arbitrary file from $HOME.
 
 set -uo pipefail
 
@@ -139,6 +147,15 @@ sec_repo() {
     need "install $(wc -l <<<"$missing") of $n repo packages: $(tr '\n' ' ' <<<"$missing")" \
          "sudo pacman -S --needed --noconfirm $(tr '\n' ' ' <<<"$missing")" 1
   fi
+  # Declared means EXPLICITLY installed. A declared package that first arrived as another's
+  # dependency -- python as reflector's, meson as makepkg's -- keeps that reason through
+  # `pacman -S --needed`, and becomes an orphan the day its dependent goes: removable by
+  # any `pacman -Rns $(pacman -Qdtq)`. The census found meson and nlohmann-json exactly so.
+  local asdeps; asdeps=$(comm -12 <(printf '%s\n' "$list") <(pacman -Qqd | sort))
+  if [[ -n $asdeps ]]; then
+    need "mark $(wc -l <<<"$asdeps") declared package(s) explicitly installed (now: as dependencies): $(tr '\n' ' ' <<<"$asdeps")" \
+         "sudo pacman -D --asexplicit $(tr '\n' ' ' <<<"$asdeps")"
+  fi
 }
 
 # Built where umbriel-update expects to find them, so its gated updates and rollback work
@@ -165,7 +182,12 @@ aur_build() {
   if "$repo/common/scripts/umbriel-update" --print-pin "$pkg" >/dev/null 2>&1; then
     pb=$("$repo/common/scripts/umbriel-update" --pinned-pkgbuild "$pkg") || return 1
   fi
-  (cd "$dir" && makepkg -p "$pb" -si --needed --noconfirm)
+  # -r: remove the MAKE dependencies -s installed, once the build is done (with -i, makepkg
+  # snapshots the package list after runtime deps, so only build-time ones go). Without it
+  # every install left them behind as orphans -- nasm from ai-usagebar on caesar. The
+  # build deps umbriel-update needs later are declared in the desktop stage instead, so
+  # they are never "installed by makepkg" and never removed (see repo.txt there).
+  (cd "$dir" && makepkg -p "$pb" -sri --needed --noconfirm)
 }
 
 # Some AUR packages build with cargo (paru, ai-usagebar). On a bare machine the plan is
@@ -198,6 +220,22 @@ sec_aur() {
   ((any)) || say "no AUR packages declared"
 }
 
+# ── Sources ─────────────────────────────────────────────────────────────────────────────
+# src_path <manifest source>: the absolute path, or failure if the source is not allowed.
+build_checkouts() { manifest common/bootstrap/builds "hosts/$host/bootstrap/builds" | awk '{print $2}'; }
+src_path() {
+  local s=$1 d
+  if [[ $s != \~/* ]]; then printf '%s\n' "$repo/$s"; return 0; fi
+  [[ /$s/ != */../* ]] || return 1
+  for d in $(build_checkouts); do
+    [[ $s == "$d"/* ]] && { expand "$s"; return 0; }
+  done
+  return 1
+}
+# A source in a build checkout that is not there yet: `link` clones and builds it, and on
+# a fresh machine `install host` runs before `link` does. Something to do, not a conflict.
+src_pending() { [[ $1 == \~/* ]]; }
+
 # What a changed file needs before it means anything. Collected per plan and run once.
 reload_for() {
   case $1 in
@@ -216,27 +254,55 @@ reload_for() {
 }
 
 sec_copies() {
-  local stage=$1 src dst mode reloads=() r
+  local stage=$1 src dst mode owner s cmd o g reloads=() r
   local f; f="$(sys_dir "$stage")/copies"
   [[ -f $f ]] || { say "none declared"; return; }
-  while read -r src dst mode; do
+  while read -r src dst mode owner; do
     [[ -n ${src:-} && -n ${dst:-} ]] || continue
     mode=${mode:-0644}
-    if [[ ! -e $src ]]; then bad "$src does not exist in the repo"; continue; fi
-    local cmd="sudo install -D -m $mode $(printf %q "$repo/$src") $(printf %q "$dst")"
+    s=$(src_path "$src") || { bad "$src: outside the repo, and not inside a declared build checkout"; continue; }
+    if [[ ! -e $s ]]; then
+      if src_pending "$src"; then want "$dst: its source $src is not there yet -- nomarchy link builds that checkout, then install $stage again"
+      else bad "$src does not exist in the repo"; fi
+      continue
+    fi
+    if [[ -n ${owner:-} ]]; then
+      # Owned by a user, inside their home. install -D would make missing parents root's, so
+      # a missing parent is made as them -- and an existing one is never touched: a home is
+      # 0700, and install -d on it would re-mode it 0755.
+      o=${owner%%:*} g=${owner#*:}
+      cmd="{ sudo test -d $(printf %q "$(dirname "$dst")") || sudo install -d -o $o -g $g -m 0755 $(printf %q "$(dirname "$dst")"); } && sudo install -o $o -g $g -m $mode $(printf %q "$s") $(printf %q "$dst")"
+    else
+      cmd="sudo install -D -m $mode $(printf %q "$s") $(printf %q "$dst")"
+    fi
+    # (Not `stat | grep -q`: under pipefail that pipeline takes stat's own failure.)
+    if [[ ! -e $dst && $(stat -- "$dst" 2>&1) == *'Permission denied'* ]]; then
+      # Inside a directory only its owner can enter -- another user's 0700 home. Absent and
+      # invisible look the same to [[ -e ]], and treating invisible as absent made every
+      # run re-plan the file. status never uses sudo, so it can only say so; install
+      # compares under sudo when the step runs, and installs only on a difference.
+      if ((plan_mode)); then
+        need "$dst (not visible to $USER: compared under sudo when run, installed only if it differs)" \
+             "if sudo cmp -s $(printf %q "$s") $(printf %q "$dst") && [[ \$(sudo stat -c '%U:%G %a' $(printf %q "$dst")) == '${owner:-root:root} ${mode#0}' ]]; then echo '  unchanged'; else $cmd; fi"
+      else
+        say "? $dst is where $USER cannot look -- not compared here (install $stage compares it under sudo)"
+      fi
+      continue
+    fi
     if [[ ! -e $dst ]]; then
       need "install $dst" "$cmd"
     elif [[ ! -r $dst ]]; then
       say "? $dst not readable as $USER -- cannot compare"
       continue
-    elif diff -q "$src" "$dst" >/dev/null 2>&1; then
+    elif diff -q "$s" "$dst" >/dev/null 2>&1 \
+         && { [[ -z ${owner:-} ]] || [[ $(stat -c '%U:%G %a' "$dst") == "$owner ${mode#0}" ]]; }; then
       good "$dst"
       continue
     elif ((plan_mode)); then
-      diff -u "$dst" "$src" | sed 's/^/      /' | head -40
-      need "replace $dst (differs from $src, diff above)" "$cmd"
+      diff -u "$dst" "$s" | sed 's/^/      /' | head -40
+      need "replace $dst (differs from $src$([[ -n ${owner:-} ]] && echo ", or is not $owner ${mode#0}"), diff above)" "$cmd"
     else
-      bad "$dst DIFFERS from $src"
+      bad "$dst DIFFERS from $src$([[ -n ${owner:-} ]] && echo " (or is not $owner ${mode#0})")"
       continue
     fi
     r=$(reload_for "$dst")
@@ -248,6 +314,53 @@ sec_copies() {
       else plan_desc+=("reload for the files above"); plan_cmd+=("$r"); plan_fatal+=(0); fi
     done
   fi
+}
+
+# accounts: host-level users and groups, with EXACT ids -- the NAS's files are owned by
+# number (NFS AUTH_SYS), so a meanpete who is uid 1002 here is someone else there.
+#
+#   group  <name> <gid>
+#   user   <name> <uid> <gid> <home> <shell>     primary group by id, declared by a group line
+#   member <group> <user>                        a supplementary group
+#
+# FAIL CLOSED: a name that exists with another id, or an id held by another name, or a home
+# owned by someone else, is a conflict -- and `install` then refuses to run ANY step, since
+# the copies after it would install files for the wrong uid. Nothing here renumbers,
+# renames or chowns; that is for a human who knows why the collision is there. Passwords
+# are never handled: a new user is created locked, and the plan says how to set one.
+acct_conflict=0
+sec_accounts() {
+  local f=$1 kind a b c d e cur byid pending_groups=' '
+  while read -r kind a b c d e; do
+    case $kind in
+      group)
+        cur=$(getent group "$a" | cut -d: -f3); byid=$(getent group "$b" | cut -d: -f1)
+        if [[ $cur == "$b" ]]; then good "group $a ($b)"
+        elif [[ -n $cur ]]; then bad "group $a exists with gid $cur, declared $b -- resolve by hand, nomarchy never renumbers"; acct_conflict=1
+        elif [[ -n $byid ]]; then bad "gid $b is held by group '$byid', declared for $a -- resolve by hand"; acct_conflict=1
+        else need "create group $a (gid $b)" "sudo groupadd -g $b $a"; pending_groups+="$b "; fi ;;
+      user)
+        local ent u g h sh; ent=$(getent passwd "$a"); byid=$(getent passwd "$b" | cut -d: -f1)
+        if [[ -n $ent ]]; then
+          IFS=: read -r _ _ u g _ h sh <<<"$ent"
+          if [[ "$u $g $h $sh" == "$b $c $d $e" ]]; then good "user $a ($b:$c, $d, $e)"
+          else bad "user $a is $u:$g $h $sh, declared $b:$c $d $e -- resolve by hand"; acct_conflict=1; fi
+        elif [[ -n $byid ]]; then bad "uid $b is held by user '$byid', declared for $a -- resolve by hand"; acct_conflict=1
+        elif [[ -e $d && $(stat -c %u "$d") != "$b" ]]; then bad "$d exists, owned by uid $(stat -c %u "$d"), not $b -- resolve by hand"; acct_conflict=1
+        elif [[ -z $(getent group "$c") && $pending_groups != *" $c "* ]]; then bad "user $a: primary gid $c is neither present nor declared"; acct_conflict=1
+        else
+          need "create user $a (uid $b, gid $c, $d, $e) -- locked until a password is set" "sudo useradd -u $b -g $c -m -d $d -s $e $a"
+          plan_notes+=("$a is created with no password (locked). Set one by hand: sudo passwd $a")
+        fi ;;
+      member)
+        if id -nG "$b" 2>/dev/null | tr ' ' '\n' | grep -qx "$a"; then good "$b in group $a"
+        else
+          need "add $b to group $a" "sudo gpasswd -a $b $a"
+          [[ $b == "$USER" ]] && plan_notes+=("$b's membership of $a takes effect at $b's next login")
+        fi ;;
+      *) bad "$f: unknown line '$kind' (group|user|member)"; acct_conflict=1 ;;
+    esac
+  done < <(manifest "$f")
 }
 
 sec_units() {
@@ -308,6 +421,8 @@ system_stage() {  # system_stage <stage> -- packages, then files, units, checks
   local stage=$1 d
   d=$(sys_dir "$stage")
   head1 "[$stage] packages"; sec_repo "$stage"; sec_aur "$stage"
+  # Accounts before files: a copy may be owned by a user this stage creates.
+  if [[ -f $d/accounts ]]; then head1 "[$stage] accounts"; sec_accounts "$d/accounts"; fi
   head1 "[$stage] root-owned files"; sec_copies "$stage"
   head1 "[$stage] system units"; sec_units "$stage"
   head1 "[$stage] checks"; sec_checks "$d/checks"
@@ -473,13 +588,25 @@ sec_builds() {
 }
 
 sec_links() {
-  local src dst target
+  local src dst target s
   while read -r src dst; do
     [[ -n ${src:-} && -n ${dst:-} ]] || continue
     target=$(expand "$dst")
-    if [[ ! -e $repo/$src ]]; then bad "$src does not exist in the repo"; continue; fi
+    s=$(src_path "$src") || { bad "$src: outside the repo, and not inside a declared build checkout"; continue; }
+    if [[ ! -e $s ]]; then
+      if ! src_pending "$src"; then bad "$src does not exist in the repo"; continue; fi
+      # In a checkout this same plan clones and builds (sec_builds runs first): plan the
+      # link after it. In status, and if nothing will build it, it is simply not there yet.
+      if ((plan_mode)) && [[ ! -e $target && ! -L $target ]]; then
+        need "link $dst -> $src (once its checkout is built, earlier in this plan)" \
+             "test -e $(printf %q "$s") && mkdir -p $(printf %q "$(dirname "$target")") && ln -s $(printf %q "$s") $(printf %q "$target")"
+      else
+        want "$dst: its source $src is not there yet -- nomarchy link builds that checkout"
+      fi
+      continue
+    fi
     if [[ -L $target ]]; then
-      if [[ $(readlink -f "$target") == "$(readlink -f "$repo/$src")" ]]; then good "$dst"
+      if [[ $(readlink -f "$target") == "$(readlink -f "$s")" ]]; then good "$dst"
       else bad "$dst -> $(readlink -f "$target") (expected $src)"; fi
     elif [[ -f $target && -f /etc/skel/${target#"$HOME"/} ]] \
          && cmp -s "$target" "/etc/skel/${target#"$HOME"/}"; then
@@ -488,12 +615,12 @@ sec_links() {
       # first link on a bare machine (the VM rehearsal, 2026-09-27). A file byte-identical
       # to its /etc/skel original holds nothing anyone wrote; it is moved aside, not deleted.
       need "replace $dst (untouched /etc/skel copy, kept as ${dst}.skel) -> $src" \
-           "mv $(printf %q "$target") $(printf %q "$target.skel") && ln -s $(printf %q "$repo/$src") $(printf %q "$target")"
+           "mv $(printf %q "$target") $(printf %q "$target.skel") && ln -s $(printf %q "$s") $(printf %q "$target")"
     elif [[ -e $target ]]; then
       # Never clobber anything a human may have written.
       bad "$dst exists and is not a symlink, and is not an untouched /etc/skel copy -- move it aside, then rerun"
     else
-      need "link $dst -> $src" "mkdir -p $(printf %q "$(dirname "$target")") && ln -s $(printf %q "$repo/$src") $(printf %q "$target")"
+      need "link $dst -> $src" "mkdir -p $(printf %q "$(dirname "$target")") && ln -s $(printf %q "$s") $(printf %q "$target")"
     fi
   done < <(manifest common/bootstrap/links "hosts/$host/bootstrap/links")
 }
@@ -651,6 +778,12 @@ case $cmd in
     plan_mode=1
     refresh_installed
     system_stage "$stage"
+    if ((acct_conflict)); then
+      head1 "Refused: the accounts above collide with what this machine already has."
+      say "Nothing was changed. Resolve each collision by hand -- nomarchy never renumbers,"
+      say "renames or chowns an account -- then run install $stage again."
+      exit 1
+    fi
     run_plan "$yes"; rc=$?
     [[ $stage == host ]] && root_steps
     exit $rc

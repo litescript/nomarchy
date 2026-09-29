@@ -2,3 +2,6 @@
 # Diffed by `nomarchy status`, so drift is reported rather than silent. Mode defaults to 0644.
 common/stages/base/files/99-sysrq.conf	/etc/sysctl.d/99-sysrq.conf
 common/stages/base/files/faillock.conf	/etc/security/faillock.conf
+# The mirror policy: US, HTTPS, ranked by measured speed. reflector.timer (weekly) and the
+# check in ./checks make /etc/pacman.d/mirrorlist its output, never something migrated.
+common/stages/base/files/reflector.conf	/etc/xdg/reflector/reflector.conf

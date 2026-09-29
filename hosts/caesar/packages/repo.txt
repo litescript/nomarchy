@@ -40,3 +40,20 @@ nss-mdns
 socat
 moreutils
 logrotate
+# subget (common/scripts, run by caesar's subget-sync timer) calls ffprobe. ffmpeg was
+# only ever mpv's dependency -- the 2026-09-28 census.
+ffmpeg
+# The release-candidate rehearsal (tests/vm/rc) runs here: QEMU, its OVMF firmware, and
+# every display and device module its preflight names. Split across a dozen packages in
+# Arch; the census found them installed by hand and declared nowhere.
+qemu-base
+qemu-ui-egl-headless
+qemu-ui-opengl
+qemu-ui-gtk
+qemu-hw-display-virtio-gpu
+qemu-hw-display-virtio-gpu-gl
+qemu-hw-display-virtio-gpu-pci
+qemu-hw-display-virtio-gpu-pci-gl
+qemu-hw-display-virtio-vga
+qemu-hw-display-virtio-vga-gl
+edk2-ovmf

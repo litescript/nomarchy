@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# check-path -- ask the migration's path gate about paths, without copying anything.
+#
+#   migrate/check-path <host> source|dest <path>...
+#
+# Read-only, no sudo. Exits nonzero if ANY path is refused. The gate is migrate/guard.sh;
+# this exists so the gate can be rehearsed (tests/vm/rc) and asked by hand before the
+# migration tool that will call it is written.
+set -uo pipefail
+repo="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+. "$repo/common/storage/spec.sh" || exit 1
+. "$repo/migrate/guard.sh" || exit 1
+(($# >= 3)) || { sed -n '4p' "$0" | sed 's/^# *//'; exit 2; }
+host=$1 role=$2; shift 2
+spec_load "$repo/hosts/$host/storage/layout" || exit 1
+rc=0
+for p; do migrate_path_ok "$role" "$p" || rc=1; done
+exit $rc

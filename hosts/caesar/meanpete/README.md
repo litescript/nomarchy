@@ -7,11 +7,14 @@ staging point that happens to have the NAS mounted; nothing in the homelab depen
 Audited in `docs/migration/06-post-install-audit.md` §11, rebuilt here on 2026-09-13.
 
 **These files are deployed by copy, not symlink.** `/home/peter` is `drwx------`, so a
-symlink from meanpete's home into this repo would dangle for him. That means the copies
-drift silently — edit here, then reinstall.
+symlink from meanpete's home into this repo would dangle for him. `nomarchy install host`
+installs them owned by him (`hosts/caesar/bootstrap/copies`), and creates his account and
+the `media` group with the exact ids below (`hosts/caesar/bootstrap/accounts`). His home
+is `0700`, so `nomarchy status` cannot diff them without sudo and says so; `install host`
+compares them under sudo and replaces only what differs.
 
-**Lifecycle: this directory is temporary.** It exists so the envelope can be dropped onto
-the final NVMe install in one step. Delete it after the cutover.
+**Lifecycle: permanent, deliberately** (decided 2026-09-28). This was once a temporary
+envelope for the NVMe cutover; meanpete stays, as declared host state.
 
 ## What changed from the old box, and why
 
@@ -45,7 +48,12 @@ the old shape was the flaw.
 
 ## Install
 
+`nomarchy install host` does all of this except the password, which it never handles: a
+new meanpete is created locked, and the plan says to run `sudo passwd meanpete`. The by-hand
+equivalent, for the record:
+
 ```bash
+sudo groupadd -g 1004 media   # if absent
 sudo groupadd -g 1003 meanpete
 sudo useradd -u 1001 -g 1003 -G media -m -s /bin/bash meanpete
 sudo passwd meanpete

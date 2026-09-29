@@ -1,0 +1,12 @@
+# caesar's own accounts, created by `nomarchy install host` with EXACT ids (see sec_accounts
+# in common/scripts/nomarchy). peter is not here: the provisioner creates him, uid 1000.
+#
+# meanpete stages files from his Windows machine onto the NAS -- hosts/caesar/meanpete/.
+# The ids are the old box's and the NAS's: `media` owns the NAS's Movies and TV (setgid),
+# and NFS compares numbers, so these ids are the permission model, not a detail.
+# A collision with an existing account stops the whole install; nothing is renumbered.
+group  meanpete  1003
+group  media     1004
+user   meanpete  1001  1003  /home/meanpete  /bin/bash
+member media     meanpete
+member media     peter

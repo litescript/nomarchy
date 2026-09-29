@@ -22,3 +22,14 @@
 # in the other direction: not "has the app changed the file" but "does the repo still
 # capture what the app has".)
 common/umbriel/noctalia.toml	~/.config/umbriel/noctalia.toml
+# Authored config for apps that REWRITE their own file (manifest §8 D) -- each tested
+# 2026-09-28 against a symlinked copy, which is what decided seed over link:
+#   btop        rewrites the whole file when its header names another btop version, i.e.
+#               on every upgrade: 15 authored lines became 286, the comments gone (in
+#               place -- through a link it would have rewritten the repo's copy)
+#   herdr       writes its config in place (onboarding, its settings, config reset-keys)
+#   ai-usagebar saves settings by writing a temp file and RENAMING it over the path: a
+#               link there is silently replaced by a regular file, the sed -i failure
+common/btop/btop.conf		~/.config/btop/btop.conf
+common/herdr/config.toml	~/.config/herdr/config.toml
+common/ai-usagebar/config.toml	~/.config/ai-usagebar/config.toml

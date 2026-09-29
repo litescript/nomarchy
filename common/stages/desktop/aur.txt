@@ -25,3 +25,10 @@ xdg-desktop-portal-umbriel-git
 umbriel-git
 herdr-bin
 ai-usagebar
+# Claude Code and Codex, packaged: the package is the sole install and update owner
+# (manifest §8 B2/B3). claude-code's /usr/bin/claude is a wrapper that exports
+# DISABLE_UPDATES=1, so Claude's own updater never replaces what pacman installed; the
+# check in ./checks catches a native install in ~/.local/bin shadowing it. Their logins
+# are private state, migrated, never here.
+claude-code
+openai-codex-bin

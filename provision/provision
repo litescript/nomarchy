@@ -145,7 +145,8 @@ say "  identity gate: passed (by-id, model, serial and size all match)"
 #   - a Microsoft partition (reserved, basic data, recovery) or an NTFS filesystem;
 #   - the ESP that any firmware entry loads a \EFI\MICROSOFT\ loader from (read from NVRAM,
 #     nothing mounted) -- on caesar, sda1, where Windows' boot manager lives;
-#   - the rescue install's root filesystem (rescue.root-uuid), or the running system's root.
+#   - the rescue install's root filesystem (rescue.root-uuid), or the running system's root;
+#   - a filesystem the spec declares keep.untouched (caesar's sda3).
 # Added 2026-09-27 at Pete's word, after a gate test pointed this tool (read-only) at sda.
 MS_TYPES='e3c9e316-0b5c-4db8-817d-f92df00215ae ebd0a0a2-b9e5-4433-87c0-68b6b72699c7 de94bba4-06d1-4d40-a16a-bfd50179d6ac'
 never=()
@@ -164,12 +165,13 @@ while IFS= read -r row; do
   [[ -n $puuid ]] && grep -qx "$puuid" <<<"$winesp" && never+=("$dev is the ESP a firmware entry loads Microsoft's boot manager from")
   [[ -n $uuid && $uuid == "${SPEC[rescue.root-uuid]:-none}" ]] && never+=("$dev is the rescue install's root ($uuid)")
   [[ -n $uuid && $uuid == "$runroot" ]] && never+=("$dev is the running system's root")
+  [[ -n $uuid && " ${SPEC[keep.untouched]:-} " == *" $uuid "* ]] && never+=("$dev is a keep-untouched filesystem ($uuid)")
 done < <(lsblk -nP -p -o NAME,PARTTYPE,FSTYPE,UUID,PARTUUID "$DISK_DEV")
 if ((${#never[@]})); then
   printf '  %s\n' "${never[@]}"
   die "never gate: REFUSED -- this disk holds something no provisioning may touch, whatever the spec says"
 fi
-say "  never gate: passed (no Windows, no Microsoft ESP, no rescue root, not the running root)"
+say "  never gate: passed (no Windows, no Microsoft ESP, no rescue root, not the running root, nothing keep-untouched)"
 
 # ── Gate 2: not in use ──────────────────────────────────────────────────────────────────
 inuse=()
@@ -240,6 +242,24 @@ cat <<PLAN
   9. finish    $( ((clone)) && echo "clone nomarchy into ~peter/Projects/nomarchy; ")unmount everything, close the LUKS mapping
 PLAN
 
+# Every tool the steps above run, with its package. Checked in the DRY RUN as well: the
+# SATA rescue install -- the system that will run this for real -- had none of gptfdisk,
+# dosfstools or parted (the 2026-09-28 census), and a plan that only says so at --apply
+# says so after the serial has been typed.
+declare -A TOOL_PKG=([sgdisk]=gptfdisk [wipefs]=util-linux [mkfs.fat]=dosfstools [partprobe]=parted
+  [cryptsetup]=cryptsetup [systemd-cryptenroll]=systemd [udevadm]=systemd [mkfs.btrfs]=btrfs-progs
+  [btrfs]=btrfs-progs [pacstrap]=arch-install-scripts [arch-chroot]=arch-install-scripts [efibootmgr]=efibootmgr)
+missing_tools=() missing_pkgs=()
+for t in "${!TOOL_PKG[@]}"; do
+  command -v "$t" >/dev/null && continue
+  missing_tools+=("$t"); [[ " ${missing_pkgs[*]-} " == *" ${TOOL_PKG[$t]} "* ]] || missing_pkgs+=("${TOOL_PKG[$t]}")
+done
+if ((${#missing_tools[@]})); then
+  printf '\n\033[1;31mMISSING TOOLS: %s\033[0m\n  --apply refuses until: sudo pacman -S --needed %s\n' "${missing_tools[*]}" "${missing_pkgs[*]}"
+else
+  say "  tools: all present (${!TOOL_PKG[*]})"
+fi
+
 if [[ $mode == plan ]]; then
   printf '\n\033[1mDry run: nothing was touched.\033[0m  To do it: sudo %s %s --apply\n' "$0" "$host"
   exit 0
@@ -247,9 +267,7 @@ fi
 
 # ── Apply ───────────────────────────────────────────────────────────────────────────────
 ((EUID == 0)) || die "--apply needs root: sudo $0 $host --apply"
-for t in sgdisk wipefs mkfs.fat cryptsetup systemd-cryptenroll mkfs.btrfs pacstrap arch-chroot; do
-  command -v "$t" >/dev/null || die "missing tool: $t"
-done
+((${#missing_tools[@]} == 0)) || die "missing tools: ${missing_tools[*]} -- sudo pacman -S --needed ${missing_pkgs[*]}"
 printf '\n\033[1;31mFINAL: this DESTROYS every byte on %s (model %s, serial %s, %s bytes,\n' \
   "/dev/disk/by-id/${SPEC[disk.by-id]}" "$DISK_MODEL" "$DISK_SERIAL" "$DISK_BYTES"
 printf 'kernel name %s) and replaces it with host %s'"'"'s layout. There is no undo.\033[0m\n' "$DISK_DEV" "$host"

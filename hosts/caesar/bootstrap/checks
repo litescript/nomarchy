@@ -15,3 +15,9 @@ check firewall enabled (hosts/caesar/ufw/apply-rules)
 check UPS monitor (NUT) configured and running
   probe systemctl is-active -q nut-monitor.service
   manual sudo install -m 0640 -o root -g nut hosts/caesar/nut/upsmon.conf.example /etc/nut/upsmon.conf && sudoedit /etc/nut/upsmon.conf (replace <password>), then sudo systemctl restart nut-monitor
+# caesar is 192.168.1.200 -- netconsole, ufw, the NAS exports and every ssh alias assume
+# it. The ROUTER owns that, by a DHCP reservation for caesar's MAC; nomarchy only says when
+# it is not so, and never configures an address to make it so (manifest §0).
+check caesar has its reserved address, 192.168.1.200/24
+  probe ip -4 -o addr show | grep -q ' inet 192\.168\.1\.200/24 '
+  manual the router's DHCP reservation gives caesar .200 -- check it there (a new NIC means a new MAC), never set it here

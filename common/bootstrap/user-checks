@@ -55,3 +55,10 @@ check umbriel and its portal installed at the pinned revisions (common/umbriel/U
 check installed umbriel accepts the live config (palette included)
   probe common/scripts/umbriel-update --check-config
   manual run umbriel-update: its survey shows whether the config is ahead of the binary (install the pins) or Noctalia's palette is out of step with umbriel (wait for, or move to, a matching pair)
+# subliminal, the subtitle fetcher subget runs. A pipx install -- not packaged in Arch --
+# pinned, because subget parses its behaviour (manifest §8 B1). pipx is the desktop stage's
+# python-pipx. Its credentials (~/.config/subliminal/subliminal.toml) are private state,
+# checked on the hosts that use them.
+check subliminal 2.7.1 installed with pipx (subget's fetcher)
+  probe pipx list --short 2>/dev/null | grep -qx 'subliminal 2.7.1'
+  fix   pipx install --force 'subliminal==2.7.1'

@@ -66,6 +66,10 @@ yt-dlp
 spotify-launcher
 
 # Development
+# python itself, not only as a dependency: launch-or-focus (Mod+M/F/T/D/O) and
+# universal-clipboard (Super+C/V/X) are python scripts, and so is subget. Found by the
+# 2026-09-28 software census -- present everywhere, declared nowhere.
+python
 python-pip
 python-pipx
 nodejs
@@ -83,3 +87,17 @@ btop
 zig
 zls
 cargo-deny
+
+# umbriel's and its portal's BUILD dependencies (their PKGBUILDs' makedepends, less git and
+# pkgconf, which base has). The installer builds them with makepkg -s, but umbriel-update
+# rebuilds WITHOUT -s -- it builds, gates the new binary on the live config, then installs
+# -- so these must stay installed. Left as makepkg's leftovers they were orphans (meson,
+# nlohmann-json in the census) that one `pacman -Rns $(pacman -Qdtq)` would remove, and
+# the next umbriel-update would fail to build. Declared, they are owned; and the installer's
+# makepkg --rmdeps never removes what it did not install.
+mesa
+meson
+ninja
+nlohmann-json
+tomlplusplus
+wayland-protocols

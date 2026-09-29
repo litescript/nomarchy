@@ -1,4 +1,0 @@
-# Logitech G213 keyboard lighting. From ~/code/keyboard-rgb (hidpp.py), installed by hand
-# 2026-09-26 and adopted here 2026-09-27; installed as /etc/udev/rules.d/70-logitech-g213.rules.
-# Logitech G213 Prodigy: grant the active seat user access to its hidraw nodes (HID++ lighting control)
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c336", TAG+="uaccess"

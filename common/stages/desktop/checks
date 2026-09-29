@@ -6,3 +6,13 @@
 check Plymouth theme nomarchy installed, titled for this host, and the default
   probe cmp -s <(common/plymouth/render "$host") /usr/share/plymouth/themes/nomarchy/nomarchy.script && cmp -s common/plymouth/nomarchy/nomarchy.plymouth /usr/share/plymouth/themes/nomarchy/nomarchy.plymouth && [[ $(plymouth-set-default-theme 2>/dev/null) == nomarchy ]]
   fix   t=$(mktemp) && common/plymouth/render "$host" > "$t" && sudo install -Dm644 "$t" /usr/share/plymouth/themes/nomarchy/nomarchy.script && sudo install -Dm644 common/plymouth/nomarchy/nomarchy.plymouth /usr/share/plymouth/themes/nomarchy/nomarchy.plymouth && sudo plymouth-set-default-theme -R nomarchy; r=$?; rm -f "$t"; exit $r
+# Claude Code and Codex come from their AUR packages (./aur.txt). A native or standalone
+# install in ~/.local/bin comes first on PATH and would quietly be what runs -- and update
+# itself -- instead. The migration does not carry those (~/.local/bin is nomarchy's); this
+# says so if one appears anyway. Removing it is a human's call, so it is manual.
+check Claude Code runs from its package, updater off (claude-code)
+  probe [[ $(command -v claude) == /usr/bin/claude ]] && grep -qx 'export DISABLE_UPDATES=1' /usr/bin/claude
+  manual a native install shadows the package -- remove ~/.local/bin/claude and ~/.local/share/claude by hand
+check Codex runs from its package (openai-codex-bin)
+  probe [[ $(command -v codex) == /usr/bin/codex ]] && pacman -Qo /usr/bin/codex 2>/dev/null | grep -q openai-codex-bin
+  manual a standalone install shadows the package -- remove ~/.local/bin/codex and ~/.codex/packages by hand (keep ~/.codex itself: its auth and history are yours)

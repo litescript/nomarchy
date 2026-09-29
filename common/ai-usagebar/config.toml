@@ -1,0 +1,20 @@
+# nomarchy: Claude + Codex only. Other vendors pre-marked "known" in
+# ~/.cache/ai-usagebar/detect.json so auto-detect never enables them.
+
+[ui]
+primary = "anthropic"
+
+[anthropic]
+enabled = true
+
+[openai]
+enabled = true
+
+[zai]
+enabled = false
+
+[openrouter]
+enabled = false
+
+[commandcode]
+enabled = false

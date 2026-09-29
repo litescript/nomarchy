@@ -10,3 +10,28 @@
 check rootless docker context
   probe [[ $(docker context show 2>/dev/null) == rootless ]]
   fix   { docker context inspect rootless >/dev/null 2>&1 || docker context create rootless --docker "host=unix://$XDG_RUNTIME_DIR/docker.sock" >/dev/null; } && docker context use rootless
+# Private state: required to EXIST, never carried in this public repo (manifest §8 E).
+# Each probe asks a semantic question without reading a secret -- a mode, a fingerprint, a
+# key id, a resolved hostname -- and each is manual: the fix is restoring the file from the
+# migration, which nothing here may do. After cutover these are part of the acceptance.
+check SSH client keys present, 0600 (github, homelab, waylab, vps, caesar_to_rigel)
+  probe for k in github homelab waylab vps caesar_to_rigel; do [[ $(stat -c %a ~/.ssh/id_ed25519_$k 2>/dev/null) == 600 && -f ~/.ssh/id_ed25519_$k.pub ]] || exit 1; done
+  manual restore ~/.ssh/id_ed25519_* from the migration, 0600 (docs/cutover/03 §11)
+check rigel may log in: its key is in authorized_keys
+  probe ssh-keygen -lf ~/.ssh/authorized_keys 2>/dev/null | grep -q 'SHA256:q/ro2LDYiw5JREaNKJki7U6z5qCNYOd+sXjYp/JLWiE'
+  manual restore ~/.ssh/authorized_keys (rigel's id_ed25519_caesar.pub, peter@rigel) by hand -- an access grant, never in the repo (CLAUDE.md)
+check ~/.ssh/config.local defines the vps host
+  probe [[ $(ssh -G vps 2>/dev/null | awk '$1 == "hostname" {print $2}') != vps ]]
+  manual restore ~/.ssh/config.local from the migration (the vps Host block, kept out of the public repo)
+check GPG secret key 8B52A5D2637434B3 (pass decrypts with it)
+  probe gpg --batch --list-secret-keys 8B52A5D2637434B3 >/dev/null 2>&1
+  manual restore ~/.gnupg from the migration; then `pass show` something to prove it
+check subliminal credentials present, 0600 (~/.config/subliminal/subliminal.toml)
+  probe [[ $(stat -c %a ~/.config/subliminal/subliminal.toml 2>/dev/null) == 600 ]]
+  manual restore ~/.config/subliminal/subliminal.toml from the migration, 0600 -- the opensubtitles login
+check GitHub CLI logged in (gh)
+  probe grep -q '^ *user: ' ~/.config/gh/hosts.yml 2>/dev/null
+  manual restore ~/.config/gh/hosts.yml from the migration, or gh auth login
+check Claude Code and Codex logins present
+  probe [[ $(stat -c %a ~/.claude/.credentials.json 2>/dev/null) == 600 && $(stat -c %a ~/.codex/auth.json 2>/dev/null) == 600 ]]
+  manual restore ~/.claude/.credentials.json and ~/.codex/auth.json from the migration (or log in again)

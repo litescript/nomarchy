@@ -1,0 +1,5 @@
+[user]
+	email = brown.peterg@gmail.com
+	name = Peter Brown
+[init]
+	defaultBranch = main
