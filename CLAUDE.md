@@ -151,24 +151,28 @@ Four things about it that were established by testing umbriel 0.1.0, not by read
 - **`[[window_rule]]` and `[[layer_rule]]` entries accumulate across files**; every other
   value is replaced by the last file to set it. A host can add rules but cannot remove one
   the base defines, so anything a host might need to *not* have belongs in the host file.
-- **`~/.config/umbriel/noctalia.toml` is pulled in by the *required* include, and that
-  entry is not ours to manage.** Noctalia's umbriel template has a `post_hook`,
+- **`~/.config/umbriel/noctalia.toml` is Noctalia's include, not ours, and where it goes
+  depends on Noctalia's version.** Noctalia's umbriel template has a `post_hook`,
   `/usr/share/noctalia/assets/templates/umbriel/apply.sh`, which rewrites the host's
-  **main config file** on every theme change to append `"noctalia.toml"` to
-  `[include].files`. It is idempotent, and it writes with `cp` rather than renaming over
-  the path — so the edit lands in the repo instead of silently detaching the symlink,
-  which is the one way this could have gone badly. Verified 2026-09-21.
+  **main config file** on every theme change — with `cp`, so the edit lands in the repo
+  instead of detaching the symlink, and only when the result differs. Noctalia 5.0.x
+  appended `"noctalia.toml"` to the required `[include].files`; **5.2.0 removes it from
+  there and keeps it as the last entry of `[include.optional]`**. caesar's host file is
+  5.2.0's fixed point, byte for byte (running 5.2.0's hook over it changes nothing). The
+  first cutover rehearsal on 5.2.0 found the old layout rewritten on the new system —
+  nomarchy's checkout dirty, and migration acceptance caught it (2026-09-28). rigel's file
+  is still 5.0.x's; its own 5.2.0 update will rewrite it the same way — commit that.
 
-  The consequence is a rule: **never also list that file under `[include.optional]`.**
-  Naming it twice makes umbriel log `include cycle or duplicate skipped` and report
-  `configuration invalid`, exit 1 — and since `umbriel-update`'s install gate is
-  `validate -c` against the live config, a duplicate blocks updates of a compositor that
-  is otherwise fine. That is how it was found, on caesar's first reboot after the
-  `5eb49b6` merge. Both hosts now keep the optional entry commented out.
+  The rule that remains: **never name the palette in both sections.** Umbriel logs
+  `include cycle or duplicate skipped` and reports `configuration invalid`, exit 1 — and
+  since `umbriel-update`'s gate is `validate -c` against the live config, a duplicate
+  blocks updates of a compositor that is otherwise fine (found on caesar's first reboot
+  after the `5eb49b6` merge). A 5.0.x hook run against the 5.2.0 layout creates exactly
+  that duplicate; 5.2.0's hook repairs it, since it strips the entry from `[include]`.
 
-  A required include naming a file that does not exist is `configuration invalid` too,
-  and on a rebuilt machine the palette does not exist until Noctalia's template has run
-  once. `common/bootstrap/seeds` plants it before first login to close that gap.
+  As an optional include, a missing palette validates `config: ok` and applies no colours.
+  `common/bootstrap/seeds` still plants it before first login, so a new host has colours
+  from the start.
 
 A new host is a deliberately written `hosts/<name>/`, never a copy of another host's.
 `hosts/` is not a template directory.

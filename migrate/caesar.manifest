@@ -9,7 +9,8 @@
 #                    while the app may be running
 #     scope   home   <path> is relative to the user's home, on both sides
 #             root   <path> is absolute, from / on SATA to / on the XPG
-#     opt     exclude=<p>     not carried; <p> is relative to the entry (glob allowed)
+#     opt     exclude=<p>     not carried; <p> is relative to the entry (glob allowed);
+#                             **/<name> matches <name> at any depth
 #             authorize=<p>   a nomarchy-owned path inside the entry that may be carried
 #             from=<p>        source path, when it differs from <path> (same scope)
 #             digest          sha256 of every file recorded; acceptance on the new system
@@ -52,7 +53,9 @@ entry bulk home Archive                   digest
 
 # ── Private state (§2, §11): preserved exactly -- bytes, owner, mode. ─────────────────────
 # ~/.ssh/config is a nomarchy link; ~/.ssh/agent/ is the dead-glob leftover.
-entry bulk home .gnupg                    private
+# Lock files are runtime state: a stale one on the new system would make gpg wait on a
+# process that no longer exists. The freeze stops gpg-agent and keyboxd before the copy.
+entry bulk home .gnupg                    private exclude=**/*.lock exclude=**/.#lk*
 entry bulk home .ssh                      private exclude=config exclude=agent
 entry bulk home .config/gh/hosts.yml      private
 entry bulk home .config/subliminal/subliminal.toml  private
@@ -84,6 +87,11 @@ entry final root /etc/ssh/ssh_host_ecdsa_key        private overwrite
 entry final root /etc/ssh/ssh_host_ecdsa_key.pub    private overwrite
 entry final root /etc/ssh/ssh_host_rsa_key          private overwrite
 entry final root /etc/ssh/ssh_host_rsa_key.pub      private overwrite
+# OpenSSH's post-quantum hybrid host key -- present on SATA caesar, and a client that has
+# pinned it would see "host key changed" if new caesar generated its own. Found by the
+# rehearsal's acceptance, 2026-09-28.
+entry final root /etc/ssh/ssh_host_mldsa44_ed25519_key      private overwrite
+entry final root /etc/ssh/ssh_host_mldsa44_ed25519_key.pub  private overwrite
 
 # ── The freeze (§9 step 4). ───────────────────────────────────────────────────────────────
 quiesce thunderbird firefox obsidian claude codex nvim vim

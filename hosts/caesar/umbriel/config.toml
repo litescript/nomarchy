@@ -16,26 +16,31 @@
 # the file as umbriel was given it, and that is ~/.config/umbriel (a symlink), not this
 # directory. Verified, not assumed.
 #
-# Noctalia's generated palette is pulled in by the REQUIRED include below, and that entry
-# is not ours. Noctalia's umbriel template has a post_hook --
-# /usr/share/noctalia/assets/templates/umbriel/apply.sh -- which rewrites THIS file on
-# every theme change to append "noctalia.toml" to [include].files. It writes with cp
-# rather than renaming over the path, so the edit lands in the repo instead of silently
-# detaching the symlink. Verified 2026-09-21.
+# Noctalia's generated palette (noctalia.toml) is the OPTIONAL include below, and that entry
+# is not ours: it is where Noctalia's umbriel template puts it. Its post_hook --
+# /usr/share/noctalia/assets/templates/umbriel/apply.sh -- rewrites THIS file on every theme
+# change, with cp (so the edit lands in the repo instead of detaching the symlink), and only
+# when the result differs. Noctalia 5.2.0 changed where it puts the entry: 5.0.x appended it
+# to the REQUIRED [include]; 5.2.0 removes it from there ("written by older Noctalia
+# versions") and keeps it as the last entry of [include.optional]. The layout below is 5.2.0's
+# fixed point, byte for byte -- verified by running 5.2.0's own hook over it, which changes
+# nothing. The first cutover rehearsal on 5.2.0 found the old layout rewritten on the new
+# system, leaving nomarchy's checkout dirty (2026-09-28).
 #
-# The optional entry therefore stays COMMENTED. Naming the same file in both [include]
-# and [include.optional] makes umbriel log "include cycle or duplicate skipped" and report
-# `configuration invalid`, exit 1 -- which in turn blocks umbriel-update, whose install
-# gate is `validate -c` against this live config. That is how it was found.
+# Never name the palette in BOTH sections: umbriel logs "include cycle or duplicate skipped"
+# and reports `configuration invalid`, which blocks umbriel-update's gate. A 5.0.x hook run
+# against this file would do exactly that (it adds the entry to [include]); 5.2.0's hook
+# repairs it, since it strips the entry from [include].
 #
-# The required entry is safe on a fresh machine because common/bootstrap/seeds plants the
-# palette before first login. See the header of common/umbriel/noctalia.toml.
+# Optional costs one property: a missing palette validates `config: ok` and applies no
+# colours, where a required one failed loudly. common/bootstrap/seeds still plants the
+# palette before first login, so a fresh machine has colours from the start.
 
 [include]
-files = ["~/Projects/nomarchy/common/umbriel/base.toml", "noctalia.toml"]
+files = ["~/Projects/nomarchy/common/umbriel/base.toml"]
 
 [include.optional]
-# files = ["~/.config/umbriel/noctalia.toml"]
+files = ["noctalia.toml"]
 
 # ─────────────────────────────── Outputs ────────────────────────────────────
 # Configure monitor identity, mode, logical placement, scaling, HDR, VRR, and

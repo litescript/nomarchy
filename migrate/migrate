@@ -205,7 +205,8 @@ matches_any() {  # matches_any <relpath> <newline-separated globs>: the path or 
     part=$rel
     while :; do
       # shellcheck disable=SC2053
-      [[ $part == $pat ]] && return 0
+      if [[ $pat == '**/'* ]]; then [[ ${part##*/} == ${pat#'**/'} ]] && return 0
+      else [[ $part == $pat ]] && return 0; fi
       [[ $part == */* ]] || break
       part=${part%/*}
     done
@@ -243,6 +244,13 @@ mounts_load() { local m; while IFS= read -r m; do MOUNTS+=("$(printf '%b' "$m")"
 CLEAN=()   # what the clean install had, from the ledger's first open
 clean_load() { [[ -f $EVD/clean-install ]] && mapfile -t CLEAN < "$EVD/clean-install"; }
 in_clean() { local k=$1 c; for c in "${CLEAN[@]+"${CLEAN[@]}"}"; do [[ $c == "$k" ]] && return 0; done; return 1; }
+# ever_started <key>: has this migration ever begun writing the entry? Once it has, what is
+# there is its own copy, whatever the clean install had at that path before (moved aside).
+ever_started() {
+  [[ -f $EVD/ledger ]] || return 1
+  awk -v k="$1" '{ t = $2; p = $3; $1 = $2 = $3 = ""; sub(/^ +/, "")
+                   if (t == "start" && (p == "bulk" || p == "final") && $0 == k) f = 1 } END { exit !f }' "$EVD/ledger"
+}
 validate_pass() {  # validate_pass <bulk|final>: sources, gates, mounts, the clean install
   local pass=$1 i s d m
   mounts_load; clean_load
@@ -258,7 +266,10 @@ validate_pass() {  # validate_pass <bulk|final>: sources, gates, mounts, the cle
     for m in "${MOUNTS[@]}"; do
       [[ $m == "$(readlink -f "$s")"/* ]] && VIOL+=("$(key_of "$i"): a filesystem is mounted inside it, at $m -- unmount it; nothing is copied across a mount")
     done
-    if [[ -e $d || -L $d ]] && in_clean "$(key_of "$i")" && ! has "$i" overwrite; then
+    # Only while the migration has never written the entry: the rehearsal found the first
+    # version refusing its OWN bulk copy in the final pass -- the operator had moved the
+    # clean install's ~/.ssh aside as told, and the bulk pass had carried SATA's.
+    if [[ -e $d || -L $d ]] && in_clean "$(key_of "$i")" && ! ever_started "$(key_of "$i")" && ! has "$i" overwrite; then
       VIOL+=("$(key_of "$i"): $d was created by the clean install -- never written over (move it aside, or mark the entry overwrite)")
     fi
   done
@@ -288,7 +299,11 @@ cache_dirs() {  # cache_dirs <dir>: every directory under it carrying a valid CA
 }
 exclude_file() {  # exclude_file <i> <src>: an rsync exclude-from file (caller removes it)
   local x p; x=$(mktemp)
-  while IFS= read -r p; do [[ -n $p ]] && printf '/%s\n' "$p"; done <<<"${E_EXCL[$1]}" >> "$x"
+  # Anchored at the entry, except **/<name>, which matches <name> at any depth.
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    if [[ $p == '**/'* ]]; then printf '%s\n' "${p#'**/'}"; else printf '/%s\n' "$p"; fi
+  done <<<"${E_EXCL[$1]}" >> "$x"
   cache_dirs "$2" | while IFS= read -r p; do printf '/%s/\n' "$p"; done >> "$x"
   printf '%s\n' "$x"
 }
@@ -387,7 +402,11 @@ private_of() {  # private_of <home> <root> <i>: owner and mode of every private 
   if [[ ${E_SCOPE[i]} == home ]]; then base=$home; s=$home/${E_PATH[i]}; else base=$root; s=$root${E_PATH[i]}; fi
   if has "$i" private; then
     if [[ -d $s && ! -L $s ]]; then
-      find "$s" -xdev -printf '%P\t%U:%G\t%m\t%y\n' 2>/dev/null | while IFS=$'\t' read -r p o m t; do
+      # The x keeps the first field non-empty: for the directory itself %P is empty, and a
+      # tab is IFS whitespace, so `read` would drop it and shift every field (the rehearsal
+      # recorded ".gnupg/1000:1000" as a path).
+      find "$s" -xdev -printf 'x%P\t%U:%G\t%m\t%y\n' 2>/dev/null | while IFS=$'\t' read -r p o m t; do
+        p=${p#x}
         [[ -n $p ]] && matches_any "$p" "${E_EXCL[i]}" && continue
         printf '%s\t%s\t%s\t%s\n' "${E_PATH[i]}${p:+/$p}" "$o" "$m" "$t"
       done
@@ -411,6 +430,10 @@ ssh_fps() {  # ssh_fps <home> <root>: every client and host key fingerprint
     [[ -f $f ]] && printf '%s %s\n' "${f#"$2"}" "$(ssh-keygen -lf "$f" 2>/dev/null | awk '{print $2, $NF}')"
   done | sed "s|^$1/|~/|"
 }
+# gpg-agent and keyboxd keep the keyring open -- keyboxd's is SQLite, with a lock file beside
+# it -- and the evidence itself starts them. Stopped after the evidence and again before the
+# final copy, so ~/.gnupg is copied at rest. (A cached passphrase is simply asked again.)
+gpg_quiet() { as_user gpgconf --kill all 2>/dev/null; okl "gpg-agent and keyboxd stopped: ~/.gnupg is copied at rest"; }
 gpg_fps() { as_user gpg --batch --no-auto-check-trustdb --with-colons --list-secret-keys 2>/dev/null | awk -F: '$1 == "fpr" {print $10}' | LC_ALL=C sort -u; }
 ssh_hosts() {  # the aliases acceptance will reach, from the user's ssh config and config.local
   cat "$SRC_HOME/.ssh/config" "$SRC_HOME/.ssh/config.local" 2>/dev/null \
@@ -558,6 +581,7 @@ do_copy() {  # do_copy bulk|final
   if [[ $pass == final ]]; then
     [[ -n $(last_event frozen) ]] || die "not frozen -- sudo $0 $host freeze first"
     quiesce_check stacks
+    gpg_quiet
   fi
   validate_static; validate_pass "$pass"; report_viol
   head1 "$pass pass: $SRC_HOME -> $DEST_HOME"
@@ -572,6 +596,7 @@ do_freeze() {
   validate_static; quiesce_check; report_viol
   local e; for e in "${DUMPS[@]+"${DUMPS[@]}"}"; do freeze_dump "$e"; done
   record_evidence
+  gpg_quiet
   chown -R "$U_UID:$U_GID" "$EVD"
   ledger "frozen"
   head1 "Frozen. From here until the final pass: no app opened, no repository touched."

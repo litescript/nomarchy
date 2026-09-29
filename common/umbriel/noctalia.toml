@@ -5,13 +5,12 @@
 # by the bootstrap, which is why it lives in common/bootstrap/seeds rather than a copies
 # manifest -- reporting its drift would be reporting that Noctalia is working.
 #
-# It exists because the include that pulls it in is REQUIRED, not optional (Noctalia
-# appends "noctalia.toml" to [include] itself -- see hosts/<host>/umbriel/config.toml).
-# A required include naming a file that does not exist makes umbriel report
-# `configuration invalid` and exit 1. On a freshly rebuilt machine this file does not
-# exist until Noctalia's template has run once, so without a seed the first login is a
-# race between the compositor starting and the shell generating its palette. Seeding it
-# means a new host comes up in Tokyo Night rather than in that race.
+# It exists so a freshly rebuilt machine has colours before Noctalia's template has run
+# once. Noctalia 5.2.0 includes this file OPTIONALLY (its hook keeps "noctalia.toml" in
+# [include.optional] -- see hosts/<host>/umbriel/config.toml), so a missing palette no
+# longer fails validation; it silently applies no colours. Under Noctalia 5.0.x the include
+# was REQUIRED and a missing file was `configuration invalid`. Either way the seed means a
+# new host comes up in Tokyo Night rather than in a race with the shell.
 #
 # To change the theme, change it in Noctalia and let it regenerate. Do not hand-edit.
 
