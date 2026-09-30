@@ -447,19 +447,26 @@ whereas `MOZ_LOG=FFmpegVideo:5` says outright whether hardware decode engaged.
 
 ## Working doctrine
 
-The previous system was Omarchy 4.0.3 (Hyprland), on a **LUKS-encrypted btrfs** volume.
-It is **not mounted automatically** — there is no fstab entry, so it vanishes on every
-reboot and needs unlocking by hand (the passphrase prompt needs a real terminal):
+The previous system was Omarchy 4.0.3 (Hyprland), on a **LUKS-encrypted btrfs** volume on
+the XPG NVMe. **That disk is now caesar's root** (cutover 2026-09-29); the partition that held
+Omarchy was destroyed by `provision`. What survives is its **raw image on the NAS**, taken
+and verified (digest match, scrub clean) by `common/scripts/disk-image` on 2026-09-27:
+`/mnt/nas/Public/Backups/images/caesar-omarchy-luks/caesar-omarchy-luks.img`, still LUKS,
+under the same passphrase. Open it read-only at every layer, by hand (the passphrase prompt
+needs a real terminal):
 
 ```bash
-sudo cryptsetup open /dev/disk/by-uuid/cd84de61-5f81-4968-91e3-434381780328 omarchy-old
+loop=$(sudo losetup -r -f --show /mnt/nas/Public/Backups/images/caesar-omarchy-luks/caesar-omarchy-luks.img)
+sudo cryptsetup open --readonly "$loop" omarchy-old
 sudo mount -o ro,nosuid,nodev,subvolid=5 /dev/mapper/omarchy-old /mnt/omarchy-old
+# and after:  sudo umount /mnt/omarchy-old && sudo cryptsetup close omarchy-old && sudo losetup -d "$loop"
 ```
 
-Address it **by UUID**: the device name has already shifted once, from `nvme2n1p2` on the
-old box to `nvme1n1p2` now. `subvolid=5` mounts the btrfs top level so `@` and `@home`
-appear as directories, which is what every path in the migration docs assumes. `nosuid`
-and `nodev` because this is another system's root and §11 found a privesc in it.
+The image is the only copy — the share is world-writable, so never open it read-write.
+`subvolid=5` mounts the btrfs top level so `@` and `@home` appear as directories, which is
+what every path in the migration docs assumes. `nosuid` and `nodev` because this is another
+system's root and §11 found a privesc in it. The files that mattered were also rescued at
+file level before the wipe (`~/Archive/omarchy-rescue/` and friends); try those first.
 
 Once mounted it is read-only at `/mnt/omarchy-old` (`@`, `@home` subvolumes). Note that symlinks under
 `/mnt/omarchy-old/@/usr/share/omarchy/bin/` point at `/usr/bin/...` and therefore resolve

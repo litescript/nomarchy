@@ -96,9 +96,14 @@ alias clamps='cliamp --provider spotify'
 alias clampr='cliamp --provider radio'
 alias netconpx='tail -50 /var/log/netconsole-proxmox.log'
 alias mikeasm='qemu-system-i386 -drive file=disk_images/mikeos-4.7-asm4mo.flp,format=raw,if=floppy'
-alias nomarchy='cd ~/Projects/nomarchy/'
 
 # --- Functions ---
+
+# `nomarchy` alone jumps to the repo; with arguments it is the CLI. An alias here once
+# shadowed the CLI outright: `nomarchy link` became `cd ~/Projects/nomarchy/ link`.
+nomarchy() {
+  if (($#)); then command nomarchy "$@"; else cd ~/Projects/nomarchy/; fi
+}
 
 # Learn C the Hard Way exercise runner: `hw 10 foo` -> `./bin/ex10 foo`
 hw() {
