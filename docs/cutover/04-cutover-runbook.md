@@ -27,7 +27,8 @@ would add the palette to `[include]` too; 5.2.0 repairs that, but the order belo
 sudo pacman -Syu                                # Noctalia 5.2.0 (and a kernel, likely)
 systemctl reboot                                # autologin brings the desktop back with the NEW Noctalia
 irides apply NSX                                # Noctalia applies the theme: its 5.2.0 hook rewrites the palette
-grep scratchpad ~/.config/umbriel/noctalia.toml # prints NOTHING (6bf03a0 has no scratchpad keys)
+grep scratchpad_ ~/.config/umbriel/noctalia.toml # prints NOTHING: no 5.0.1 colour keys left
+                                                # (5.2.0's match.is_scratchpad window rule is fine)
 git -C ~/Projects/nomarchy status --short       # prints NOTHING: the host config is already 5.2.0's fixed point
 umbriel-update --sync --apply                   # builds 6bf03a0, gates it on the live config, installs it and the portal
 systemctl reboot                                # a new compositor only runs after a restart
