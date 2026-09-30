@@ -165,7 +165,7 @@ polkit_agent = true
 
 [theme]
 builtin = "Tokyo-Night"
-custom_palette = "irides-NSX"
+custom_palette = "irides-F40"
 mode = "dark"
 source = "custom"
 
@@ -177,19 +177,19 @@ source = "custom"
 transition_on_startup = true
 
     [wallpaper.default]
-    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+    path = "/home/peter/Pictures/f40.png"
 
     [wallpaper.last]
-    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+    path = "/home/peter/Pictures/f40.png"
 
     [wallpaper.monitors.DP-2]
-    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+    path = "/home/peter/Pictures/f40.png"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+    path = "/home/peter/Pictures/f40.png"
 
     [wallpaper.monitors.HDMI-A-2]
-    path = "/home/peter/Pictures/synthwave-nsx.jpg"
+    path = "/home/peter/Pictures/f40.png"
 
 [weather]
 unit = "imperial"
