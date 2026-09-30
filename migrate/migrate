@@ -742,17 +742,30 @@ do_restore() {  # do_restore <name>
     die "row counts differ from the freeze"
   fi
 }
+git_forward() {  # git_forward <frozen record> <current record> <repo>: commits since the freeze, if that is all
+  # Work on the new system is not a loss: the frozen branch may have moved forward, as long as the
+  # frozen head is an ancestor and the record is otherwise the freeze's, other refs and dirt alike.
+  local fb fx cb cx
+  read -r _ fb fx < <(grep '^head ' "$1"); read -r _ cb cx < <(grep '^head ' <<<"$2")
+  [[ $fb == "$cb" && $fb != DETACHED && $fx != none && $cx != none && $fx != "$cx" ]] || return 1
+  as_user git -C "$3" merge-base --is-ancestor "$fx" "$cx" || return 1
+  diff -q "$1" <(sed "s/$cx/$fx/g" <<<"$2") >/dev/null || return 1
+  as_user git -C "$3" rev-list --count "$fx..$cx"
+}
 do_accept() {
   new_state
   head1 "Accept: this system against the evidence recorded at the freeze ($(sed -n 's/^recorded //p' "$EVD/summary"))"
   [[ -n $(last_event verified) ]] && okl "the copy was verified byte for byte before the first boot" || badl "the ledger has no verified pass"
   [[ -n $(last_event sealed) ]] && okl "the ledger was sealed at close" || badl "the ledger was never sealed"
-  local r slug diffs i f want got n e name
+  local r slug diffs i f want got n e name cur sum
   while IFS= read -r r; do
     slug=${r//\//__}
     if [[ ! -d $HOME/$r ]]; then badl "git $r: missing"; continue; fi
-    diffs=$(diff <(cat "$EVD/git/$slug.rec") <(git_record "$HOME/$r" 2>&1))
-    if [[ -z $diffs ]]; then okl "git $r: $(sed -n 's/^head //p' "$EVD/git/$slug.rec" | cut -c1-40)$(grep -c '^stash' "$EVD/git/$slug.rec" | sed 's/^0$//;s/^\(.\+\)$/, \1 stash/')$(grep -c '^status' "$EVD/git/$slug.rec" | sed 's/^0$//;s/^\(.\+\)$/, \1 dirty or untracked/')"
+    cur=$(git_record "$HOME/$r" 2>&1)
+    diffs=$(diff "$EVD/git/$slug.rec" - <<<"$cur")
+    sum="$(sed -n 's/^head //p' "$EVD/git/$slug.rec" | cut -c1-40)$(grep -c '^stash' "$EVD/git/$slug.rec" | sed 's/^0$//;s/^\(.\+\)$/, \1 stash/')$(grep -c '^status' "$EVD/git/$slug.rec" | sed 's/^0$//;s/^\(.\+\)$/, \1 dirty or untracked/')"
+    if [[ -z $diffs ]]; then okl "git $r: $sum"
+    elif n=$(git_forward "$EVD/git/$slug.rec" "$cur" "$HOME/$r"); then okl "git $r: $sum, +$n commit(s) since the freeze"
     else badl "git $r differs from the freeze:"; head -6 <<<"$diffs" | sed 's/^/      /'; fi
   done < "$EVD/git/repos"
   for ((i = 0; i < ENTRIES; i++)); do
@@ -781,7 +794,10 @@ do_accept() {
   while read -r name want; do
     got='?'
     for e in "${COUNTS[@]}"; do [[ ${e%%|*} == "$name" ]] && { IFS='|' read -r _ f r <<<"$e"; got=$(count_of "$HOME" "$f" "$r"); }; done
-    [[ $got == "$want" ]] && okl "count $name: $got" || badl "count $name: $got here, $want at the freeze"
+    # A count catches loss; one that grew is work done here since the freeze.
+    if [[ $got == "$want" ]]; then okl "count $name: $got"
+    elif [[ $got =~ ^[0-9]+$ ]] && ((got > want)); then okl "count $name: $got, $want at the freeze (+$((got - want)) since)"
+    else badl "count $name: $got here, $want at the freeze"; fi
   done < "$EVD/counts"
   if [[ -f $EVD/thunderbird-profiles ]]; then
     while IFS= read -r f; do [[ -d $HOME/.thunderbird/$f ]] && okl "thunderbird profile $f present" || badl "thunderbird profile $f missing"; done < "$EVD/thunderbird-profiles"

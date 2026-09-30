@@ -538,6 +538,15 @@ VMEOF
   check "accept catches lost git state (a local-only branch gone)" \
     vm_expect 'cd ~/Projects/nomarchy && git -C ~/code/demo branch -m wip wip-moved; migrate/migrate caesar accept; r=$?; git -C ~/code/demo branch -m wip-moved wip; echo exit=$r' 'git code/demo differs from the freeze' 'exit=1'
   check "accept passes again once both are put back" vm_expect 'cd ~/Projects/nomarchy && migrate/migrate caesar accept' 'Accepted.'
+  check "accept passes work done since the freeze: a commit on the frozen branch, a new session" \
+    vm_expect 'git -C ~/code/demo commit -q --allow-empty -m after && echo x > ~/.claude/projects/-home-peter-code-demo/s3.jsonl && cd ~/Projects/nomarchy && migrate/migrate caesar accept' \
+      '+1 commit(s) since the freeze' 'count claude-sessions: 3, 2 at the freeze (+1 since)' 'Accepted.'
+  check "accept catches rewritten history (the frozen head no longer an ancestor)" \
+    vm_expect 'cd ~/code/demo && s=$(git rev-parse HEAD) && git update-ref refs/heads/main $(git commit-tree "HEAD^{tree}" -p HEAD~2 -m rewritten) && cd ~/Projects/nomarchy; migrate/migrate caesar accept; r=$?; git -C ~/code/demo update-ref refs/heads/main $s; echo exit=$r' \
+      'git code/demo differs from the freeze' 'exit=1'
+  check "accept catches a lost session (a count below the freeze)" \
+    vm_expect 'cd ~/Projects/nomarchy && mv ~/.claude/projects/-home-peter-code-demo/s{1,3}.jsonl /tmp/; migrate/migrate caesar accept; r=$?; mv /tmp/s{1,3}.jsonl ~/.claude/projects/-home-peter-code-demo/; echo exit=$r' \
+      'count claude-sessions: 1 here, 2 at the freeze' 'exit=1'
   check "accept-remote refuses while the agent holds no keys (it cannot prompt)" \
     vm_expect 'cd ~/Projects/nomarchy && SSH_AUTH_SOCK=/nonexistent migrate/migrate caesar accept-remote; echo exit=$?' 'the agent holds no keys' 'exit=1'
 
