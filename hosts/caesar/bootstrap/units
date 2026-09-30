@@ -5,3 +5,9 @@ backup-legal-to-nas.timer
 subget-sync.timer
 # Socket-activated rootless docker daemon -- see ./user-checks.
 docker.socket
+# Irides re-themes the RGB devices, whose colors live in device RAM only (Irides ADR-0003).
+# The exception to the rule above, on purpose: this oneshot is enabled so that it runs at
+# every login, for the devices that came up in their firmware effect at boot. Irides' udev
+# rule (./copies) starts the same unit when a device reappears -- the USB switch. Installed
+# by Irides' `make install`; `not found` here means that checkout predates it: rerun it.
+irides-lighting.service

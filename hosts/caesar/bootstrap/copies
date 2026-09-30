@@ -22,7 +22,8 @@ hosts/caesar/systemd/zram-generator.conf	/etc/systemd/zram-generator.conf
 hosts/caesar/systemd/logind-nomarchy.conf	/etc/systemd/logind.conf.d/10-nomarchy.conf
 hosts/caesar/nss/nsswitch.conf	/etc/nsswitch.conf
 hosts/caesar/nut/nut.conf	/etc/nut/nut.conf
-# Irides' lighting rule: hidraw access for the G213, G502 and ASUS Aura it drives. The
+# Irides' lighting rule: hidraw access for the G213, G502 and ASUS Aura it drives, and a
+# re-theme when one appears (irides-lighting.service, enabled in ./units). The
 # rule is Irides' file, so it is installed from the Irides checkout, not duplicated here.
 # It superseded nomarchy's own 70-logitech-g213.rules (keyboard-rgb's, retired 2026-09-28),
 # whose one rule is the first line of this one.

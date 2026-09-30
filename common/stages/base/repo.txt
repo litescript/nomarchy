@@ -33,6 +33,11 @@ reflector
 # ssh FROM a kitty window INTO this machine work, desktop or not.
 kitty-terminfo
 neovim
+# /usr/bin/vi: what sudoedit, visudo, crontab -e and git fall back to when EDITOR is unset --
+# as on the first tty login of a new host, before `link` lays .bash_profile. The cutover's
+# `sudoedit /etc/nut/upsmon.conf` failed there for want of it. Arch's vi is now this 1 KiB
+# wrapper over vim (~45 MiB with vim-runtime); the ex-vi it replaced is gone.
+ex-vi-compat
 bash-completion
 less
 man-db
