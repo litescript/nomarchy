@@ -526,8 +526,8 @@ VMEOF
 
   step "migration, on the new system: restore Revline, then accept against the evidence"
   # Before anything below writes into a migrated tree (the Noctalia snapshot step does).
-  check "restore-revline: a fresh stack, the same PostgreSQL major, row counts identical to the freeze" \
-    vm_expect 'cd ~/Projects/nomarchy && migrate/migrate caesar restore-revline' 'PostgreSQL major 16' 'the database is empty' 'row counts identical to the freeze'
+  check "restore-revline: a fresh stack, the same PostgreSQL major, its roles, owners and grants, row counts identical to the freeze" \
+    vm_expect 'cd ~/Projects/nomarchy && migrate/migrate caesar restore-revline' 'PostgreSQL major 16' 'the database is empty' 'role revline_owner created as at the freeze' 'schema as at the freeze' 'row counts identical to the freeze'
   check "restore refuses to merge into a database that already has tables" \
     vm_expect 'cd ~/Projects/nomarchy && migrate/migrate caesar restore-revline; echo exit=$?' 'already has tables' 'exit=1'
   check "accept: git, digests, private modes, fingerprints, gpg, counts, database, pass, nomarchy status" \

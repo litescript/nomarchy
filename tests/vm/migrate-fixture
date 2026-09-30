@@ -137,5 +137,12 @@ sudo docker exec revline-db-1 psql -q -U revline -d revline -c "
   INSERT INTO vehicles (name) SELECT 'car ' || g FROM generate_series(1, 1234) g;
   CREATE SCHEMA audit;
   CREATE TABLE audit.\"Log\" (id serial PRIMARY KEY, at timestamptz DEFAULT now());
-  INSERT INTO audit.\"Log\" DEFAULT VALUES; INSERT INTO audit.\"Log\" DEFAULT VALUES;"
+  INSERT INTO audit.\"Log\" DEFAULT VALUES; INSERT INTO audit.\"Log\" DEFAULT VALUES;
+  -- Revline's own migration makes a role: pg_dump names it but never creates it (caesar, 2026-09-29).
+  CREATE ROLE revline_owner WITH NOLOGIN BYPASSRLS;
+  CREATE FUNCTION audit.purge() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 0';
+  ALTER FUNCTION audit.purge() OWNER TO revline_owner;
+  GRANT ALL ON audit.\"Log\" TO revline_owner;
+  -- PostgreSQL re-deparses this on restore, so a restore never reproduces the dump's SQL text.
+  ALTER TABLE vehicles ADD COLUMN kind varchar(8) CHECK (kind IN ('CAR', 'VAN'));"
 echo "fixture ready: $(du -sh ~ 2>/dev/null | cut -f1) in ~; revline-db-1 $(sudo docker inspect -f '{{.State.Health.Status}}' revline-db-1)"

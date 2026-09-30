@@ -509,6 +509,9 @@ freeze_dump() {  # freeze_dump <name|project|container|compose|service>
   psql_in "$c" "$ROWCOUNT_SQL" > "$d/rowcounts" || die "cannot count $name's rows"
   dexec "$c" sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$d/$name.dump" || die "pg_dump of $name failed"
   dexec -i "$c" pg_restore --list < "$d/$name.dump" > "$d/toc" || die "the $name dump does not read back (pg_restore --list)"
+  # Roles are the cluster's, not the database's: pg_dump names them (owners, grants) but never
+  # creates them. A role an app's own migration made (revline_owner) is otherwise lost.
+  dexec "$c" sh -c 'pg_dumpall --roles-only -U "$POSTGRES_USER"' > "$d/roles.sql" || die "cannot dump $c's roles"
   sha256sum "$d/$name.dump" | awk '{print $1}' > "$d/$name.dump.sha256"
   printf 'container %s\nproject %s\ncompose %s\nservice %s\n' "$c" "$project" "$compose" "$svc" > "$d/meta"
   okl "$(cat "$d/postgres-version"); $(wc -l < "$d/rowcounts") tables, $(awk '{s += $2} END {print s + 0}' "$d/rowcounts") rows; dump $(du -h "$d/$name.dump" | cut -f1), $(grep -c 'TABLE DATA' "$d/toc") table-data entries read back"
@@ -686,6 +689,26 @@ new_state() {
   DEST_HOME=$HOME EVD=$HOME/$EVD_NAME
   [[ -f $EVD/ledger ]] || die "no evidence at $EVD -- is this the new system?"
 }
+schema_facts() {  # schema_facts <container> <dump file>: every object with its owner, and every grant
+  # Not the SQL text: PostgreSQL re-deparses expressions on restore (varchar = ANY (ARRAY[...])
+  # comes back cast per element), so a faithful restore never reproduces the dump line for line.
+  dexec -i "$1" pg_restore --list < "$2" | awk '/^[0-9]+;/ {sub(/^[0-9]+; [0-9]+ [0-9]+ /, ""); print}' | sort
+  dexec -i "$1" pg_restore --schema-only -f - < "$2" | grep -E '^(GRANT|REVOKE) |OWNER TO |SECURITY DEFINER' | sort
+}
+restore_roles() {  # restore_roles <container> <evidence dir>: every role the dump owns by, present
+  local c=$1 d=$2 r missing=()
+  while IFS= read -r r; do
+    [[ $(psql_in "$c" "SELECT count(*) FROM pg_roles WHERE rolname = '$r'") == 1 ]] || missing+=("$r")
+  done < <(awk '/^[0-9]+;/ {print $NF}' "$d/toc" | sort -u)
+  ((${#missing[@]})) || { okl "every role the dump names exists"; return 0; }
+  for r in "${missing[@]}"; do
+    [[ -f $d/roles.sql ]] && grep -qxF "CREATE ROLE $r;" "$d/roles.sql" \
+      || die "role $r is named by the dump but does not exist here, and the freeze recorded no definition for it -- create it as the app does, then rerun"
+    grep -E "^(CREATE|ALTER) ROLE $r( |;)" "$d/roles.sql" | dexec -i "$c" sh -c 'psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+      || die "could not create role $r from the freeze's definition"
+    okl "role $r created as at the freeze"
+  done
+}
 do_restore() {  # do_restore <name>
   local name=$1 e project c compose svc d want got
   new_state
@@ -702,8 +725,14 @@ do_restore() {  # do_restore <name>
   [[ $(psql_in "$c" "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')") == 0 ]] \
     || die "$c already has tables -- restore never merges into an existing database"
   okl "the database is empty"
-  dexec -i "$c" sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error --single-transaction' < "$d/$name.dump" \
+  restore_roles "$c" "$d"
+  # Owners are restored, not dropped: a SECURITY DEFINER function runs as its owner.
+  dexec -i "$c" sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error --single-transaction' < "$d/$name.dump" \
     || die "pg_restore failed -- nothing was committed (single transaction)"
+  dexec "$c" sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$d/$name.restored.dump" || die "cannot dump the restored $name"
+  diff <(schema_facts "$c" "$d/$name.dump") <(schema_facts "$c" "$d/$name.restored.dump") > "$d/schema.diff" \
+    || { head -10 "$d/schema.diff" | sed 's/^/      /'; die "the restored schema differs from the freeze -- $d/schema.diff"; }
+  okl "schema as at the freeze: $(awk '/^[0-9]+;/' "$d/toc" | wc -l) objects, each owner and grant"
   psql_in "$c" "$ROWCOUNT_SQL" > "$d/rowcounts.restored"
   if cmp -s "$d/rowcounts" "$d/rowcounts.restored"; then
     okl "restored: $(wc -l < "$d/rowcounts") tables, row counts identical to the freeze"
