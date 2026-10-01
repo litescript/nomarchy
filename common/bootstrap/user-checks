@@ -17,6 +17,16 @@ check Irides Noctalia plugin enabled (Mod+Alt+T)
   probe pgrep -x noctalia >/dev/null || exit 1; for i in $(seq 30); do noctalia msg plugins list 2>/dev/null | grep -qE '^litescript/irides .* enabled' && exit 0; sleep 0.5; done; exit 1
   fix   { noctalia msg plugins source list | grep -qE '^irides ' || noctalia msg plugins source add irides path ~/code/irides/noctalia-plugins; } && noctalia msg plugins enable litescript/irides && for i in $(seq 20); do noctalia msg plugins list 2>/dev/null | grep -qE '^litescript/irides .* enabled' && exit 0; sleep 0.5; done; exit 1
 
+# Every plugin Noctalia's settings enable, loaded by the RUNNING shell -- settings.toml saying
+# "enabled" is not the bar having it. Git plugin sources are fetched once, at startup, with
+# no retry; new caesar's every start after the cutover beat DNS, so the ai-usagebar widget
+# and umbriel-companion's `bar` were missing for two days while this file's other checks all
+# passed (2026-10-01). Like the Irides check, it passes from the first graphical login. The
+# fix restarts Noctalia under umbriel, and refuses when github.com does not resolve.
+check Noctalia has loaded every plugin its settings enable (bar widgets)
+  probe common/scripts/noctalia-plugins --check
+  fix   common/scripts/noctalia-plugins --restart
+
 # Noctalia's settings are seeded from a snapshot in the repo (hosts/<host>/noctalia/). A
 # snapshot is only as good as its date, so this says when live has moved past it -- a
 # setting changed today would otherwise miss the next rebuild without anyone noticing.

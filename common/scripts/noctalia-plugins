@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# noctalia-plugins -- are the plugins Noctalia's settings enable actually loaded?
+#
+#   noctalia-plugins            each enabled plugin: loaded by the running shell, or not, and
+#                               whether each git plugin source was ever fetched here
+#   noctalia-plugins --check    exit 0 only if every enabled plugin is loaded (nomarchy status)
+#   noctalia-plugins --restart  restart Noctalia under umbriel, then wait for them to load
+#
+# settings.toml enabling a plugin says nothing about whether the bar has it. Noctalia fetches
+# its git plugin sources (official, community) once, at startup, and never again: no retry
+# when the network comes up, and `noctalia msg plugins update <source>` answers "ok" but does
+# nothing for a source that was never cloned. New caesar started Noctalia six times after the
+# cutover, every time ~1 s before DNS -- the migration carried no plugin cache -- so the
+# ai-usagebar widget and umbriel-companion's `bar` were missing for two days while the
+# settings enabled both (2026-10-01). A restart with the network up fetched them, and the bar
+# rebuilt itself ~3 s later. The question asked here is the running shell's own plugin list.
+#
+# Not verified: whether a plugin that is fetched but fails to load (a plugin API outside
+# Noctalia's supported range) still lists as enabled. That case has not been seen here.
+
+set -uo pipefail
+
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/noctalia
+SETTINGS=$STATE/settings.toml
+
+die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
+
+mode=report
+for a in "$@"; do
+  case $a in
+    --check) mode=check ;;
+    --restart) mode=restart ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument '$a'" ;;
+  esac
+done
+
+# "plugin <id>" for each enabled plugin, "source <name> <kind>" for each source.
+read_settings() {
+  python3 - "$SETTINGS" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], 'rb') as f:
+    plugins = tomllib.load(f).get('plugins', {})
+for p in plugins.get('enabled', []):
+    print('plugin', p)
+for s in plugins.get('source', []):
+    print('source', s.get('name', '?'), s.get('kind', '?'))
+PY
+}
+
+running() { pgrep -x -u "$UID" noctalia >/dev/null; }
+
+# The ids from $wanted that the running shell does not list as enabled. A line reads
+# "<id> [<source>] <version> enabled|disabled [deprecated] [requires ...]".
+missing() {
+  local listed id
+  listed=$(noctalia msg plugins list 2>/dev/null)
+  for id in $wanted; do
+    awk -v id="$id" '$1 == id && $4 == "enabled" {found = 1} END {exit !found}' <<<"$listed" || echo "$id"
+  done
+}
+
+# Plugins load in the background: ~3 s after a start, and again after the reload a theme
+# change triggers (see the Irides check in common/bootstrap/user-checks). Wait up to $1 s.
+settle() {
+  local i
+  for ((i = 0; i < $1 * 2; i++)); do
+    [[ -z $(missing) ]] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+[[ -f $SETTINGS ]] || { [[ $mode == check ]] && exit 0; die "$SETTINGS does not exist -- has Noctalia run here?"; }
+settings=$(read_settings) || die "cannot parse $SETTINGS"
+wanted=$(awk '$1 == "plugin" {print $2}' <<<"$settings")
+[[ -n $wanted ]] || { [[ $mode == check ]] && exit 0; echo "No plugins enabled in $SETTINGS."; exit 0; }
+
+case $mode in
+  check)
+    running || exit 1
+    settle 15
+    ;;
+
+  report)
+    if ! running; then
+      echo "Noctalia is not running: nothing has loaded any plugin."
+    else
+      gone=$(missing)
+      for id in $wanted; do
+        if grep -qx "$id" <<<"$gone"; then printf '  \033[31m✗\033[0m %s  enabled in settings, NOT loaded\n' "$id"
+        else printf '  \033[32m✓\033[0m %s\n' "$id"; fi
+      done
+    fi
+    # Where Noctalia 5.2.0 keeps each git source's clone (observed, not documented).
+    while read -r _ name kind; do
+      [[ $kind == git ]] || continue
+      if [[ -d $STATE/plugins/sources/$name/repo ]]; then printf '  source %s: fetched\n' "$name"
+      else printf '  source %s: NEVER fetched on this machine -- its plugins cannot load\n' "$name"; fi
+    done < <(grep '^source ' <<<"$settings")
+    if running && [[ -n $gone ]]; then
+      echo
+      echo "Noctalia fetches git sources only at startup. With the network up: ${0##*/} --restart"
+    fi
+    ;;
+
+  restart)
+    umbriel windows --json >/dev/null 2>&1 || die "umbriel is not answering -- this needs the graphical session"
+    # Restarting without a network only repeats the failed fetch.
+    getent ahosts github.com >/dev/null || die "github.com does not resolve -- Noctalia would fail the same fetch again"
+    if pid=$(pgrep -x -u "$UID" noctalia); then
+      kill $pid
+      for ((i = 0; i < 50; i++)); do kill -0 $pid 2>/dev/null || break; sleep 0.1; done
+      kill -0 $pid 2>/dev/null && die "Noctalia (pid $pid) did not exit"
+    fi
+    # Through umbriel, so the new shell has the session's environment and parent, as at login.
+    umbriel msg spawn noctalia || die "umbriel would not spawn noctalia"
+    if settle 30; then echo "Noctalia restarted; every enabled plugin is loaded."
+    else echo "Noctalia restarted, but still not loaded: $(missing | tr '\n' ' ')" >&2; exit 1; fi
+    ;;
+esac

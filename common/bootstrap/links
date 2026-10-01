@@ -22,6 +22,7 @@ common/irides/blueprints	~/.config/irides/blueprints
 common/scripts/askpass-fuzzel		~/.local/bin/askpass-fuzzel
 common/scripts/nomarchy			~/.local/bin/nomarchy
 common/scripts/noctalia-snapshot	~/.local/bin/noctalia-snapshot
+common/scripts/noctalia-plugins	~/.local/bin/noctalia-plugins
 common/scripts/backup-daily		~/.local/bin/backup-daily
 common/scripts/backup-legal-to-nas	~/.local/bin/backup-legal-to-nas
 common/scripts/launch-or-focus		~/.local/bin/launch-or-focus
