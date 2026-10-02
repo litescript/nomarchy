@@ -320,6 +320,7 @@ follows_mouse = true                            # Focus on motion after scene ch
 "Mod+T" = "spawn:launch-or-focus ^btop$ kitty --app-id=btop btop"
 "Mod+D" = "spawn:launch-or-focus ^lazydocker$ kitty --app-id=lazydocker lazydocker"
 "Mod+O" = "spawn:launch-or-focus obsidian$ obsidian"
+"Mod+Shift+O" = "spawn:launch-or-focus ^dev\\.omarchy\\.OmNote$ omnote"
 "Mod+F" = "spawn:launch-or-focus ^dev\\.shelf\\.Shelf$ shelf"
 "Mod+Space" = "spawn:noctalia msg panel-toggle launcher"
 "Mod" = "spawn:noctalia msg panel-toggle launcher"
