@@ -11,6 +11,9 @@ common/systemd/backup-legal-to-nas.service	~/.config/systemd/user/backup-legal-t
 common/systemd/backup-legal-to-nas.timer	~/.config/systemd/user/backup-legal-to-nas.timer
 common/systemd/subget-sync.service	~/.config/systemd/user/subget-sync.service
 common/systemd/subget-sync.timer	~/.config/systemd/user/subget-sync.timer
+# subget itself, which the timer runs: subtitles for the Plex library on the NAS. caesar's
+# job -- rigel does not fetch subtitles (Pete, 2026-10-04), so this left common/.
+common/scripts/subget			~/.local/bin/subget
 # Irides' Noctalia template that themes the RGB devices from the active palette. caesar
 # only: it runs irides-lighting on every theme change, which needs the hardware. Irides'
 # file, linked from its checkout (built by common/bootstrap/builds).

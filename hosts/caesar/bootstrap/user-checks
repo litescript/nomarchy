@@ -10,6 +10,13 @@
 check rootless docker context
   probe [[ $(docker context show 2>/dev/null) == rootless ]]
   fix   { docker context inspect rootless >/dev/null 2>&1 || docker context create rootless --docker "host=unix://$XDG_RUNTIME_DIR/docker.sock" >/dev/null; } && docker context use rootless
+# subliminal, the subtitle fetcher subget runs. A pipx install -- not packaged in Arch --
+# pinned, because subget parses its behaviour (manifest §8 B1). pipx is the desktop stage's
+# python-pipx. caesar only, with subget (../bootstrap/links): rigel does not fetch subtitles.
+# Its credentials are private state, checked below.
+check subliminal 2.7.1 installed with pipx (subget's fetcher)
+  probe pipx list --short 2>/dev/null | grep -qx 'subliminal 2.7.1'
+  fix   pipx install --force 'subliminal==2.7.1'
 # Private state: required to EXIST, never carried in this public repo (manifest §8 E).
 # Each probe asks a semantic question without reading a secret -- a mode, a fingerprint, a
 # key id, a resolved hostname -- and each is manual: the fix is restoring the file from the
