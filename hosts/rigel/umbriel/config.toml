@@ -20,16 +20,19 @@
 # clones, and the user is `peter` -- so this resolves identically on caesar and rigel.
 # rigel's PRE-wipe checkout was ~/nomarchy under a different user; that is gone with the
 # disk. Being a required include, a wrong path here fails loudly rather than silently.
-files = ["~/Projects/nomarchy/common/umbriel/base.toml", "noctalia.toml"]
+files = ["~/Projects/nomarchy/common/umbriel/base.toml"]
 
 [include.optional]
-# DO NOT UNCOMMENT. Noctalia appends "noctalia.toml" to the REQUIRED [include] above by
-# itself, on every theme change, via its umbriel template post_hook. Naming the same file
-# here as well makes umbriel report `configuration invalid` (exit 1) on a duplicate
-# include -- which also blocks umbriel-update, whose install gate validates this file.
-# caesar hit exactly that on 2026-09-21. The palette is seeded by common/bootstrap/seeds
-# so the required entry is satisfied on a fresh machine.
-# files = ["~/.config/umbriel/noctalia.toml"]
+# NOT OURS. Noctalia's generated palette, placed here by its umbriel template post_hook
+# (/usr/share/noctalia/assets/templates/umbriel/apply.sh), which rewrites this file on every
+# theme change. 5.0.x appended it to the REQUIRED [include]; 5.2.x strips it from there and
+# keeps it as the last entry of this section. rigel's own Noctalia update (5.2.1) did that
+# rewrite on 2026-10-04 -- but this section had no `files =` line, so the hook inserted one
+# just above the next table header, below the Outputs banner. This layout is 5.2.x's fixed
+# point: running the hook over it changes nothing. Never name the palette in BOTH sections
+# -- umbriel reports `configuration invalid`, which blocks umbriel-update's gate. See the
+# header of hosts/caesar/umbriel/config.toml for the full account.
+files = ["noctalia.toml"]
 
 # ─────────────────────────────── Outputs ────────────────────────────────────
 # One internal panel, a BOE 0x0AD5. Name and modes are from `umbriel outputs` on the new

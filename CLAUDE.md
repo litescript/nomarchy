@@ -160,8 +160,11 @@ Four things about it that were established by testing umbriel 0.1.0, not by read
   there and keeps it as the last entry of `[include.optional]`**. caesar's host file is
   5.2.0's fixed point, byte for byte (running 5.2.0's hook over it changes nothing). The
   first cutover rehearsal on 5.2.0 found the old layout rewritten on the new system —
-  nomarchy's checkout dirty, and migration acceptance caught it (2026-09-28). rigel's file
-  is still 5.0.x's; its own 5.2.0 update will rewrite it the same way — commit that.
+  nomarchy's checkout dirty, and migration acceptance caught it (2026-09-28). rigel's own
+  update (5.2.1, 2026-10-04) rewrote its file the same way and that is committed. One wrinkle
+  worth knowing: where `[include.optional]` has no `files =` line yet, the hook inserts one
+  just above the **next table header**, wherever that is — on rigel, below the Outputs
+  banner. Move it up under the header; the hook leaves it there.
 
   The rule that remains: **never name the palette in both sections.** Umbriel logs
   `include cycle or duplicate skipped` and reports `configuration invalid`, exit 1 — and
