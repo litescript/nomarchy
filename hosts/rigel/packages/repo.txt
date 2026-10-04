@@ -59,3 +59,17 @@ sof-firmware
 # than caesar's NFS, and -- verified from off-site -- over Tailscale, which makes the LAN
 # appear local. Credentials live in /etc/nas-creds and never enter this repo.
 cifs-utils
+
+# vim: explicitly installed since rigel's install day (2026-09-13). caesar has it only as a
+# dependency, so it is rigel's, not the base stage's (which carries ex-vi-compat for `vi`).
+vim
+
+# Docker -- the same five packages as hosts/caesar/packages/repo.txt, installed here by hand
+# on 09-20, 09-27 and 10-04. PACKAGES ONLY: rigel has no daemon. docker.service is disabled
+# and the rootless half caesar has (docker-rootless-extras, the docker.socket user unit, the
+# `rootless` context check) is not declared here, so Mod+D's lazydocker still has no socket.
+docker
+docker-compose
+rootlesskit
+slirp4netns
+fuse-overlayfs
