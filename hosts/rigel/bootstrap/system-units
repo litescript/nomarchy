@@ -1,0 +1,7 @@
+# System units on rigel: `enable <unit>` (enabled and started) or `mask <unit>`.
+# Applied by `nomarchy install host`, after this host's copies, so a unit file shipped as a
+# copy exists before it is enabled.
+#
+# Once per boot: turns hibernation off when booted into a kernel a resume would not boot
+# (the LTS entry). See hosts/rigel/hibernate-guard/.
+enable hibernate-guard.service

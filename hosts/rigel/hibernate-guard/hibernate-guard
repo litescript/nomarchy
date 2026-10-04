@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# hibernate-guard -- allow hibernation only while a resume would boot THIS kernel.
+#
+#   hibernate-guard           decide, and write or remove the /run drop-in (root)
+#   hibernate-guard --check   print the decision and change nothing (any user)
+#
+# Installed as /usr/local/bin/hibernate-guard (hosts/rigel/bootstrap/copies). Run by
+# /etc/pacman.d/hooks/95-hibernate-guard.hook after any kernel install, upgrade or removal --
+# after 90-mkinitcpio-install has put the new image on /boot -- and once per boot by
+# hibernate-guard.service, which is what catches a boot into the LTS entry.
+#
+# WHY. A hibernation image resumes only on the kernel that wrote it; the kernel refuses any
+# other, and the session is discarded as if the power had been cut. Two everyday states
+# make the kernel a resume would boot differ from the one running: a `pacman -Syu` that
+# upgraded `linux` without a reboot since, and running the LTS fallback while the default
+# entry is mainline. With the lid hibernating by itself after 2h, neither would be noticed
+# until the session was gone.
+#
+# WHAT. While they differ, a drop-in in /run/systemd/sleep.conf.d/ turns hibernation off.
+# Nothing else changes: logind's fallbacks, verified on systemd 262, take over -- the lid's
+# SleepOperation list falls through to plain suspend, the power key's hibernate becomes
+# "regular suspend instead", the panel's `systemctl hibernate` is refused ("disabled by
+# config"), and UPower's critical action falls through to power-off rather than a doomed
+# hybrid sleep. /run is cleared at boot, so a reboot onto the default kernel lifts it with
+# no one remembering to.
+#
+# FAILS SAFE. Hibernation is allowed only when the default entry's kernel version is READ
+# and EQUALS `uname -r`. Anything unreadable -- a glob or @saved `default`, a missing entry,
+# an image `file` cannot parse -- counts as "differs". The cost of a wrong "differs" is a
+# suspend where a hibernate was wanted; the cost of a wrong "same" is a lost session.
+set -euo pipefail
+
+DROPIN=${DROPIN:-/run/systemd/sleep.conf.d/50-hibernate-guard.conf}   # overridable for tests
+BOOT=${BOOT:-/boot}                  # the ESP; entry paths are relative to it
+LOADER=${LOADER:-$BOOT/loader}       # overridable so --check can be tested on fixtures
+
+check=0
+case ${1:-} in
+  --check) check=1 ;;
+  '') ;;
+  *) echo "usage: ${0##*/} [--check]" >&2; exit 2 ;;
+esac
+
+# The kernel a resume would boot: systemd-boot's default entry. rigel's loader.conf names
+# one file (`default arch.conf`); a pattern is not resolved here, it fails safe instead.
+entry=$(awk '$1 == "default" {print $2; exit}' "$LOADER/loader.conf" 2>/dev/null || true)
+image=''
+[[ -n $entry && -f $LOADER/entries/$entry ]] \
+  && image=$(awk '$1 == "linux" {print $2; exit}' "$LOADER/entries/$entry")
+boot_ver=''
+[[ -n $image ]] \
+  && boot_ver=$(file -bL "$BOOT$image" 2>/dev/null | sed -n 's/.*, version \([^ ]*\) .*/\1/p')
+run_ver=$(uname -r)
+
+if [[ -n $boot_ver && $boot_ver == "$run_ver" ]]; then
+  verdict=allow
+  reason="running $run_ver, and the default entry ($entry) boots $run_ver"
+else
+  verdict=block
+  reason="running $run_ver, but a resume would boot ${boot_ver:-an unreadable kernel} (default entry: ${entry:-none}${image:+, $image})"
+fi
+
+if ((check)); then
+  echo "$verdict: $reason"
+  exit 0
+fi
+
+if [[ $verdict == allow ]]; then
+  if [[ -e $DROPIN ]]; then
+    rm -f "$DROPIN"
+    echo "hibernate-guard: hibernation back ON -- $reason"
+  fi
+else
+  mkdir -p "${DROPIN%/*}"
+  printf '%s\n' \
+    "# Written by hibernate-guard: $reason." \
+    "# In /run, so a reboot removes it. See /usr/local/bin/hibernate-guard." \
+    "[Sleep]" \
+    "AllowHibernation=no" \
+    "AllowSuspendThenHibernate=no" \
+    "AllowHybridSleep=no" > "$DROPIN"
+  echo "hibernate-guard: hibernation OFF until reboot -- $reason"
+fi

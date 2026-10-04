@@ -13,3 +13,9 @@ hosts/rigel/systemd/sleep-nomarchy.conf		/etc/systemd/sleep.conf.d/10-nomarchy.c
 # the default: /boot is FAT, mounted fmask=0022, so every file there reads root:root 755
 # and a chmod to anything else is refused.
 hosts/rigel/boot/arch-lts.conf			/boot/loader/entries/arch-lts.conf	0755
+# hibernate-guard: hibernation is turned off (in /run, until reboot) whenever a resume would
+# boot a different kernel than the one running -- after a `linux` upgrade, or booted on LTS.
+# The script, the pacman hook that runs it after mkinitcpio, and the unit that runs it at boot.
+hosts/rigel/hibernate-guard/hibernate-guard		/usr/local/bin/hibernate-guard		0755
+hosts/rigel/hibernate-guard/95-hibernate-guard.hook	/etc/pacman.d/hooks/95-hibernate-guard.hook
+hosts/rigel/hibernate-guard/hibernate-guard.service	/etc/systemd/system/hibernate-guard.service

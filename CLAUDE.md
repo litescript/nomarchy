@@ -522,8 +522,11 @@ Noctalia owns the lock: `lock_before_suspend` (on by default) holds a logind del
 and locks on every `PrepareForSleep`, lid included — so umbriel's `[events]` lid hooks stay
 commented, and nothing else should lock on sleep. Hibernation resumes through systemd's
 `HibernateLocation` EFI variable, not `resume=`. **An image resumes only on the kernel that
-wrote it**: after a `linux` upgrade, reboot before hibernating, or the session is discarded
-on resume — and booting the LTS entry with an image waiting does the same.
+wrote it** — after a `linux` upgrade without a reboot, or booted on the LTS entry, a resume
+would discard the session. `hosts/rigel/hibernate-guard/` turns hibernation off in exactly
+those states (a `/run` drop-in, from a pacman hook and a boot unit), and the fallbacks make
+that a plain suspend. If rigel's power key suspends instead of hibernating, check
+`hibernate-guard --check` before suspecting anything else.
 
 ## Git
 

@@ -1,0 +1,14 @@
+# Installed as /etc/systemd/system/hibernate-guard.service (hosts/rigel/bootstrap/copies),
+# enabled by hosts/rigel/bootstrap/system-units. Once per boot: on the default kernel it
+# finds nothing to do (/run starts empty); booted into the LTS entry, it turns hibernation
+# off, because a resume would boot mainline. See /usr/local/bin/hibernate-guard.
+[Unit]
+Description=Allow hibernation only if a resume would boot the running kernel
+RequiresMountsFor=/boot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/hibernate-guard
+
+[Install]
+WantedBy=multi-user.target

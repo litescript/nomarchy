@@ -1,0 +1,14 @@
+# Installed as /etc/pacman.d/hooks/95-hibernate-guard.hook (hosts/rigel/bootstrap/copies).
+# Named 95 so it runs after 90-mkinitcpio-install, which is what puts a new kernel image on
+# /boot -- the guard reads that image. See /usr/local/bin/hibernate-guard for why.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/lib/modules/*/vmlinuz
+
+[Action]
+Description = Checking that hibernation would resume on the running kernel...
+When = PostTransaction
+Exec = /usr/local/bin/hibernate-guard
