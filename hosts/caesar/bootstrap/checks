@@ -10,11 +10,15 @@ check firewall enabled (hosts/caesar/ufw/apply-rules)
 
 # The monuser password lives in upsmon.conf, so the file is created by hand and never
 # committed. Its EXISTENCE proves nothing -- the nut package ships a stock upsmon.conf, with
-# no MONITOR line -- so the probe is the monitor itself: upsmon refuses to start with no
-# supplies configured, and stays up once it has one.
-check UPS monitor (NUT) configured and running
-  probe systemctl is-active -q nut-monitor.service
-  manual sudo install -m 0640 -o root -g nut hosts/caesar/nut/upsmon.conf.example /etc/nut/upsmon.conf && sudoedit /etc/nut/upsmon.conf (replace <password>), then sudo systemctl restart nut-monitor
+# no MONITOR line. Nor does upsmon RUNNING: this probe used to be exactly that, and it said
+# ok for the five days after the cutover (2026-09-29 to 10-04) while upsd refused caesar
+# twice over -- Proxmox's ufw dropping 3493, then a monuser password that did not match.
+# upsmon stays up through both. So the probe asks upsd itself whether caesar is among its
+# logged-in monitors; `upsc -c` needs no credentials, and .200 is asserted by the address
+# check below. Bare upsc gives up on a dropped port after 10 s; timeout keeps `status` quick.
+check UPS monitor (NUT) logged in to Proxmox's upsd
+  probe systemctl is-active -q nut-monitor.service && timeout 5 upsc -c cyberups@192.168.1.50 2>/dev/null | grep -Eqx '(::ffff:)?192\.168\.1\.200'
+  manual no /etc/nut/upsmon.conf: follow hosts/caesar/nut/upsmon.conf.example. Otherwise read `journalctl -u nut-monitor`: "Connection timed out" = Proxmox's ufw must allow 3493/tcp from 192.168.1.200; "ERR ACCESS-DENIED" = the password is not [monuser]'s in Proxmox's /etc/nut/upsd.users (copy it as the example shows)
 # caesar is 192.168.1.200 -- netconsole, ufw, the NAS exports and every ssh alias assume
 # it. The ROUTER owns that, by a DHCP reservation for caesar's MAC; nomarchy only says when
 # it is not so, and never configures an address to make it so (manifest §0).

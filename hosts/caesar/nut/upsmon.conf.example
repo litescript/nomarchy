@@ -3,16 +3,29 @@
 # checked by the NUT check in hosts/caesar/bootstrap/checks; create it once by hand:
 #
 #   sudo install -m 0640 -o root -g nut hosts/caesar/nut/upsmon.conf.example /etc/nut/upsmon.conf
-#   sudoedit /etc/nut/upsmon.conf          # replace <password>
+#   pw=$(ssh proxmox "sed -n '/^\[monuser\]/,/^\[/s/^[[:space:]]*password[[:space:]]*=[[:space:]]*//p' /etc/nut/upsd.users") \
+#     && [ -n "$pw" ] \
+#     && sudo sed -i -E "s/^(MONITOR cyberups@192\.168\.1\.50 1 monuser )[^ ]+/\1$pw/" /etc/nut/upsmon.conf; unset pw
 #   sudo systemctl restart nut-monitor
 #
-# The password is on Proxmox, in /etc/nut/upsd.users, and in the old Omarchy disk image at
-# @/etc/ups/upsmon.conf.
+# The password is [monuser]'s in Proxmox's /etc/nut/upsd.users, and that file is the
+# authority. COPY it, as above, rather than retype it: a mistyped one was the second fault of
+# 2026-10-04, and its only trace is one "ERR ACCESS-DENIED" line in caesar's journal per
+# connect -- upsd 2.8.0 logs nothing for a refused login. The copy never prints the password.
+# It needs id_ed25519_homelab in the agent, and works because the password is alphanumeric; a
+# `/`, `&` or `\` in it would need sudoedit instead.
 #
-# Found missing 2026-09-27: the old install shut caesar down cleanly on low battery, and the
-# migration dropped it with nothing to say so -- nut was not installed and /etc/ups was gone.
-# `slave` from the old file is `secondary` in NUT 2.8; POWERDOWNFLAG is omitted because only
-# the primary (the machine the UPS is cabled to) powers the UPS off.
+# Proxmox's side, which nomarchy does not manage: upsd LISTENs on 0.0.0.0 and :: port 3493,
+# and Proxmox's ufw must admit caesar --
+#   ufw allow from 192.168.1.200 to any port 3493 proto tcp comment 'nut from caesar'
+# added 2026-10-04. ufw there was enabled 2026-02-01 without it; a rebuilt Proxmox loses the
+# rule silently, and the check's probe is what notices.
+#
+# Found missing 2026-09-27: the migration dropped it with nothing to say so -- nut was not
+# installed and /etc/ups was gone. The old install was not protecting caesar either: from
+# 2026-02-01 Proxmox's firewall dropped every connection it made. `slave` from the old file
+# is `secondary` in NUT 2.8; POWERDOWNFLAG is omitted because only the primary (the machine
+# the UPS is cabled to) powers the UPS off.
 
 MONITOR cyberups@192.168.1.50 1 monuser <password> secondary
 MINSUPPLIES 1

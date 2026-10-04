@@ -241,9 +241,11 @@ And the user level, read by `link`:
 **A credential is a `manual` check, never a file here, and existence is not the probe.**
 caesar's UPS monitor needs the monuser password in `/etc/nut/upsmon.conf`, but the `nut`
 package ships a stock `upsmon.conf` — so "the file exists" is true on a machine that will
-never shut down on low battery. The probe is `nut-monitor` running, because upsmon refuses
-to start with no UPS configured. Prefer a probe that states the outcome over one that
-implies it.
+never shut down on low battery. Nor is "`nut-monitor` is running" — that was the probe, and
+it said ok for five days after the cutover while upsd refused caesar twice over (Proxmox's
+ufw dropping port 3493, then a mistyped password); upsmon stays up through both. The probe
+is now upsd listing caesar among its logged-in monitors (`upsc -c`, which needs no
+credentials). Prefer a probe that states the outcome over one that implies it.
 
 A file living in `common/` means it is *available* to any host; a host's `links` list is
 what that machine actually installs. The NAS units are the example — general-purpose files
