@@ -19,7 +19,7 @@ installer instructions, is in git history before this rewrite.
 
 | not done | |
 |---|---|
-| **The lid** | Live security gap today. See the open decisions |
+| **The lid** | **Decided 2026-10-04**: logind owns it, Noctalia's `lock_before_suspend` locks. Was never a live gap -- see item 3 |
 | **Firewall** | `ufw` installed but `inactive` and `disabled`. Root step §5 not run |
 | **NAS** | `/etc/nas-creds` exists `0600` but is **empty**; `/mnt/nas/{PlexMedia,Public}` exist; the fstab lines are not added. Root step §6 half done |
 | snapper | `@snapshots` is mounted at `/.snapshots`, but snapper is not installed |
@@ -88,7 +88,12 @@ the old OS from another house: 31 ms, and the automount triggered and listed the
 2. **The 48 packages** (plus one yes/no on the 39-package retroarch block). Listed in the
    sweep. `1password` and `signal-desktop` are on it only because they were installed; §4
    already settled that neither is wanted.
-3. **Lid ownership — the one with a security edge, and it is live now.** There is no
+3. **RESOLVED 2026-10-04 -- this item was wrong.** Noctalia's `lock_before_suspend` (on by
+   default) holds a logind delay inhibitor and locks on `PrepareForSleep`; the journal shows
+   it locking on a bare lid close. logind owns the lid (`hosts/rigel/systemd/`), umbriel's
+   hooks stay commented. The original text, kept for the record:
+
+   **Lid ownership — the one with a security edge, and it is live now.** There is no
    `/etc/systemd/logind.conf.d/`, so logind has its default `HandleLidSwitch=suspend`, the
    `[events]` lid hooks are commented out, and nothing locks on `PrepareForSleep`. **Closing
    the lid today suspends and resumes unlocked.** Pick exactly one owner: logind with

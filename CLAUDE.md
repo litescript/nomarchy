@@ -239,7 +239,7 @@ And the user level, read by `link`:
 | `common/bootstrap/units`, `hosts/<host>/bootstrap/units` | `systemd --user` units to enable |
 | `common/bootstrap/toolchains`, `hosts/<host>/bootstrap/toolchains` | language toolchains — the gap between *package installed* and *thing works* |
 | `common/bootstrap/builds`, `hosts/<host>/bootstrap/builds` | source builds that are not packages; a GitHub ssh URL is **cloned over https** with the ssh URL as its push URL, so a fresh host builds before any key is loaded |
-| `hosts/<host>/bootstrap/user-checks` | as `checks`, but `fix` must not sudo — caesar's rootless docker context |
+| `common/bootstrap/user-checks`, `hosts/<host>/bootstrap/user-checks` | as `checks`, but `fix` must not sudo — the rootless docker context |
 
 **A credential is a `manual` check, never a file here, and existence is not the probe.**
 caesar's UPS monitor needs the monuser password in `/etc/nut/upsmon.conf`, but the `nut`
@@ -514,6 +514,16 @@ through a script file, not an inline command string.
 **Display blanking:** a bare `dpms-off` bind has nothing to wake the screens; Noctalia's
 idle behaviors own the resume side. `common/scripts/lock-and-blank` is the deliberate
 exception — a manual walk-away key, not an idle policy.
+
+**Sleep and the lock on rigel have one owner each.** logind owns the lid and power key
+(`hosts/rigel/systemd/`): lid → suspend, then hibernate after 2h on battery; power key →
+hibernate; each falls back to plain suspend when swap cannot hold the active memory.
+Noctalia owns the lock: `lock_before_suspend` (on by default) holds a logind delay inhibitor
+and locks on every `PrepareForSleep`, lid included — so umbriel's `[events]` lid hooks stay
+commented, and nothing else should lock on sleep. Hibernation resumes through systemd's
+`HibernateLocation` EFI variable, not `resume=`. **An image resumes only on the kernel that
+wrote it**: after a `linux` upgrade, reboot before hibernating, or the session is discarded
+on resume — and booting the LTS entry with an image waiting does the same.
 
 ## Git
 

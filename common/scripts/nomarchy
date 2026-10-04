@@ -240,7 +240,10 @@ src_pending() { [[ $1 == \~/* ]]; }
 reload_for() {
   case $1 in
     /etc/systemd/zram-generator.conf) echo "sudo systemctl daemon-reload && sudo systemctl start systemd-zram-setup@zram0.service" ;;
-    /etc/systemd/logind.conf.d/*)    echo "NOTE logind settings take effect at the next boot (restarting logind would end the session)" ;;
+    # RELOAD, never restart: restarting logind would end the session. logind is
+    # Type=notify-reload, so reload is SIGHUP and it re-reads logind.conf.d in place -- a
+    # unit cannot declare that unless the daemon handles the signal, or reload would kill it.
+    /etc/systemd/logind.conf.d/*)    echo "sudo systemctl reload systemd-logind.service" ;;
     /etc/systemd/*)                   echo "sudo systemctl daemon-reload" ;;
     /etc/udev/rules.d/*)              echo "sudo udevadm control --reload-rules && sudo udevadm trigger" ;;
     /etc/sysctl.d/*)                  echo "sudo sysctl --system >/dev/null" ;;

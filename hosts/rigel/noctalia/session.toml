@@ -1,0 +1,48 @@
+# rigel's Noctalia session panel: Noctalia's five defaults plus Hibernate.
+#
+# Linked to ~/.config/noctalia/session.toml (../bootstrap/links). Unlike settings.toml beside
+# it -- a SNAPSHOT of a file Noctalia rewrites in ~/.local/state -- this is config Noctalia only
+# reads: it loads every *.toml in ~/.config/noctalia, then lays ~/.local/state/noctalia/
+# settings.toml over the top. So an edit made in Noctalia's Settings UI to the session entries
+# lands in the state file and SHADOWS this one, silently. Edit here.
+#
+# [[shell.session.actions]] is an array, so this REPLACES Noctalia's list rather than adding
+# to it -- all five defaults are restated, as `noctalia config export full` printed them for
+# 5.2.1. A default Noctalia adds later will not appear here until it is copied in.
+#
+# `noctalia config validate` is not a test of this file: it passes an unknown action and a
+# wrong type alike. The tests are the panel itself and the journal, where a bad entry is
+# logged as `session panel: skipping ...` or `custom action missing command`.
+#
+# Hibernate locks first without being told: Noctalia's lock_before_suspend acts on every
+# PrepareForSleep, hibernate included. Resume asks for the LUKS passphrase, then the lock.
+
+[shell.session]
+
+    [[shell.session.actions]]
+    action = "lock"
+    shortcut = "1"
+
+    [[shell.session.actions]]
+    action = "logout"
+    shortcut = "2"
+
+    [[shell.session.actions]]
+    action = "lock_and_suspend"
+    shortcut = "3"
+
+    [[shell.session.actions]]
+    action = "command"
+    command = "systemctl hibernate"
+    label = "Hibernate"
+    glyph = "snowflake"
+    shortcut = "4"
+
+    [[shell.session.actions]]
+    action = "reboot"
+    shortcut = "5"
+
+    [[shell.session.actions]]
+    action = "shutdown"
+    shortcut = "6"
+    variant = "destructive"

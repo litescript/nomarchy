@@ -1,6 +1,9 @@
 # rigel-only symlinks: <repo path>  <system path>
 #
-# Just the umbriel config. Everything else this machine needs -- nvim, kitty, bash, ssh,
-# fuzzel, the ssh-agent unit, and common/scripts onto ~/.local/bin -- comes from
-# common/bootstrap/links and is not repeated here.
+# The umbriel config and the Noctalia session panel. Everything else this machine needs --
+# nvim, kitty, bash, ssh, fuzzel, the ssh-agent unit, and common/scripts onto ~/.local/bin --
+# comes from common/bootstrap/links and is not repeated here.
 hosts/rigel/umbriel/config.toml	~/.config/umbriel/config.toml
+# Hibernate in the session panel. Config Noctalia only reads, so a link works -- unlike
+# settings.toml, which Noctalia rewrites and the repo can only snapshot (../bootstrap/seeds).
+hosts/rigel/noctalia/session.toml	~/.config/noctalia/session.toml

@@ -90,26 +90,23 @@ scroll_factor = 1.0                             # Carried from the old install; 
 options = "compose:ralt,caps:swapescape"
 
 # ─────────────────────────────── Lid ────────────────────────────────────────
-# DELIBERATELY EMPTY, AND THIS IS A DECISION THAT IS STILL OPEN. See
-# docs/new-host/rigel-status.md. Read before uncommenting anything here.
+# DELIBERATELY EMPTY: the lid is not umbriel's. DECIDED 2026-10-04 -- design A below.
+# logind owns the lid (hosts/rigel/systemd/logind-nomarchy.conf: suspend, then hibernate
+# after 2h on battery) and Noctalia owns the lock: its lock_before_suspend, on by default,
+# holds a logind delay inhibitor and locks on PrepareForSleep. The journal showed it locking
+# on a bare lid close (2026-10-03 10:26, no keypress). It was always design A -- the "no
+# owner" problem below was inferred, not observed.
 #
-# The problem: lock-before-suspend has no owner. Noctalia's lock-and-suspend is an IDLE
-# behaviour, and a lid close does not pass through the idle path. A stock Arch install
-# defaults to HandleLidSwitch=suspend, so out of the box this laptop suspends on lid close
-# and resumes UNLOCKED.
+# The two designs that were on the table; they must never both be active:
 #
-# There are two coherent designs and they must not both be active:
-#
-#   A. logind owns the lid. Leave HandleLidSwitch at its default (suspend) and give the
-#      system something that locks on PrepareForSleep. Survives a wedged compositor,
-#      which is the argument for it.
-#   B. umbriel owns the lid. Set logind's HandleLidSwitch=ignore (a root-owned drop-in,
-#      see bootstrap/copies) and handle it here:
+#   A. logind owns the lid, and something locks on PrepareForSleep. Survives a wedged
+#      compositor, which is the argument for it. CHOSEN.
+#   B. umbriel owns the lid. logind's HandleLidSwitch=ignore, and handle it here:
 #        [events]
 #        lid_close = "noctalia msg session lock"
+#      Do not uncomment this while the logind drop-in exists.
 #
 # The old Omarchy install used B, via omarchy-sleep-lock plus HandleLidSwitch=ignore.
-# That is evidence about what worked, not a reason to repeat it.
 #
-# Whichever is chosen, the acceptance test is physical and cannot be faked from a probe
-# process: close the lid, wait, open it, and it must be locked.
+# The acceptance test is physical and cannot be faked from a probe process: close the lid,
+# wait, open it, and it must be locked.

@@ -3,9 +3,10 @@
 # Empty on purpose. ssh-agent.service comes from common/bootstrap/units. rigel's old
 # install ran six omarchy-* user units and none has a successor here yet:
 #
-#   omarchy-sleep-lock              -> lock before suspend. THE OPEN ONE. See the lid
-#                                      decision in umbriel/config.toml; a lid close does
-#                                      not pass through Noctalia's idle path
+#   omarchy-sleep-lock              -> lock before suspend. NOT NEEDED: Noctalia's
+#                                      lock_before_suspend locks on PrepareForSleep, lid
+#                                      close included (decided 2026-10-04, see
+#                                      ../systemd/logind-nomarchy.conf)
 #   omarchy-recover-internal-monitor-> recover the internal panel toggle with no external
 #                                      display attached. Pure laptop; no equivalent here
 #   omarchy-crash-watch             -> crash notifications

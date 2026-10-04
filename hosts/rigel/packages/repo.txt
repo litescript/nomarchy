@@ -13,6 +13,13 @@
 # CPU microcode. Machine-specific by definition; this is a 12th-gen Intel i7-12700H.
 intel-ucode
 
+# The fallback kernel, and its headers so nvidia-open-dkms builds the module for it too
+# (`dkms status` lists both kernels). Its boot entry is hosts/rigel/boot/arch-lts.conf, via
+# ../bootstrap/copies -- the package alone is a kernel nothing can boot. Installed by hand
+# 2026-10-04, declared the same day. rigel only: caesar has no LTS kernel.
+linux-lts
+linux-lts-headers
+
 # Intel graphics. This is the GPU that actually drives the panel -- boot_vga is the Intel
 # device, and every client measured on the old install held the Intel render node.
 intel-media-driver
@@ -64,12 +71,3 @@ cifs-utils
 # dependency, so it is rigel's, not the base stage's (which carries ex-vi-compat for `vi`).
 vim
 
-# Docker -- the same five packages as hosts/caesar/packages/repo.txt, installed here by hand
-# on 09-20, 09-27 and 10-04. PACKAGES ONLY: rigel has no daemon. docker.service is disabled
-# and the rootless half caesar has (docker-rootless-extras, the docker.socket user unit, the
-# `rootless` context check) is not declared here, so Mod+D's lazydocker still has no socket.
-docker
-docker-compose
-rootlesskit
-slirp4netns
-fuse-overlayfs

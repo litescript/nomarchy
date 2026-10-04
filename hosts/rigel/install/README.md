@@ -91,7 +91,10 @@ Differences from the old layout (`@`, `@home`, `@pkg`, `@log`, `relatime`):
 - `@snapshots` exists and is mounted, but **nothing uses it yet** — snapper is not
   installed. Whether to use it is still open; see `docs/new-host/rigel-status.md`.
 - `swap` is a flat subvolume (no `@`) holding an 8G `/swap/swapfile`, active at priority -1.
-  There is no `resume=` on the command line, so it is swap only, not hibernation.
+  There is no `resume=` on the command line -- and none is needed: hibernation works
+  through systemd's `HibernateLocation` EFI variable (verified 2026-10-04; this line once
+  said "swap only, not hibernation", which was inferred, not tested). See
+  `hosts/rigel/systemd/` for the lid and power key that use it.
 
 ## Boot
 
@@ -99,6 +102,10 @@ Differences from the old layout (`@`, `@home`, `@pkg`, `@log`, `relatime`):
 firmware `Dell 1.00`, **Secure Boot disabled** (audit mode), TPM2 present. One entry,
 `arch.conf`, loading `intel-ucode.img` then `initramfs-linux.img`; no fallback preset
 (`PRESETS=('default')`), so there is no fallback initramfs to boot if the default breaks.
+
+*(2026-10-04)* A second entry now exists: `arch-lts.conf`, the `linux-lts` fallback kernel,
+declared in `hosts/rigel/packages/repo.txt` with its entry as a root-owned copy
+(`hosts/rigel/boot/arch-lts.conf`). With no fallback initramfs, it is the way back in.
 
 `loader.conf` sets `editor no`, so kernel command-line editing at the boot menu is off.
 

@@ -312,7 +312,10 @@ is off the home network: tether to a phone, then `ip route get 192.168.1.200` mu
 the subnet router does not SNAT, caesar's ufw (LAN-only 22/tcp) drops the connection and
 it times out.
 
-**2. The lid is probably not a live gap. Test before believing either way.** On caesar,
+**2. The lid is probably not a live gap. Test before believing either way.** *Confirmed
+2026-10-04 from the journal: the noctalia `Lock before sleep` inhibitor is present on rigel,
+and a bare lid close on 10-03 locked within milliseconds. Decided as below; the physical
+test remains the acceptance.* On caesar,
 Noctalia holds a logind sleep **delay inhibitor, WHY = "Lock before sleep"**, and
 `settings.toml` has no key for it, so it is on by default (the binary's key is
 `lock_before_suspend`). With logind's default `HandleLidSwitch=suspend`, a lid close

@@ -54,8 +54,8 @@ sudo mkdir -p /mnt/nas/PlexMedia /mnt/nas/Public
 #  //192.168.1.208/Public     /mnt/nas/Public     cifs  credentials=/etc/nas-creds,iocharset=utf8,vers=3.0,file_mode=0777,dir_mode=0777,_netdev,nofail,x-systemd.automount  0  0
 # nofail and x-systemd.automount together are why a missing NAS does not stall the boot.
 
-# ── 7. THE LID. NOT WRITTEN, BECAUSE IT IS NOT DECIDED ───────────────────────
-# A stock Arch install suspends on lid close and resumes UNLOCKED. That is the gap. Read
-# the lid section of hosts/rigel/umbriel/config.toml, pick design A or B, then add the one
-# step it needs here and the matching file to bootstrap/copies.
-# The acceptance test is physical: close the lid, wait, open it, it must be locked.
+# ── 7. The lid: DECIDED 2026-10-04, and no longer a root step ────────────────
+# logind owns the lid (suspend, then hibernate after 2h on battery) and Noctalia's
+# lock_before_suspend owns the lock. Both logind and sleep drop-ins are in bootstrap/copies,
+# so `nomarchy install host` installs them -- nothing to type here.
+# The acceptance test is still physical: close the lid, wait, open it, it must be locked.
