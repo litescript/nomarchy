@@ -2,11 +2,12 @@ config_version = 14
 
 [bar.default]
 background_opacity = 0.4999999888241291
-center = [ "date", "spacer_2", "clock", "spacer_3", "weather" ]
-end = [ "media", "group:g1", "network", "battery", "session" ]
+center = [ "caffeine", "spacer_4", "date", "spacer_2", "clock", "spacer_3", "weather" ]
+end = [ "media", "spacer_5", "ai_usage", "group:g1", "network", "battery", "session" ]
 margin_ends = 0
 radius_top_left = 0
 radius_top_right = 0
+start = [ "workspaces", "bar" ]
 
     [[bar.default.capsule_group]]
     accordion = true
@@ -14,7 +15,7 @@ radius_top_right = 0
     enabled = true
     fill = "surface_variant"
     id = "g1"
-    members = [ "bar", "notifications", "clipboard", "bluetooth", "volume" ]
+    members = [ "bar_2", "notifications", "clipboard", "brightness", "bluetooth", "volume" ]
     opacity = 0.15000000596046448
     padding = 6.0
 
@@ -59,8 +60,12 @@ widget_order = [ "lockscreen-login-box@eDP-1" ]
         show_unlock_hint = true
         show_weather = true
 
+[plugin_settings."felipeartur/ai-usagebar"]
+panel_open_near_click = true
+refresh_minutes = 15
+
 [plugins]
-enabled = [ "litescript/irides" ]
+enabled = [ "litescript/irides", "noctalia/umbriel-companion", "felipeartur/ai-usagebar" ]
 
     [[plugins.source]]
     kind = "git"
@@ -105,7 +110,17 @@ transition_on_startup = true
 [weather]
 unit = "imperial"
 
+[widget.ai_usage]
+extras = "none"
+show_value = false
+type = "felipeartur/ai-usagebar:bar"
+vendor = "anthropic"
+visualization = "none"
+
 [widget.bar]
+type = "noctalia/umbriel-companion:bar"
+
+[widget.bar_2]
 type = "litescript/irides:bar"
 
 [widget.battery]
@@ -124,6 +139,12 @@ show_label = false
 type = "spacer"
 
 [widget.spacer_3]
+type = "spacer"
+
+[widget.spacer_4]
+type = "spacer"
+
+[widget.spacer_5]
 type = "spacer"
 
 [widget.volume]
