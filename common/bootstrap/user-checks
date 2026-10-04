@@ -43,8 +43,11 @@ check Irides palette for Noctalia's active theme exists
   fix   p=$(sed -n 's/^custom_palette = "\(.*\)"$/\1/p' ~/.local/state/noctalia/settings.toml); irides apply "${p#irides-}"
 
 # Coordinates are stripped from every snapshot (public repo), so a rebuilt host has none.
+# auto_locate counts as set: it is the right choice on a laptop that travels (rigel), and it
+# stores no coordinates in settings.toml at all -- Noctalia logs `[location] location
+# resolved` when it works. A file with neither has had no location chosen since the rebuild.
 check Noctalia location set (weather, night light)
-  probe [[ ! -f ~/.local/state/noctalia/settings.toml ]] || grep -q '^latitude' ~/.local/state/noctalia/settings.toml
+  probe [[ ! -f ~/.local/state/noctalia/settings.toml ]] || grep -q -E '^(latitude|auto_locate = true)' ~/.local/state/noctalia/settings.toml
   manual set it in Noctalia's settings -- the repo deliberately never carries your coordinates
 
 # umbriel is two invariants, checked SEPARATELY (Atlas's distinction, 2026-09-27):
