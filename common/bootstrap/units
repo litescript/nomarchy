@@ -1,2 +1,6 @@
 # systemd --user units enabled on every host.
 ssh-agent.service
+# Socket-activated rootless Docker daemon, from docker-rootless-extras (desktop stage AUR).
+# The unit file only exists once that package is built, so on a fresh host this enables
+# after `nomarchy install desktop`. See the docker block in common/stages/desktop/repo.txt.
+docker.socket

@@ -1,6 +1,5 @@
 # caesar-only AUR packages. Built with makepkg; there is no AUR helper here.
 
-docker-rootless-extras
 # OpenDeck, for the Stream Deck (its udev rule: common/udev/, via ./../bootstrap/copies).
 # Its profiles are user data, restored from ~/Archive/omarchy-rescue/opendeck at cutover.
 opendeck-bin

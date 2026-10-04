@@ -83,6 +83,18 @@ eslint
 github-cli
 lazygit
 lazydocker
+# Docker, ROOTLESS, on every desktop host: lazydocker above is bound to Mod+D everywhere,
+# and until 2026-10-04 only caesar had a daemon for it to talk to. There is no rootful
+# socket (docker.service stays disabled) and the ufw-docker workaround is deliberately not
+# carried, because rootless Docker does not bypass the firewall -- see
+# hosts/caesar/ufw/apply-rules. The daemon is docker-rootless-extras (./aur.txt), started
+# by its docker.socket user unit (common/bootstrap/units); the client is pointed at it by
+# the `rootless docker context` check in common/bootstrap/user-checks.
+docker
+docker-compose
+rootlesskit
+slirp4netns
+fuse-overlayfs
 btop
 zig
 zls

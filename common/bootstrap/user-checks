@@ -68,3 +68,13 @@ check umbriel and its portal installed at the pinned revisions (common/umbriel/U
 check installed umbriel accepts the live config (palette included)
   probe common/scripts/umbriel-update --check-config
   manual run umbriel-update: its survey shows whether the config is ahead of the binary (install the pins) or Noctalia's palette is out of step with umbriel (wait for, or move to, a matching pair)
+
+# Rootless docker. There is no rootful socket on any host, so plain `docker` only works when
+# the rootless context is current. The daemon is docker-rootless-extras' user unit
+# (docker.socket, in ./units); this only points the client at it. NOT
+# dockerd-rootless-setuptool.sh: Arch ships no such script -- the first VM rehearsal to
+# reach `link` failed on "command not found". Needs the subuid/subgid ranges useradd
+# already assigns. Moved here from hosts/caesar on 2026-10-04, when rigel got Docker too.
+check rootless docker context
+  probe [[ $(docker context show 2>/dev/null) == rootless ]]
+  fix   { docker context inspect rootless >/dev/null 2>&1 || docker context create rootless --docker "host=unix://$XDG_RUNTIME_DIR/docker.sock" >/dev/null; } && docker context use rootless
