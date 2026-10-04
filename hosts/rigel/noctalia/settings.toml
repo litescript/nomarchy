@@ -1,0 +1,133 @@
+config_version = 14
+
+[bar.default]
+background_opacity = 0.4999999888241291
+center = [ "date", "spacer_2", "clock", "spacer_3", "weather" ]
+end = [ "media", "group:g1", "network", "battery", "session" ]
+margin_ends = 0
+radius_top_left = 0
+radius_top_right = 0
+
+    [[bar.default.capsule_group]]
+    accordion = true
+    accordion_direction = "start"
+    enabled = true
+    fill = "surface_variant"
+    id = "g1"
+    members = [ "bar", "notifications", "clipboard", "bluetooth", "volume" ]
+    opacity = 0.15000000596046448
+    padding = 6.0
+
+[lockscreen]
+blur_intensity = 0.37999999150633812
+fingerprint = false
+
+[lockscreen_widgets]
+enabled = false
+schema_version = 2
+widget_order = [ "lockscreen-login-box@eDP-1" ]
+
+    [lockscreen_widgets.grid]
+    cell_size = 16
+    major_interval = 4
+    visible = true
+
+    [lockscreen_widgets.widget."lockscreen-login-box@eDP-1"]
+    box_height = 196.0
+    box_width = 810.0
+    cx = 853.0
+    cy = 944.74249267578125
+    output = "eDP-1"
+    placement_height = 1066.0
+    placement_width = 1706.0
+    rotation = 0.0
+    type = "login_box"
+
+        [lockscreen_widgets.widget."lockscreen-login-box@eDP-1".settings]
+        background_color = "surface_variant"
+        background_opacity = 0.88
+        background_radius = 12.0
+        center_password_text = false
+        input_opacity = 1.0
+        input_radius = 6.0
+        layout = "regular"
+        show_caps_lock = true
+        show_keyboard_layout = true
+        show_login_button = true
+        show_media = true
+        show_session_buttons = true
+        show_unlock_hint = true
+        show_weather = true
+
+[plugins]
+enabled = [ "litescript/irides" ]
+
+    [[plugins.source]]
+    kind = "git"
+    location = "https://github.com/noctalia-dev/official-plugins"
+    name = "official"
+
+    [[plugins.source]]
+    kind = "git"
+    location = "https://github.com/noctalia-dev/community-plugins"
+    name = "community"
+
+    [[plugins.source]]
+    kind = "path"
+    location = "/home/peter/code/irides/noctalia-plugins"
+    name = "irides"
+
+[shell]
+font_family = "JetBrainsMono Nerd Font Mono"
+
+[theme]
+builtin = "Tokyo-Night"
+custom_palette = "irides-F40"
+source = "custom"
+
+    [theme.templates]
+    builtin_ids = [ "btop", "gtk3", "gtk4", "kitty", "qt", "starship", "umbriel" ]
+    community_ids = [ "discord", "obsidian", "fuzzel", "fastfetch", "bat", "fzf", "herdr", "lazygit", "tmux" ]
+
+[wallpaper]
+directory = "/home/peter/Pictures"
+transition_on_startup = true
+
+    [wallpaper.default]
+    path = "/home/peter/Pictures/f40.png"
+
+    [wallpaper.last]
+    path = "/home/peter/Pictures/f40.png"
+
+    [wallpaper.monitors.eDP-1]
+    path = "/home/peter/Pictures/f40.png"
+
+[weather]
+unit = "imperial"
+
+[widget.bar]
+type = "litescript/irides:bar"
+
+[widget.battery]
+show_label = false
+
+[widget.clock]
+anchor = true
+
+[widget.date]
+format = "{:%A}"
+
+[widget.network]
+show_label = false
+
+[widget.spacer_2]
+type = "spacer"
+
+[widget.spacer_3]
+type = "spacer"
+
+[widget.volume]
+show_label = false
+
+[widget.weather]
+show_condition = false

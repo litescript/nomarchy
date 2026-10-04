@@ -1,0 +1,10 @@
+# rigel's seeded files: <repo path>  <system path>. See common/bootstrap/seeds for what a
+# seed is -- copied once if absent, then the application owns it.
+#
+# Noctalia's settings: without them a rebuilt rigel comes up at Noctalia's defaults. The
+# snapshot is refreshed by `noctalia-snapshot`, which always strips [location]; see
+# hosts/caesar/noctalia/README.md for the whole arrangement, which is the same here.
+hosts/rigel/noctalia/settings.toml	~/.local/state/noctalia/settings.toml
+# ...and the marker that stops Noctalia's first-run wizard from choosing a wallpaper and a
+# palette over the ones those settings carry.
+hosts/rigel/noctalia/setup-complete	~/.local/state/noctalia/.setup-complete
