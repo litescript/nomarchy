@@ -388,6 +388,18 @@ ours_side() {
 # setting_changes <before> <after> <tmpdir> -> lines "removed<TAB>old", "changed<TAB>old<TAB>new",
 # "added<TAB>new". A setting whose key survives with another value is changed; a rename is
 # a removed key beside an added one.
+#
+# "added" is reported from END, never by reading s-came a second time. It used to be
+# `awk ... s-came s-gone s-came`, where `FILENAME==ARGV[1]` is also true on the third pass,
+# so no addition was ever reported -- and a merge whose only live effect was additions read
+# as comments-only, which is the case merge_config auto-promotes into base.toml. Found on the
+# 6bf03a0 -> d88d0bc merge (2026-10-25): it reported "ADDS 0" while adding six keybinds and a
+# [[layer_rule]], one of them a second "Mod+W" that fails to parse.
+#
+# Known blind spot: array tables share one section name, so a key MOVED between two
+# [[layer_rule]] or [[window_rule]] entries is invisible here. The same merge moved
+# blur_optimized = false from the broad Noctalia layer rule into a new one; it surfaced only
+# because the new rule's match line counts as an addition.
 setting_changes() {
   local before=$1 after=$2 t=$3
   live_settings "$before" > "$t/s-before"
@@ -395,10 +407,10 @@ setting_changes() {
   LC_ALL=C comm -23 "$t/s-before" "$t/s-after" > "$t/s-gone"
   LC_ALL=C comm -13 "$t/s-before" "$t/s-after" > "$t/s-came"
   awk -F' = ' '
-    FILENAME==ARGV[1] { came[$1]=$0; next }
-    FILENAME==ARGV[2] { gone[$1]=1; if ($1 in came) print "changed\t" $0 "\t" came[$1]; else print "removed\t" $0; next }
-    !($1 in gone) { print "added\t" $0 }
-  ' "$t/s-came" "$t/s-gone" "$t/s-came"
+    FILENAME==ARGV[1] { came[$1]=$0; key[++n]=$1; line[n]=$0; next }
+    { gone[$1]=1; if ($1 in came) print "changed\t" $0 "\t" came[$1]; else print "removed\t" $0 }
+    END { for (i=1; i<=n; i++) if (!(key[i] in gone)) print "added\t" line[i] }
+  ' "$t/s-came" "$t/s-gone"
 }
 
 merge_config() {
