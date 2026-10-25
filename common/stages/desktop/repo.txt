@@ -2,8 +2,9 @@
 # `nomarchy install desktop` after `base`.
 
 # Compositor, shell, portal. umbriel itself is AUR -- see ./aur.txt.
+# No xwayland-satellite: umbriel runs Xwayland itself since upstream 16d5031, and the AUR
+# PKGBUILD depends on xorg-xwayland, so building the pinned umbriel brings it.
 noctalia
-xwayland-satellite
 xdg-utils
 
 # GTK4, for shelf. Present on both hosts already, but only ever as a dependency of
