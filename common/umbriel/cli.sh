@@ -7,6 +7,7 @@
 #   ac83d8e, 5eb49b6     "       umbriel validate [-c <config>]"          validate
 #   6bf03a0 (f66d6a8+)   "       umbriel config validate [-c <config>]"   config validate
 #   b9301a6 (206038c0+)  "  config validate [-c <config>]"                config validate
+#   d88d0bc              the same layout, more commands                  config validate
 #
 # Mid-update the installed and the staged binary can be different generations, so each is
 # asked separately, and its own --help is the signal. A binary asked in the wrong spelling

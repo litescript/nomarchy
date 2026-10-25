@@ -13,6 +13,6 @@
 # In steady state config == umbriel-git: the binary speaks the vocabulary base.toml is in.
 # Between a --merge-config and the --apply that follows it, config is ahead.
 
-config                          6bf03a0
-umbriel-git                     6bf03a0
-xdg-desktop-portal-umbriel-git  d6bd72c
+config                          d88d0bc
+umbriel-git                     d88d0bc
+xdg-desktop-portal-umbriel-git  e69d6f7

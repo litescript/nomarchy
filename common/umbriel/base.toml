@@ -30,7 +30,7 @@
 [general]
 autostart = ["noctalia"]                                  # Commands run once when the session starts
 # mod_key = "Super"                             # Force Super instead of nested-session Alt
-xwayland = true                                 # Requires xwayland-satellite; restart to change
+xwayland = true                                 # Native wlroots Xwayland since upstream 16d5031; restart to change
 show_cheatsheet = false                          # Show the keybind overlay on startup
 focus_on_activate = false                       # Do not let unsolicited requests steal focus
 honor_restored_maximize = false                 # Honor restored maximized state
@@ -381,10 +381,13 @@ follows_mouse = true                            # Focus on motion after scene ch
 # displays follow two minutes later. The script is kept in git for one
 # checkpoint as a known-working reference until lock/idle/DPMS/caffeine have
 # been boring in daily use, then removed in a cleanup commit.
-"Mod+Shift+Left" = "column-move-left"
-"Mod+Shift+Down" = "window-move-down"
-"Mod+Shift+Up" = "window-move-up"
-"Mod+Shift+Right" = "column-move-right"
+# Swap with the neighbouring tile. Upstream 40629172 made the move actions (column-move-*,
+# window-move-*) take a dwindle window OUT of its tile and split the tile it enters; the
+# swap these keys always did became window-swap-*, so they moved there (Pete, 2026-10-25).
+"Mod+Shift+Left" = "window-swap-left"
+"Mod+Shift+Down" = "window-swap-down"
+"Mod+Shift+Up" = "window-swap-up"
+"Mod+Shift+Right" = "window-swap-right"
 # Fullscreen on Shift+F, matching the old box, so Mod+F can hold shelf.
 "Mod+Shift+F" = { action = "window-toggle-fullscreen", repeat = false }  # Exit restores the previous layout size immediately
 # window-toggle-maximize stays unbound -- see the note above; fullscreen covers it.
@@ -566,6 +569,11 @@ left = 0                                        # -65535 to 65535
 right = 0
 top = 0
 bottom = 0
+
+# What a tiled window's own maximize button does: "column" fills the column,
+# "edges" fills the usable area without struts, gaps, or borders. The
+# window-toggle-maximize action is unaffected.
+# client_maximize = "column"
 
 [layout.scrolling]
 # The strip axis is perpendicular to the output's workspace_axis.
@@ -778,6 +786,12 @@ match.namespace = "^noctalia-(bar-[^\"]+|notification|dock|panel|attached-panel|
 blur = true
 blur_ignore_alpha = 0.5
 blur_popups = true
+
+# Panels, the dock, notifications and OSDs open over windows, so they blur the
+# live content behind them. The bar and desktop widgets sit on the wallpaper and
+# keep the cached wallpaper blur.
+[[layer_rule]]
+match.namespace = "^noctalia-(notification|dock|panel|attached-panel|osd)$"
 blur_optimized = false
 
 # ────────────────────────────── Animation ───────────────────────────────────
@@ -841,9 +855,8 @@ duration_ms = 250
 curve = "easeout"
 dim = 0.5                                       # Backdrop dim amount, 0.0-1.0
 blur = false                                    # Requires appearance.blur.enabled
-scale = 0.0                                     # 0 keeps geometry; 0.1-1.0 centers and scales
-maximize = false                                # Maximize to usable-area edges while shown
-fullscreen = false                              # Make the scratchpad window fullscreen while shown
+# scale, maximize and fullscreen became window rules in upstream 7b9ad2ed. All three were
+# off here, so nothing replaces them.
 
 # Focus border color
 [animation.border]
