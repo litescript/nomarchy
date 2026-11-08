@@ -1,0 +1,94 @@
+# irides blueprint: the theme's intent. `irides apply` compiles it into a Noctalia
+# palette. Hand edits are fine; unknown keys and out-of-range values are errors.
+# `irides lock/adjust/wallpaper` rewrite this file and do not keep comments.
+
+schema = 1
+generator = 1
+
+[source]
+kind = "wallpaper"
+path = "~/Pictures/lumon-mdr.png"
+sha256 = "926abf1824f42245858b50606415d58aab812b650d4c254ed8c5e393f780e480"
+
+[adjustments]
+hue_shift = 0.0
+saturation = 1.0
+brightness = 0.0
+contrast = 0.0
+temperature = 0.0
+
+[locks.dark]
+primary = "#79def0"
+on_primary = "#03141d"
+secondary = "#c4a7e7"
+on_secondary = "#03141d"
+tertiary = "#ebbcba"
+on_tertiary = "#03141d"
+error = "#eb6f92"
+on_error = "#03141d"
+surface = "#051016"
+on_surface = "#c0e8ee"
+surface_variant = "#0b1c24"
+on_surface_variant = "#8fb0b9"
+outline = "#476977"
+shadow = "#000204"
+terminal_foreground = "#c0e8ee"
+terminal_background = "#051016"
+terminal_cursor = "#79def0"
+terminal_cursor_text = "#051016"
+terminal_selection_fg = "#dcf8fb"
+terminal_selection_bg = "#0d3b4b"
+terminal_normal_black = "#152933"
+terminal_normal_red = "#eb6f92"
+terminal_normal_green = "#94cf9f"
+terminal_normal_yellow = "#f6c177"
+terminal_normal_blue = "#3e8fb0"
+terminal_normal_magenta = "#c4a7e7"
+terminal_normal_cyan = "#9ccfd8"
+terminal_normal_white = "#b2d1d9"
+terminal_bright_black = "#5a7a87"
+terminal_bright_red = "#f78ba7"
+terminal_bright_green = "#aee2b7"
+terminal_bright_yellow = "#fed392"
+terminal_bright_blue = "#63acd0"
+terminal_bright_magenta = "#d6bef5"
+terminal_bright_cyan = "#b4e3ea"
+terminal_bright_white = "#e1f9fb"
+
+[locks.light]
+primary = "#286983"
+on_primary = "#f2f8f9"
+secondary = "#765a95"
+on_secondary = "#f2f8f9"
+tertiary = "#a55945"
+on_tertiary = "#f2f8f9"
+error = "#ac4767"
+on_error = "#f2f8f9"
+surface = "#f0f5f7"
+on_surface = "#0e293a"
+surface_variant = "#dee8ec"
+on_surface_variant = "#3d5764"
+outline = "#7a909b"
+shadow = "#b0b9bd"
+terminal_foreground = "#0e293a"
+terminal_background = "#f0f5f7"
+terminal_cursor = "#286983"
+terminal_cursor_text = "#f0f5f7"
+terminal_selection_fg = "#0e293a"
+terminal_selection_bg = "#bad9e1"
+terminal_normal_black = "#193140"
+terminal_normal_red = "#ac4767"
+terminal_normal_green = "#3f774d"
+terminal_normal_yellow = "#936405"
+terminal_normal_blue = "#286983"
+terminal_normal_magenta = "#765a95"
+terminal_normal_cyan = "#337782"
+terminal_normal_white = "#c4d0d5"
+terminal_bright_black = "#687e89"
+terminal_bright_red = "#b4637a"
+terminal_bright_green = "#578f63"
+terminal_bright_yellow = "#b57c1c"
+terminal_bright_blue = "#3c84a2"
+terminal_bright_magenta = "#907aa9"
+terminal_bright_cyan = "#56949f"
+terminal_bright_white = "#e5edee"
