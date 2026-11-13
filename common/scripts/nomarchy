@@ -60,9 +60,13 @@ die() { printf '%s: %s\n' "${0##*/}" "$1" >&2; exit 1; }
 
 ok=0; todo=0; conflict=0
 say()  { printf '  %s\n' "$*"; }
-good() { printf '  \033[32m✓\033[0m %s\n' "$*"; ((ok++)); }
-want() { printf '  \033[33m→\033[0m %s\n' "$*"; ((todo++)); }
-bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; ((conflict++)); }
+# Pre-increment, so each helper returns 0. `((n++))` evaluates to the OLD value, and a
+# count's first step from 0 returned 1: in `[[ … ]] && good … || bad …`, or the boot
+# check's `{ … || bad; } || bad`, that ran the next branch too. It did, 2026-11-13: a real
+# "systemd-boot 262.1 … systemd is 262.2" came with a false "is not what booted".
+good() { printf '  \033[32m✓\033[0m %s\n' "$*"; ((++ok)); }
+want() { printf '  \033[33m→\033[0m %s\n' "$*"; ((++todo)); }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; ((++conflict)); }
 head1() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 manifest() { local f; for f; do [[ -f $f ]] && grep -vE '^\s*#|^\s*$' "$f"; done; return 0; }
