@@ -44,3 +44,10 @@ qemu-hw-display-virtio-gpu-pci-gl
 qemu-hw-display-virtio-vga
 qemu-hw-display-virtio-vga-gl
 edk2-ovmf
+
+# Windows games through Lutris, installed 2026-11-13 and declared the same day. All three
+# are in [extra]; Arch's wine is a WoW64 build (no i386-unix, no lib32 dependencies), so
+# it needs nothing from [multilib]. ntsync-autoload comes in as wine's dependency.
+lutris
+wine
+winetricks
