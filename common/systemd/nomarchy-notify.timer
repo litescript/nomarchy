@@ -1,0 +1,17 @@
+# Five minutes after login, then daily. Login alone was not enough: caesar stays logged in for
+# days at a time, so a check that only ran then would rarely run there at all.
+#
+# OnStartupSec counts from the user manager's start, which with linger off is login. Five
+# minutes leaves the network up (Noctalia's own fetches at login fail on DNS for a few
+# seconds) and Noctalia, the notification daemon, running. OnUnitActiveSec repeats it a day
+# after each run. No Persistent=: a check missed while the machine was off is not owed.
+
+[Unit]
+Description=nomarchy drift check, five minutes after login and daily
+
+[Timer]
+OnStartupSec=5min
+OnUnitActiveSec=1d
+
+[Install]
+WantedBy=timers.target

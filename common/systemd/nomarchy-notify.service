@@ -1,0 +1,15 @@
+# nomarchy's drift check: a desktop notification when this machine no longer matches the repo
+# (common/scripts/nomarchy-notify). Started by nomarchy-notify.timer; no [Install] of its own.
+#
+# It needs the session bus and the notification daemon (Noctalia), and status's own checks
+# talk to umbriel and Noctalia. umbriel publishes WAYLAND_DISPLAY, UMBRIEL_SOCKET and PATH
+# into the user manager at session start, so a timer-started service has them; checked
+# with `systemctl --user show-environment`, 2026-11-14.
+
+[Unit]
+Description=nomarchy drift check: notify when this machine no longer matches the repo
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/nomarchy-notify
+Nice=10

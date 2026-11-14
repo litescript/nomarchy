@@ -7,6 +7,8 @@ common/bash/bash_profile	~/.bash_profile
 common/fuzzel/fuzzel.conf	~/.config/fuzzel/fuzzel.conf
 common/browse_alias		~/code/browse_alias
 common/systemd/ssh-agent.service	~/.config/systemd/user/ssh-agent.service
+common/systemd/nomarchy-notify.service	~/.config/systemd/user/nomarchy-notify.service
+common/systemd/nomarchy-notify.timer	~/.config/systemd/user/nomarchy-notify.timer
 common/ssh/config		~/.ssh/config
 common/irides/blueprints	~/.config/irides/blueprints
 
@@ -26,6 +28,7 @@ common/scripts/noctalia-plugins	~/.local/bin/noctalia-plugins
 common/scripts/backup-daily		~/.local/bin/backup-daily
 common/scripts/backup-legal-to-nas	~/.local/bin/backup-legal-to-nas
 common/scripts/desktop-state		~/.local/bin/desktop-state
+common/scripts/nomarchy-notify		~/.local/bin/nomarchy-notify
 common/scripts/launch-or-focus		~/.local/bin/launch-or-focus
 common/scripts/lock-and-blank		~/.local/bin/lock-and-blank
 common/scripts/merge-show-dirs		~/.local/bin/merge-show-dirs

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# nomarchy-notify -- run `nomarchy status`; when this machine has drifted from the repo, say
+# so on the desktop. Silent when there is nothing to do.
+#
+# Run by nomarchy-notify.timer, five minutes after login and daily after that
+# (common/systemd/). It exists because status only answers when somebody asks: caesar and
+# rigel drifted apart for six weeks (2026-11) -- rigel's checkout 15 commits behind, caesar's
+# irides 2 commits unpushed -- while every check that was run came back green.
+#
+# The to-do and conflict lines also go to the journal: journalctl --user -u nomarchy-notify
+
+set -uo pipefail
+
+here=$(dirname "$(readlink -f "$0")")
+out=$("$here/nomarchy" status 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+items=$(grep -E '^\s+(→|✗) ' <<<"$out" | sed -E 's/^\s+//')
+summary=$(grep -E '^[0-9]+ ok, [0-9]+ to do, [0-9]+ conflicts' <<<"$out" | tail -1)
+printf '%s\n' "$items" "$summary"
+
+if [[ -z $summary ]]; then
+  notify-send -a nomarchy -u critical "$(uname -n): nomarchy status did not finish" \
+    "journalctl --user -u nomarchy-notify"
+  exit 1
+fi
+read -r todo conflicts < <(sed -E 's/^[0-9]+ ok, ([0-9]+) to do, ([0-9]+) conflicts.*/\1 \2/' <<<"$summary")
+((todo + conflicts > 0)) || exit 0
+
+n=$(grep -c . <<<"$items")
+body=$(head -6 <<<"$items")
+((n > 6)) && body+=$'\n'"... and $((n - 6)) more"
+notify-send -a nomarchy -u "$( ((conflicts)) && echo critical || echo normal)" \
+  "$(uname -n): $todo to do, $conflicts conflicts -- nomarchy status" "$body"

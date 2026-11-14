@@ -1,5 +1,8 @@
 # systemd --user units enabled on every host.
 ssh-agent.service
+# The drift check: a notification when this machine no longer matches the repo, five
+# minutes after login and daily (common/scripts/nomarchy-notify).
+nomarchy-notify.timer
 # Socket-activated rootless Docker daemon, from docker-rootless-extras (desktop stage AUR).
 # The unit file only exists once that package is built, so on a fresh host this enables
 # after `nomarchy install desktop`. See the docker block in common/stages/desktop/repo.txt.

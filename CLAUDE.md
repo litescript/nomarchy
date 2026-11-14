@@ -281,6 +281,22 @@ failed with *"could not choose a version of cargo to run"*. The probe is
 the toolchain *list* is non-empty would not do — a toolchain can be installed without being
 default, and that state still fails to build.
 
+**`status` also compares checkouts with their origin, and says so unasked.** caesar and rigel
+drifted apart for six weeks (2026-11) with every check green: rigel's checkout sat 15
+commits behind (held back on 11-08 until an umbriel sync that never came), and caesar's
+irides sat 2 commits unpushed, so rigel ran the old build. Nothing compared a checkout with
+anything. Now `[repo]` reports this checkout's uncommitted changes (every symlinked config
+lands here, so a quick tweak on either machine shows up), unpushed commits, and commits on
+origin not pulled; each source build gets the same comparison. Origin is asked with
+`git ls-remote` over https, so no key and nothing in the checkout changes; offline is a note,
+not a to-do. `link` updates a build only when its checkout is clean and simply behind
+(fast-forward, then its install command) — these are Peter's development trees, so
+uncommitted or unpushed work is reported and left alone. And because `status` only answers
+when asked, `nomarchy-notify.timer` runs it five minutes after login and daily, and puts the
+to-do list in a desktop notification when there is one (`journalctl --user -u
+nomarchy-notify` has every run). This is the first half of `nomarchy update`: before a
+command can bring a machine current, `status` has to know what current means.
+
 **A new host is a `hosts/<name>/` somebody wrote on purpose.** `nomarchy` refuses a
 host directory that does not exist rather than defaulting to another machine's. `hosts/`
 is not a template directory, and a laptop is not a caesar clone: it has different
@@ -325,6 +341,15 @@ at `--apply`, after the new binary validated the live config, so a pin is always
 some host has proved. The portal has no config and follows umbriel: the newest portal
 commit no later than the umbriel rev. Another host picks up moved pins with
 `--sync --apply`.
+
+**The AUR recipe moves too, and a build pulls it first.** The 2026-11-14 update failed
+before compiling because `~/builds/umbriel-git` was one AUR commit behind: its PKGBUILD
+passed `-Dtest_ipc`, an option db2133c had dropped, and AUR `83a3921` had already switched
+it to `-Dharness`. Both `--apply` and `--sync --apply` now pull the recipe before building,
+as `nomarchy install` always did, and a recipe that changed builds from a clean tree
+(`makepkg -C`), because meson keeps the previous configure's options in `src/<repo>/build`
+and the saved `-Dtest_ipc` failed the same way after the pull. The survey shows a newer
+recipe's subject line so it is read before it is built.
 
 **Two invariants, checked separately** (`nomarchy status`, via `--check-pins` and
 `--check-config`): the installed revs equal the pins, and the installed umbriel accepts the
