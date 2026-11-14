@@ -27,6 +27,16 @@ set -euo pipefail
 
 (( EUID == 0 )) || { echo "${0##*/}: must run as root" >&2; exit 1; }
 
+# After a kernel upgrade without a reboot, the running kernel's modules are gone from
+# /usr/lib/modules and ufw cannot load the netfilter extensions it needs (addrtype, limit,
+# LOG, REJECT). Enabling then fails PARTWAY: rigel, 2026-11-14, was left with `default deny
+# incoming` in force and the rules admitting ssh not loaded, so new ssh connections timed
+# out. Refuse before changing anything.
+[[ -d /usr/lib/modules/$(uname -r) ]] || {
+  echo "${0##*/}: kernel $(uname -r) is running but its modules are gone (upgraded, not rebooted) -- reboot, then rerun" >&2
+  exit 1
+}
+
 ufw default deny incoming
 ufw default allow outgoing
 ufw default deny routed
