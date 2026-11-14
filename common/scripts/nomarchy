@@ -575,6 +575,60 @@ sec_toolchains() {
   done <<<"$list"
 }
 
+# ── Checkouts against their origin ──────────────────────────────────────────────────────
+# Two machines drifted apart for six weeks (2026-11) with every check green: rigel's
+# checkout sat 15 commits behind, held back on purpose and then forgotten, and caesar's
+# irides sat 2 commits unpushed, so rigel's stayed on the old build. Nothing could say so,
+# because nothing compared a checkout with its origin. This does, read-only: origin is asked
+# with ls-remote over https (a GitHub ssh URL in its https form, as builds are cloned), so
+# no key is needed and nothing in the checkout changes, not even its remote-tracking refs.
+https_of() { local u=$1; [[ $u =~ ^git@github\.com:(.+)$ ]] && u="https://github.com/${BASH_REMATCH[1]}"; printf '%s' "$u"; }
+
+# Sets co_branch, co_dirty (a count), co_remote (origin's sha), co_ahead and co_behind.
+# co_behind is "?" when origin's head is a commit this checkout has never fetched: behind,
+# by a count only a fetch could give, and co_ahead is then counted against the last-fetched
+# origin/<branch>. Returns 1 when origin cannot be reached (offline -- status also runs at
+# login, sometimes before the network is up), 2 when the branch is not on origin, 3 on a
+# detached HEAD.
+co_survey() {  # co_survey <dir> <url>
+  local d=$1 out
+  co_dirty=$(git -C "$d" status --porcelain 2>/dev/null | wc -l)
+  co_remote='' co_ahead=0 co_behind=0
+  co_branch=$(git -C "$d" symbolic-ref --short -q HEAD) || { co_branch=''; return 3; }
+  out=$(timeout 10 git ls-remote "$(https_of "$2")" "refs/heads/$co_branch" 2>/dev/null) || return 1
+  co_remote=$(cut -f1 <<<"$out")
+  [[ -n $co_remote ]] || return 2
+  if git -C "$d" cat-file -e "$co_remote^{commit}" 2>/dev/null; then
+    co_ahead=$(git -C "$d" rev-list --count "$co_remote..HEAD")
+    co_behind=$(git -C "$d" rev-list --count "HEAD..$co_remote")
+  else
+    co_behind='?'
+    co_ahead=$(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null) || co_ahead=0
+  fi
+}
+
+# This checkout. Uncommitted changes count: every config here is symlinked into it, so a
+# quick tweak on either machine is an edit in this tree, and this is where it shows.
+sec_checkout() {
+  local url files rc=0
+  url=$(git -C "$repo" remote get-url origin 2>/dev/null) || { bad "the checkout has no origin remote"; return; }
+  co_survey "$repo" "$url" || rc=$?
+  if ((co_dirty)); then
+    files=$(git -C "$repo" status --porcelain | cut -c4- | head -3 | paste -sd ' ')
+    ((co_dirty > 3)) && files+=" ..."
+    want "$co_dirty uncommitted change(s): $files -- commit, or discard what was a test"
+  fi
+  case $rc in
+    1) say "origin not reachable -- ahead/behind not compared"; ((co_dirty)) || good "nothing uncommitted"; return ;;
+    2) want "branch $co_branch is not on origin -- push it, or check out master"; return ;;
+    3) want "detached HEAD -- check out a branch"; return ;;
+  esac
+  ((co_ahead == 0)) || want "$co_ahead commit(s) not on origin -- git push"
+  if [[ $co_behind == '?' ]]; then want "origin/$co_branch (${co_remote:0:7}) has commits never fetched here -- git pull --ff-only"
+  elif ((co_behind)); then want "$co_behind commit(s) on origin not here -- git pull --ff-only"; fi
+  ((co_dirty || co_ahead)) || [[ $co_behind != 0 ]] || good "checkout = origin/$co_branch (${co_remote:0:7}), nothing uncommitted"
+}
+
 # Source builds: <command> <checkout> <url> <install command...>. A GitHub ssh URL is
 # CLONED over https and given the ssh URL as its push URL, so a fresh host can build
 # before any key is loaded, and the checkout is still pushable once one is.
@@ -585,13 +639,42 @@ sec_builds() {
   while read -r cmd dest url install; do
     [[ -n ${cmd:-} && -n ${install:-} ]] || continue
     dir=$(expand "$dest")
-    if [[ -x $HOME/.local/bin/$cmd ]] || command -v "$cmd" >/dev/null 2>&1; then good "$cmd"; continue; fi
-    fetch=$url
-    [[ $url =~ ^git@github\.com:(.+)$ ]] && fetch="https://github.com/${BASH_REMATCH[1]}"
+    if [[ -x $HOME/.local/bin/$cmd ]] || command -v "$cmd" >/dev/null 2>&1; then
+      build_freshness "$cmd" "$dest" "$dir" "$url" "$install"
+      continue
+    fi
+    fetch=$(https_of "$url")
     local c=''
     [[ -d $dir/.git ]] || c="git clone $(printf %q "$fetch") $(printf %q "$dir") && git -C $(printf %q "$dir") remote set-url --push origin $(printf %q "$url") && "
     need "build $cmd in $dest" "${c}(cd $(printf %q "$dir") && $install)"
   done <<<"$list"
+}
+
+# An installed build against its origin. These checkouts are where Peter develops his own
+# projects, so only one that is clean and simply behind is updated -- fast-forward over
+# https, then the build's own install command. Uncommitted or unpushed work is reported and
+# left alone: it is work in progress, and unpushed commits are exactly how rigel's irides
+# fell behind. (A checkout that matches origin but was never rebuilt is not detectable here.)
+build_freshness() {  # build_freshness <cmd> <dest> <dir> <url> <install>
+  local cmd=$1 dest=$2 dir=$3 url=$4 install=$5 rc=0 wip=''
+  [[ -d $dir/.git ]] || { good "$cmd (no checkout at $dest to compare)"; return; }
+  co_survey "$dir" "$url" || rc=$?
+  case $rc in
+    1) good "$cmd (origin not reachable -- not compared)"; return ;;
+    2) want "$cmd: $dest is on branch $co_branch, which is not on origin -- push it, or check out its main branch"; return ;;
+    3) want "$cmd: $dest has a detached HEAD -- check out a branch"; return ;;
+  esac
+  ((co_dirty)) && wip="$co_dirty uncommitted change(s)"
+  ((co_ahead)) && wip+="${wip:+, }$co_ahead unpushed commit(s)"
+  if [[ -n $wip ]]; then
+    want "$cmd: $dest has $wip -- finish and push it; link leaves it alone$([[ $co_behind != 0 ]] && printf ', and origin has moved on')"
+  elif [[ $co_behind != 0 ]]; then
+    local q; q=$(printf %q "$dir")
+    need "update $cmd: $dest $(git -C "$dir" rev-parse --short HEAD) -> origin ${co_remote:0:7}, then rebuild" \
+         "git -C $q fetch -q $(printf %q "$(https_of "$url")") +$co_branch:refs/remotes/origin/$co_branch && git -C $q merge -q --ff-only origin/$co_branch && (cd $q && $install)"
+  else
+    good "$cmd ($dest = origin/$co_branch ${co_remote:0:7})"
+  fi
 }
 
 sec_links() {
@@ -713,7 +796,10 @@ A fresh machine, in order (common/scripts/nomarchy until link has put it on PATH
 
 Keeping a machine current:
   git -C ~/Projects/nomarchy pull --ff-only
-  nomarchy status            what is new or missing since last time
+  nomarchy status            what is new or missing since last time, including this
+                             checkout and each source build against its origin --
+                             nomarchy-notify.timer runs it after login and daily, and
+                             notifies when there is something to do
   nomarchy link              lay new links, enable new user units
   umbriel config validate && umbriel msg config-reload
                              running programs do not reread config on their own
@@ -738,6 +824,7 @@ case $cmd in
   status)
     resolve_host "${1:-}"
     printf '\n\033[1mnomarchy status — host %s — read-only\033[0m\n' "$host"
+    head1 "[repo] this checkout against origin"; sec_checkout
     refresh_installed
     for s in base desktop host; do system_stage "$s"; done
     storage_load
