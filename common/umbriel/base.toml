@@ -619,6 +619,13 @@ opacity = 0.75
 match.app_id = "^firefox$"
 opacity = 0.95
 
+# Games stay opaque. Proton sets WM_CLASS to steam_app_<id>, and umu (Lutris's
+# Proton runner) uses steam_app_default when no game id is given -- StarCraft
+# Remastered arrives that way.
+[[window_rule]]
+match.app_id = "^steam_app_"
+opacity = 1.0
+
 [[window_rule]]
 match.app_id = "^(btop|lazydocker)$"
 default_floating = true
