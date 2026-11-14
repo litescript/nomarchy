@@ -1,11 +1,15 @@
 # caesar state that is not a file or a unit. Format: see common/stages/base/checks --
 # `probe` runs with no sudo and exits 0 when right; `fix` may use sudo.
 
-# The ufw rules themselves live in /etc/ufw/user.rules, generated and root-only, so the
-# probe can only see that the firewall is on. apply-rules is idempotent; rerun it by hand
-# after editing it.
-check firewall enabled (hosts/caesar/ufw/apply-rules)
-  probe grep -q '^ENABLED=yes' /etc/ufw/ufw.conf && systemctl is-enabled -q ufw.service
+# ufw generates /etc/ufw/user.rules (0644, so no sudo) and writes each rule into it as a
+# `### tuple ###` line. The probe compares that set, comments stripped, to EXACTLY the rules
+# apply-rules adds, so a rule added by hand is reported as well as one that went missing.
+# It asked only "is ufw on" until 2026-11-14, which let a hand-added `allow tcp 80 from
+# 192.168.1.101` sit there unreported (removed: nothing answers at .101 any more). Editing
+# apply-rules means editing the list below to match; until then status says to-do.
+# apply-rules is idempotent; rerun it by hand after editing it.
+check firewall enabled, rules exactly apply-rules' (hosts/caesar/ufw/apply-rules)
+  probe grep -q '^ENABLED=yes' /etc/ufw/ufw.conf && systemctl is-enabled -q ufw.service && diff <(sed -n 's/^### tuple ### //p' /etc/ufw/user.rules | sed 's/ comment=.*//' | sort) <(printf '%s\n' 'allow tcp 22 0.0.0.0/0 any 192.168.1.0/24 in' 'allow udp 6666 0.0.0.0/0 any 192.168.1.50 in' | sort)
   fix   sudo hosts/caesar/ufw/apply-rules
 
 # The monuser password lives in upsmon.conf, so the file is created by hand and never

@@ -1,10 +1,12 @@
 # rigel state that is not a file or a unit. Format: see common/stages/base/checks --
 # `probe` runs with no sudo and exits 0 when right; `fix` may use sudo.
 
-# ufw generates /etc/ufw/user.rules, and writes each rule into it as a `### tuple ###` line,
-# so the probe asks for the ssh rule itself, not only whether the firewall is on: a firewall
-# that is enabled but lost the rule is the case worth reporting. apply-rules is idempotent;
-# rerun it by hand after editing it.
-check firewall enabled, ssh admitted from the LAN (hosts/rigel/ufw/apply-rules)
-  probe grep -q '^ENABLED=yes' /etc/ufw/ufw.conf && systemctl is-enabled -q ufw.service && grep -q '^### tuple ### allow tcp 22 0.0.0.0/0 any 192.168.1.0/24 in' /etc/ufw/user.rules
+# ufw generates /etc/ufw/user.rules (0644, so no sudo) and writes each rule into it as a
+# `### tuple ###` line. The probe compares that set, comments stripped, to EXACTLY the rules
+# apply-rules adds, so a rule added by hand is reported as well as one that went missing --
+# the same check as caesar's. Editing apply-rules means editing the list below to match.
+# apply-rules is idempotent; rerun it by hand after editing it.
+check firewall enabled, rules exactly apply-rules' (hosts/rigel/ufw/apply-rules)
+  probe grep -q '^ENABLED=yes' /etc/ufw/ufw.conf && systemctl is-enabled -q ufw.service && diff <(sed -n 's/^### tuple ### //p' /etc/ufw/user.rules | sed 's/ comment=.*//' | sort) <(printf '%s\n' 'allow tcp 22 0.0.0.0/0 any 192.168.1.0/24 in' | sort)
   fix   sudo hosts/rigel/ufw/apply-rules
+

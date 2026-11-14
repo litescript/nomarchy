@@ -32,6 +32,12 @@ sudo systemctl daemon-reload
 # The node key and auth state are not config and nothing about them goes in this repo.
 sudo systemctl enable --now tailscaled
 tailscale up        # interactive; Pete completes this in a browser
+# DOWN AT HOME, by decision (2026-11-14): `sudo tailscale up` when away, `sudo tailscale
+# down` on return -- `down` persists across reboots. While up, rigel accepts the tailnet's
+# subnet route for 192.168.1.0/24, which sits in Tailscale's table 52, checked before the
+# main table, so on the home LAN rigel answers caesar THROUGH the tunnel and caesar's ssh and
+# ping time out (ARP still answers). --exit-node-allow-lan-access does not fix that; it only
+# exempts the LAN from the exit node's default route. Tested both, locked out both times.
 
 # ── 5. Firewall: no longer a root step ───────────────────────────────────────
 # Since 2026-11-14 it is hosts/rigel/ufw/apply-rules, run by the check in ./checks, which
