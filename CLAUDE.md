@@ -154,8 +154,10 @@ Four things about it that were established by testing umbriel 0.1.0, not by read
 - **`~/.config/umbriel/noctalia.toml` is Noctalia's include, not ours, and where it goes
   depends on Noctalia's version.** Noctalia's umbriel template has a `post_hook`,
   `/usr/share/noctalia/assets/templates/umbriel/apply.sh`, which rewrites the host's
-  **main config file** on every theme change — with `cp`, so the edit lands in the repo
-  instead of detaching the symlink, and only when the result differs. Noctalia 5.0.x
+  **main config file** whenever Noctalia applies its templates: at every Noctalia start
+  (template hooks run within a second of each launch in the journal) and every theme
+  change. It writes with `cp`, so the edit lands in the repo instead of detaching the
+  symlink, and only when the result differs. Noctalia 5.0.x
   appended `"noctalia.toml"` to the required `[include].files`; **5.2.0 removes it from
   there and keeps it as the last entry of `[include.optional]`**. caesar's host file is
   5.2.0's fixed point, byte for byte (running 5.2.0's hook over it changes nothing). The
@@ -332,13 +334,17 @@ breaks without anyone touching umbriel. `umbriel-update`'s survey reports Noctal
 installed, what Arch serves, and upstream's newest release, so that lag is on screen.
 
 `--check-config` only sees that break **after** Noctalia rewrites the palette, which it does
-at a theme change, not at install. So `--check-template` asks the same question first: it
+each time it starts and at each theme change — not when pacman installs it. After a `-Syu`,
+the window closes at the next Noctalia start, normally the next login. So `--check-template`
+asks the same question first: it
 renders the installed Noctalia's umbriel template with Noctalia's own renderer in a temporary
 directory (the live palette and the running shell untouched), validates it with the installed
 umbriel, and lists each rejected key as a **warning** (umbriel ignores it at runtime and
 applies the rest) or an **error** (the whole config is refused: a reload keeps the old one, a
 fresh start gets built-in defaults). Found 2026-11-13, when Noctalia 5.5.0 arrived with six
-`title_bar` glyph keys d88d0bc does not know, while `--check-config` stayed green.
+`title_bar` glyph keys d88d0bc does not know: `--check-template` flagged them while
+`--check-config` stayed green, and at the reboot 5.5.0's first start rewrote the palette 0.25 s
+after launch — umbriel reloaded it with those six ignored.
 
 It rests on three things, each established by testing umbriel 0.1.0 rather than by
 reading docs:

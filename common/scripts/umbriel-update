@@ -27,7 +27,8 @@
 # `pacman -Syu` that brings a newer Noctalia, whose palette template speaks a vocabulary
 # the pinned umbriel does not, breaks the pair without anyone touching umbriel. And
 # --check-template asks the second question before the fact: Noctalia rewrites the palette
-# only at a theme change, so --check-config stays green after such a -Syu until then.
+# each time it starts and at a theme change, not when pacman installs it, so --check-config
+# stays green after such a -Syu until the next Noctalia start (normally the next login).
 #
 # The build pins move only here, only in --apply, and only after the new binary validated
 # the live config -- so a pin is always a rev some host has proved. `config` moves ahead of
@@ -833,7 +834,8 @@ case $mode in
     # INSTALLED Noctalia would write? --check-config sees only the palette Noctalia last
     # wrote. 2026-11-13: a -Syu brought Noctalia 5.3.0 -> 5.5.0, whose template adds six
     # title_bar *_glyph keys d88d0bc does not know, and --check-config stayed green on the
-    # palette 5.3.0 had written on 11-07.
+    # palette 5.3.0 had written on 11-07 -- until the reboot, when 5.5.0's first start
+    # rewrote it.
     #
     # Rendered by Noctalia's own renderer (`theme -r`, one file, no hooks) from the wallpaper
     # Noctalia ships -- the colours are beside the point, the keys are the question -- with
@@ -873,10 +875,11 @@ case $mode in
     echo "Noctalia ${nv:-?}'s umbriel template, rendered: REJECTED by umbriel ${uv:-?}"
     umbriel_diagnostic_summary <<<"$out" | sed 's/^/  /'
     echo "Line numbers are the template's: $NOCTALIA_TEMPLATE"
-    echo "Noctalia writes it to $(dirname "$LIVE")/noctalia.toml at each theme change, and"
-    echo "from then on --check-config fails too. The remedy is a matching pair -- an umbriel that"
-    echo "knows these keys (umbriel-update) or a Noctalia that does not write them -- not an edit"
-    echo "to the palette, which the next theme change rewrites."
+    echo "Noctalia writes it to $(dirname "$LIVE")/noctalia.toml each time it starts and at"
+    echo "each theme change, so once Noctalia has started -- normally at login -- --check-config"
+    echo "fails too. The remedy is a matching pair -- an umbriel that knows these keys"
+    echo "(umbriel-update) or a Noctalia that does not write them -- not an edit to the palette,"
+    echo "which Noctalia's next start rewrites."
     exit 1 ;;
 esac
 
