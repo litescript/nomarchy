@@ -14,6 +14,14 @@ enable avahi-daemon.service
 # VM rehearsal, whose UPS monitor was inactive after its first reboot. Both, in this order.
 enable nut.target
 enable nut-monitor.service
+# caesar is a NUT client only: MODE=netclient, ups.conf defines no UPS, and upsmon watches
+# cyberups@192.168.1.50 over the network. But nut-monitor.service says Wants=nut-server in the
+# unit file itself -- not an [Install] link, so disabling the server does nothing -- and upsd,
+# with no UPS to serve, exits ("at least one UPS must be defined"). Every boot in the journal
+# (2026-11-13 back six) shows it failing five times and staying failed. Masked, the Wants= is
+# skipped and nut-monitor starts as before: nothing Requires=, BindsTo= or Requisite= it, and
+# a Wants= on a masked unit was tested (user manager, 2026-11-13) to start the wanting unit.
+mask nut-server.service
 # An always-on desktop: the old install masked every sleep target, and so does this.
 # The power button half is ../systemd/logind-nomarchy.conf.
 mask sleep.target
