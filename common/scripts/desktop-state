@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# desktop-state -- what the running desktop session is, and how it is doing, right now
+#
+#   desktop-state      one screen: host, versions, outputs and the GPU behind each, the
+#                      long-lived session processes, pressure, umbriel's recent complaints,
+#                      Firefox's active add-ons
+#
+# `nomarchy status` asks whether this machine matches the repo. This asks what is actually
+# running and whether any of it is unwell, which the repo cannot know. It is the first thing
+# to run when the desktop "feels wrong", and it is read-only and never sudoes, so an agent's
+# tool shell can run it. Every probe degrades to a note rather than an error.
+#
+# Each section is here because not having it cost time on caesar, 2026-10-17 (a ChatGPT tab
+# streaming in 1-second chunks, with typing hitches):
+#  - a fresh agent took umbriel for Hyprland, from an Omarchy-era memory;
+#  - umbriel had grown to 5.7G resident, 9.5G peak, over 16 days. A leak only reads as
+#    one next to how long the process has run, so RSS and peak sit beside uptime;
+#  - the stutter was page-side -- rAF at 158 fps, a private window (add-ons off) clean -- so
+#    the add-ons are listed, `*` marking those that also run in private windows.
+# A binary replaced on disk while running reads `(deleted)` in /proc/<pid>/exe, the signal
+# umbriel-update also uses: that process is still the old build until it restarts.
+
+set -uo pipefail
+
+case ${1:-} in
+  -h | --help)
+    sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  '') ;;
+  *)
+    printf '%s: unknown argument %s\n' "${0##*/}" "$1" >&2
+    exit 1
+    ;;
+esac
+
+# Bold only on a terminal: an agent's tool shell is not one, and reads the codes as noise.
+if [[ -t 1 ]]; then B=$'\e[1m' N=$'\e[0m'; else B='' N=''; fi
+have() { command -v "$1" >/dev/null 2>&1; }
+sec() { printf '\n%s%s%s\n' "$B" "$1" "$N"; }
+# kB -> 512M / 5.7G
+human() { awk -v k="$1" 'BEGIN { if (k >= 1048576) printf "%.1fG", k / 1048576; else printf "%dM", k / 1024 }'; }
+status_kb() { awk -v f="$1:" '$1 == f { print $2 }' "/proc/$2/status" 2>/dev/null; }
+
+printf '%s%s%s  kernel %s  %s  session %s/%s\n' "$B" "$(uname -n)" "$N" "$(uname -r)" \
+  "$(uptime -p 2>/dev/null)" "${XDG_SESSION_TYPE:-unset}" "${XDG_CURRENT_DESKTOP:-unset}"
+
+sec "Versions"
+if have pacman; then
+  pacman -Q umbriel-git xdg-desktop-portal-umbriel-git noctalia firefox nvidia-utils mesa \
+    2>/dev/null | awk '{ printf "  %-34s %s\n", $1, $2 }'
+  # Arch's linux 7.2.8.arch1-1 is uname's 7.2.8-arch1-1.
+  kpkg=$(pacman -Q linux 2>/dev/null | awk '{ print $2 }' | sed 's/\.arch/-arch/')
+  [[ -n $kpkg && $kpkg != "$(uname -r)" ]] &&
+    printf '  ! running kernel %s, installed %s -- reboot to land it\n' "$(uname -r)" "$kpkg"
+else
+  echo "  (no pacman)"
+fi
+
+sec "Outputs"
+# umbriel's view (mode, scale, VRR) joined to sysfs (which card, which driver, DPMS).
+if have umbriel && json=$(umbriel outputs --json 2>/dev/null); then
+  python3 - "$json" <<'PY'
+import glob, json, os, sys
+
+def card_of(name):
+    for path in glob.glob(f'/sys/class/drm/card*-{name}'):
+        card = os.path.basename(path).split('-', 1)[0]
+        drv = os.path.realpath(f'/sys/class/drm/{card}/device/driver')
+        try:
+            dpms = open(f'{path}/dpms').read().strip()
+        except OSError:
+            dpms = '?'
+        return card, os.path.basename(drv), dpms
+    return '?', '?', '?'
+
+used = set()
+for o in json.loads(sys.argv[1]):
+    cur = next((m for m in o.get('modes', []) if m.get('current')), None)
+    mode = f"{cur['width']}x{cur['height']}@{cur['refresh_mhz'] / 1000:g}" if cur else 'no mode'
+    card, drv, dpms = card_of(o['name'])
+    used.add(card)
+    state = '' if o.get('enabled') else '  DISABLED'
+    scale = o.get('scale')
+    scale = f'{scale:g}' if isinstance(scale, (int, float)) else '?'
+    print(f"  {o['name']:9} {mode:18} scale {scale:<5} "
+          f"vrr {'on' if o.get('adaptive_sync') else 'off':3}  {card} {drv:7} dpms {dpms}"
+          f"  {o.get('model', '')}{state}")
+for dev in sorted(glob.glob('/sys/class/drm/card[0-9]*')):
+    card = os.path.basename(dev)
+    if '-' in card or card in used:
+        continue
+    drv = os.path.basename(os.path.realpath(f'{dev}/device/driver'))
+    print(f"  ({card} {drv}: drives no output)")
+PY
+else
+  echo "  (umbriel outputs unavailable -- not an umbriel session?)"
+fi
+
+sec "Session processes"
+for name in umbriel noctalia Xwayland firefox; do
+  # -o: the oldest, which for firefox is the parent; content processes are other names.
+  if ! pid=$(pgrep -xo "$name"); then
+    printf '  %-9s not running\n' "$name"
+    continue
+  fi
+  read -r etime cputime < <(ps -o etime=,time= -p "$pid")
+  rss=$(status_kb VmRSS "$pid")
+  hwm=$(status_kb VmHWM "$pid")
+  line=$(printf '  %-9s pid %-8s up %-12s cpu %-10s rss %-6s peak %s' \
+    "$name" "$pid" "$etime" "$cputime" "$(human "${rss:-0}")" "$(human "${hwm:-0}")")
+  [[ $(readlink "/proc/$pid/exe" 2>/dev/null) == *' (deleted)' ]] &&
+    line+="  ! binary replaced since start"
+  if [[ $name == firefox ]]; then
+    # Summed RSS double-counts shared pages; PSS divides them.
+    exe=$(readlink "/proc/$pid/exe")
+    total=0 n=0
+    for p in $(pgrep -u "$UID" .); do
+      [[ $(readlink "/proc/$p/exe" 2>/dev/null) == "$exe" ]] || continue
+      pss=$(awk '$1 == "Pss:" { print $2 }' "/proc/$p/smaps_rollup" 2>/dev/null) || continue
+      total=$((total + ${pss:-0})) n=$((n + 1))
+    done
+    line+="  ($n processes, $(human "$total") PSS)"
+  fi
+  printf '%s\n' "$line"
+done
+
+sec "Pressure"
+printf '  load %s' "$(cut -d' ' -f1-3 /proc/loadavg)"
+for r in cpu memory io; do
+  [[ -r /proc/pressure/$r ]] || continue
+  awk -v r="$r" '$1 == "some" { split($2, a, "="); split($3, b, "="); printf "   %s %s/%s", r, a[2], b[2] }' \
+    "/proc/pressure/$r"
+done
+printf '   (psi some avg10/avg60)\n'
+free -h | awk '$1 == "Mem:" { m = $7 " available of " $2 } $1 == "Swap:" { s = $3 " of " $2 } END { printf "  mem %s, swap %s used\n", m, s }'
+
+sec "umbriel, last 24 h"
+if have journalctl; then
+  log=$(journalctl --user -t umbriel --since -24h --no-pager -o cat 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+  # Errors and warnings in both formats it logs -- its own `[ERR]`, and `ERROR`/`WARN` from
+  # the Xwayland helper -- with timestamps stripped so repeats collapse.
+  bad=$(grep -E '\[(ERR|WRN)\]| (ERROR|WARN) ' <<<"$log" | sed -E 's/^ *[0-9TZ:.-]+ +//' | sort | uniq -c | sort -rn | head -6)
+  if [[ -n $bad ]]; then
+    cut -c1-150 <<<"$bad" | sed 's/^/ /'
+  else
+    echo "  no [ERR]/[WRN] lines"
+  fi
+  last_on=$(journalctl --user -t umbriel --since -24h --no-pager -o short-iso 2>/dev/null |
+    grep -E "output '[^']+': applied mode" | tail -1 | cut -d' ' -f1)
+  last_off=$(journalctl --user -t umbriel --since -24h --no-pager -o short-iso 2>/dev/null |
+    grep -E "output '[^']+': powered off" | tail -1 | cut -d' ' -f1)
+  printf '  outputs last powered off %s, last mode-set %s\n' "${last_off:-none}" "${last_on:-none}"
+else
+  echo "  (no journalctl)"
+fi
+
+sec "Firefox add-ons (active; * = also in private windows)"
+python3 - <<'PY'
+import configparser, json, os
+home = os.path.expanduser('~')
+for base in (f'{home}/.config/mozilla/firefox', f'{home}/.mozilla/firefox'):
+    if os.path.isdir(base):
+        break
+else:
+    print('  (no Firefox profile directory)'); raise SystemExit
+ini = configparser.ConfigParser()
+ini.read([f'{base}/installs.ini', f'{base}/profiles.ini'])
+# installs.ini names the profile this Firefox install actually opens.
+path = next((ini[s]['Default'] for s in ini.sections() if 'Default' in ini[s]
+             and not ini[s]['Default'].isdigit()), None)
+try:
+    addons = json.load(open(f'{base}/{path}/extensions.json'))['addons']
+    prefs = json.load(open(f'{base}/{path}/extension-preferences.json'))
+except (OSError, TypeError, ValueError, KeyError):
+    print(f'  (cannot read add-ons for profile {path})'); raise SystemExit
+names = []
+for a in addons:
+    if a.get('type') != 'extension' or a.get('location') != 'app-profile' or not a.get('active'):
+        continue
+    if a['id'].endswith('@mozilla.org'):  # New Tab is Firefox's own, profile-installed
+        continue
+    name = (a.get('defaultLocale') or {}).get('name') or a['id']
+    if 'internal:privateBrowsingAllowed' in prefs.get(a['id'], {}).get('permissions', []):
+        name += '*'
+    names.append(name)
+print('  ' + (', '.join(names) or 'none'))
+PY
