@@ -25,7 +25,9 @@
 # user-checks): the INSTALLED revs equal the pins (--check-pins), and the installed binary
 # ACCEPTS the live config (--check-config). The first can hold while the second fails: a
 # `pacman -Syu` that brings a newer Noctalia, whose palette template speaks a vocabulary
-# the pinned umbriel does not, breaks the pair without anyone touching umbriel.
+# the pinned umbriel does not, breaks the pair without anyone touching umbriel. And
+# --check-template asks the second question before the fact: Noctalia rewrites the palette
+# only at a theme change, so --check-config stays green after such a -Syu until then.
 #
 # The build pins move only here, only in --apply, and only after the new binary validated
 # the live config -- so a pin is always a rev some host has proved. `config` moves ahead of
@@ -109,6 +111,13 @@ PIN="$repo/common/umbriel/UPSTREAM"
 BASE="$repo/common/umbriel/base.toml"
 LIVE="${XDG_CONFIG_HOME:-$HOME/.config}/umbriel/config.toml"
 
+# Noctalia's umbriel palette template, and an image Noctalia ships to render it from
+# (--check-template). Both are Noctalia's paths; the check says so if either moves.
+# Overridable like UMBRIEL_BUILDS, so tests/umbriel-cli can hand it templates of its own.
+NOCTALIA_ASSETS="${NOCTALIA_ASSETS:-/usr/share/noctalia/assets}"
+NOCTALIA_TEMPLATE="$NOCTALIA_ASSETS/templates/umbriel/umbriel.toml"
+NOCTALIA_WALLPAPER="$NOCTALIA_ASSETS/noctalia-wallpaper.png"
+
 # Both packages move together: umbriel-git depends on the portal, and upstream releases
 # them from two repos that track each other. Order matters for the pacman -U call.
 PKGS=(xdg-desktop-portal-umbriel-git umbriel-git)
@@ -142,6 +151,7 @@ while (($#)); do
     --pinned-pkgbuild) mode=pinnedpkgbuild; arg=${2:-}; shift ;;
     --check-pins)      mode=checkpins ;;
     --check-config)    mode=checkconfig ;;
+    --check-template)  mode=checktemplate ;;
     -h|--help)      sed -n '2,/^#$/p' "$(readlink -f "$0")" | sed 's/^# \?//'; exit 0 ;;
     *)              die "unknown argument: $1  (--help)" ;;
   esac
@@ -818,6 +828,56 @@ case $mode in
     [[ -e $LIVE ]] || { echo "$LIVE does not exist"; exit 1; }
     validate_with umbriel "$LIVE" 2>&1 | grep -vE '^[0-9:.]+ \[' | tail -6
     exit "${PIPESTATUS[0]}" ;;
+  checktemplate)
+    # Compatibility BEFORE the fact: does the installed umbriel accept the palette the
+    # INSTALLED Noctalia would write? --check-config sees only the palette Noctalia last
+    # wrote. 2026-11-13: a -Syu brought Noctalia 5.3.0 -> 5.5.0, whose template adds six
+    # title_bar *_glyph keys d88d0bc does not know, and --check-config stayed green on the
+    # palette 5.3.0 had written on 11-07.
+    #
+    # Rendered by Noctalia's own renderer (`theme -r`, one file, no hooks) from the wallpaper
+    # Noctalia ships -- the colours are beside the point, the keys are the question -- with
+    # HOME, the XDG dirs, the runtime dir and the session bus pointed away, so nothing
+    # reaches the running shell, the theme or the user's files. Validated ON ITS OWN:
+    # base.toml and the host file are --check-config's business, so a rejection here names
+    # only the template. Exit 0 accepted, 1 rejected, 2 no verdict.
+    command -v umbriel >/dev/null || { echo "no verdict: umbriel is not installed"; exit 2; }
+    command -v noctalia >/dev/null || { echo "no verdict: noctalia is not installed"; exit 2; }
+    for f in "$NOCTALIA_TEMPLATE" "$NOCTALIA_WALLPAPER"; do
+      [[ -f $f ]] || { echo "no verdict: $f is missing -- has Noctalia moved it?"; exit 2; }
+    done
+    t=$(mktemp -d) || exit 2
+    trap 'rm -rf "$t"' EXIT
+    mkdir -m 700 "$t"/{home,config,state,cache,data,run}
+    if ! env -u WAYLAND_DISPLAY -u DISPLAY -u DBUS_SESSION_BUS_ADDRESS HOME="$t/home" \
+         XDG_CONFIG_HOME="$t/config" XDG_STATE_HOME="$t/state" XDG_CACHE_HOME="$t/cache" \
+         XDG_DATA_HOME="$t/data" XDG_RUNTIME_DIR="$t/run" \
+         noctalia theme "$NOCTALIA_WALLPAPER" -r "$NOCTALIA_TEMPLATE:$t/palette.toml" >"$t/render.log" 2>&1 \
+       || [[ ! -s $t/palette.toml ]] || grep -q '{{' "$t/palette.toml"; then
+      echo "no verdict: Noctalia did not render $NOCTALIA_TEMPLATE"
+      sed 's/\x1b\[[0-9;]*m//g' "$t/render.log" | tail -3
+      exit 2
+    fi
+    nv=$(pacman -Q noctalia 2>/dev/null | awk '{print $2}')
+    uv=$(installed_rev umbriel-git) || uv=$(umbriel --version 2>/dev/null | head -1)
+    out=$(validate_with umbriel "$t/palette.toml" 2>&1); rc=$?
+    out=$(grep -vE '^[0-9:.]+ \[' <<<"$out")
+    if ((rc == 0)); then
+      echo "Noctalia ${nv:-?}'s umbriel template, rendered: accepted by umbriel ${uv:-?}"; exit 0
+    fi
+    if ((rc == 2)) || ! grep -qE '^(warning|error): ' <<<"$out"; then
+      echo "no verdict: umbriel ${uv:-?} gave no diagnostics for the rendered template"
+      printf '%s\n' "$out" | head -3
+      exit 2
+    fi
+    echo "Noctalia ${nv:-?}'s umbriel template, rendered: REJECTED by umbriel ${uv:-?}"
+    umbriel_diagnostic_summary <<<"$out" | sed 's/^/  /'
+    echo "Line numbers are the template's: $NOCTALIA_TEMPLATE"
+    echo "Noctalia writes it to $(dirname "$LIVE")/noctalia.toml at each theme change, and"
+    echo "from then on --check-config fails too. The remedy is a matching pair -- an umbriel that"
+    echo "knows these keys (umbriel-update) or a Noctalia that does not write them -- not an edit"
+    echo "to the palette, which the next theme change rewrites."
+    exit 1 ;;
 esac
 
 printf '\n\033[1mumbriel-update — %s\033[0m\n' \

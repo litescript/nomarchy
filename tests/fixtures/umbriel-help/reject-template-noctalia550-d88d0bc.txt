@@ -1,0 +1,7 @@
+warning: @PALETTE@:38:15: unknown key colors.title_bar.close_glyph
+warning: @PALETTE@:39:21: unknown key colors.title_bar.close_glyph_hover
+warning: @PALETTE@:41:18: unknown key colors.title_bar.maximize_glyph
+warning: @PALETTE@:42:24: unknown key colors.title_bar.maximize_glyph_hover
+warning: @PALETTE@:44:18: unknown key colors.title_bar.minimize_glyph
+warning: @PALETTE@:45:24: unknown key colors.title_bar.minimize_glyph_hover
+configuration invalid

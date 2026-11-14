@@ -102,5 +102,59 @@ for e in "${bins[@]+"${bins[@]}"}"; do
   else nok "${e%%:*} $ver: status $rc, $(head -1 <<<"$out")"; fi
 done
 
+printf '\033[1mfixtures: what each diagnostic costs at runtime (--check-template'"'"'s report)\033[0m\n'
+# Captured 2026-11-13: umbriel d88d0bc validating Noctalia 5.5.0's umbriel template as
+# --check-template renders it. Unknown keys are warnings, so the report must say so -- and
+# must not call them runtime failures, which is what an error is.
+real=$(sed "s|@PALETTE@|$tmp/palette.toml|g" "$fx/reject-template-noctalia550-d88d0bc.txt")
+rep=$(umbriel_diagnostic_summary <<<"$real")
+want_keys="colors.title_bar.close_glyph colors.title_bar.close_glyph_hover colors.title_bar.maximize_glyph colors.title_bar.maximize_glyph_hover colors.title_bar.minimize_glyph colors.title_bar.minimize_glyph_hover"
+got_keys=$(sed -n 's/^    \(colors\.[^ ]*\).*/\1/p' <<<"$rep" | tr '\n' ' '); got_keys=${got_keys% }
+[[ $rep == "6 unsupported key(s) -- WARNINGS"* && $got_keys == "$want_keys" ]] \
+  && ok "Noctalia 5.5.0 vs d88d0bc: the six title_bar glyph keys, as warnings" || nok "5.5.0 report: $rep"
+[[ $rep == *'(line 38)'* && $rep != *"$tmp"* ]] && ok "located by line, temporary path left out" || nok "5.5.0 locations: $rep"
+[[ $rep == *'no errors'* && $rep != *'RUNTIME FAILURES'* ]] && ok "no errors: not reported as a runtime failure" || nok "5.5.0 error leg: $rep"
+perr="error: $tmp/palette.toml:2:24: Error while parsing string: unescaped control characters other than TAB (U+0009) are explicitly prohibited
+configuration invalid"
+rep=$(umbriel_diagnostic_summary <<<"$perr")
+[[ $rep == "1 error(s) -- RUNTIME FAILURES"* && $rep != *unsupported* ]] && ok "a TOML parse error: a runtime failure" || nok "parse error report: $rep"
+bval="warning: $tmp/palette.toml:2:14: ignoring colors.background (invalid color 'notacolor')
+configuration invalid"
+rep=$(umbriel_diagnostic_summary <<<"$bval")
+[[ $rep == "1 other warning(s)"* && $rep != *unsupported* && $rep != *'RUNTIME FAILURES'* ]] \
+  && ok "an invalid value: another warning, not a key, not a failure" || nok "invalid value report: $rep"
+
+printf '\033[1mreal binaries: --check-template renders with Noctalia, validates with umbriel\033[0m\n'
+wall=/usr/share/noctalia/assets/noctalia-wallpaper.png
+if ! command -v noctalia >/dev/null || ! command -v umbriel >/dev/null || [[ ! -f $wall ]]; then
+  printf '  (noctalia, umbriel or the wallpaper Noctalia ships is missing -- skipped)\n'
+else
+  live=${XDG_CONFIG_HOME:-$HOME/.config}/umbriel/noctalia.toml
+  before=$(sha256sum "$live" 2>/dev/null)
+  check() {  # check <template text> -> the mode's output; status in $rc
+    local a=$tmp/assets-$RANDOM
+    mkdir -p "$a/templates/umbriel"; ln -s "$wall" "$a/noctalia-wallpaper.png"
+    printf '%s\n' "$1" > "$a/templates/umbriel/umbriel.toml"
+    out=$(NOCTALIA_ASSETS=$a "$repo/common/scripts/umbriel-update" --check-template 2>&1); rc=$?
+  }
+  check '[colors.border]
+focused = "#{{colors.primary.default.hex_stripped}}FF"'
+  [[ $rc == 0 && $out == *accepted* ]] && ok "known keys: accepted (status 0)" || nok "known keys: status $rc, $out"
+  check '[colors.border]
+focused = "#{{colors.primary.default.hex_stripped}}FF"
+not_a_key = "#{{colors.error.default.hex_stripped}}FF"'
+  [[ $rc == 1 && $out == *'1 unsupported key(s) -- WARNINGS'* && $out == *colors.border.not_a_key* && $out == *'no errors'* ]] \
+    && ok "an unknown key: rejected (status 1), named, a warning" || nok "unknown key: status $rc, $out"
+  check '[colors
+background = "#{{colors.primary.default.hex_stripped}}FF"'
+  [[ $rc == 1 && $out == *'RUNTIME FAILURES'* ]] && ok "TOML umbriel cannot parse: rejected, a runtime failure" || nok "parse error: status $rc, $out"
+  check '[colors]
+background = "#{{colors.no_such_role.default.hex_stripped}}FF"'
+  [[ $rc == 2 && $out == 'no verdict'* ]] && ok "a template Noctalia cannot render: no verdict (status 2)" || nok "unrenderable: status $rc, $out"
+  out=$("$repo/common/scripts/umbriel-update" --check-template 2>&1); rc=$?
+  [[ $rc == 0 || $rc == 1 ]] && ok "the installed template: a verdict (status $rc) -- $(head -1 <<<"$out")" || nok "installed template: status $rc, $out"
+  [[ $(sha256sum "$live" 2>/dev/null) == "$before" ]] && ok "the live palette is unchanged" || nok "the live palette CHANGED: $live"
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$pass" "$fail"
 ((fail == 0))

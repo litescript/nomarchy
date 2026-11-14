@@ -92,3 +92,40 @@ umbriel_rejection_advice() {
       echo "The output names no config file, so there is no advice to give: read it above." ;;
   esac
 }
+
+# umbriel_diagnostic_summary  (the validate output on stdin)
+# What a rejection costs at RUNTIME, which the exit status cannot say: `config validate`
+# exits 1 for a warning and an error alike. Read from d88d0bc's source (src/config/config.cpp,
+# src/config/store.cpp), not assumed -- recheck after an update that touches either:
+#   warning  that key or value is ignored and the rest applies, at startup and on reload.
+#            `unknown key <path>` is the vocabulary case, so those are listed by key.
+#   error    the whole parse fails: a reload keeps the previous config, and a fresh start
+#            falls back to built-in defaults -- none of this repo's keybinds or colours.
+# Locations print as "line N" of the file validated; the path itself is left out.
+umbriel_diagnostic_summary() {
+  local line sev msg loc
+  local -a keys=() warns=() errs=()
+  while IFS= read -r line; do
+    [[ $line =~ ^(warning|error):\ (.*)$ ]] || continue
+    sev=${BASH_REMATCH[1]} msg=${BASH_REMATCH[2]} loc=''
+    if [[ $msg =~ ^[^:]+:([0-9]+):[0-9]+:\ (.*)$ ]]; then loc="  (line ${BASH_REMATCH[1]})"; msg=${BASH_REMATCH[2]}; fi
+    if [[ $sev == error ]]; then errs+=("$msg$loc")
+    elif [[ $msg =~ ^unknown\ key\ ([^[:space:]]+)$ ]]; then keys+=("${BASH_REMATCH[1]}$loc")
+    else warns+=("$msg$loc"); fi
+  done
+  if ((${#keys[@]})); then
+    echo "${#keys[@]} unsupported key(s) -- WARNINGS: at runtime umbriel ignores each and applies the rest"
+    printf '    %s\n' "${keys[@]}"
+  fi
+  if ((${#warns[@]})); then
+    echo "${#warns[@]} other warning(s) -- also ignored at runtime, one value at a time"
+    printf '    %s\n' "${warns[@]}"
+  fi
+  if ((${#errs[@]})); then
+    echo "${#errs[@]} error(s) -- RUNTIME FAILURES: umbriel rejects the whole config; a reload keeps"
+    echo "the previous one, a fresh start falls back to built-in defaults"
+    printf '    %s\n' "${errs[@]}"
+  else
+    echo "no errors -- nothing here stops umbriel loading it, though \`config validate\` refuses it"
+  fi
+}

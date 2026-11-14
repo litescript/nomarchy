@@ -331,6 +331,15 @@ live config. The second can fail with the first exact — Arch ships Noctalia, a
 breaks without anyone touching umbriel. `umbriel-update`'s survey reports Noctalia
 installed, what Arch serves, and upstream's newest release, so that lag is on screen.
 
+`--check-config` only sees that break **after** Noctalia rewrites the palette, which it does
+at a theme change, not at install. So `--check-template` asks the same question first: it
+renders the installed Noctalia's umbriel template with Noctalia's own renderer in a temporary
+directory (the live palette and the running shell untouched), validates it with the installed
+umbriel, and lists each rejected key as a **warning** (umbriel ignores it at runtime and
+applies the rest) or an **error** (the whole config is refused: a reload keeps the old one, a
+fresh start gets built-in defaults). Found 2026-11-13, when Noctalia 5.5.0 arrived with six
+`title_bar` glyph keys d88d0bc does not know, while `--check-config` stayed green.
+
 It rests on three things, each established by testing umbriel 0.1.0 rather than by
 reading docs:
 
