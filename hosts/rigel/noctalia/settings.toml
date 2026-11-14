@@ -1,4 +1,4 @@
-config_version = 14
+config_version = 20
 
 [bar.default]
 background_opacity = 0.4999999888241291
@@ -13,7 +13,7 @@ start = [ "workspaces", "bar" ]
     accordion = true
     accordion_direction = "start"
     enabled = true
-    fill = "surface_variant"
+    fill = "surface_container"
     id = "g1"
     members = [ "bar_2", "notifications", "clipboard", "brightness", "bluetooth", "volume" ]
     opacity = 0.15000000596046448
@@ -45,7 +45,7 @@ widget_order = [ "lockscreen-login-box@eDP-1" ]
     type = "login_box"
 
         [lockscreen_widgets.widget."lockscreen-login-box@eDP-1".settings]
-        background_color = "surface_variant"
+        background_color = "surface_container"
         background_opacity = 0.88
         background_radius = 12.0
         center_password_text = false
@@ -87,7 +87,7 @@ font_family = "JetBrainsMono Nerd Font Mono"
 
 [theme]
 builtin = "Tokyo-Night"
-custom_palette = "irides-F40"
+custom_palette = "irides-Lumon"
 source = "custom"
 
     [theme.templates]
@@ -99,13 +99,13 @@ directory = "/home/peter/Pictures"
 transition_on_startup = true
 
     [wallpaper.default]
-    path = "/home/peter/Pictures/f40.png"
+    path = "/home/peter/Pictures/lumon-mdr.png"
 
     [wallpaper.last]
-    path = "/home/peter/Pictures/f40.png"
+    path = "/home/peter/Pictures/lumon-mdr.png"
 
     [wallpaper.monitors.eDP-1]
-    path = "/home/peter/Pictures/f40.png"
+    path = "/home/peter/Pictures/lumon-mdr.png"
 
 [weather]
 unit = "imperial"

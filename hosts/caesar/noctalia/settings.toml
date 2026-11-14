@@ -1,4 +1,4 @@
-config_version = 14
+config_version = 20
 
 [bar.default]
 background_opacity = 0.48999998904764652
@@ -13,7 +13,7 @@ start = [ "workspaces", "bar" ]
     accordion = true
     accordion_direction = "start"
     enabled = true
-    fill = "outline"
+    fill = "outline_variant"
     id = "g1"
     members = [ "bar_2", "notifications", "clipboard", "brightness", "volume" ]
     opacity = 0.05000000074505806
@@ -65,7 +65,7 @@ widget_order = [ "lockscreen-login-box@DP-3", "lockscreen-login-box@DP-2", "lock
     type = "login_box"
 
         [lockscreen_widgets.widget."lockscreen-login-box@DP-2".settings]
-        background_color = "surface_variant"
+        background_color = "surface_container"
         background_opacity = 0.88
         background_radius = 12.0
         center_password_text = false
@@ -92,7 +92,7 @@ widget_order = [ "lockscreen-login-box@DP-3", "lockscreen-login-box@DP-2", "lock
     type = "login_box"
 
         [lockscreen_widgets.widget."lockscreen-login-box@DP-3".settings]
-        background_color = "surface_variant"
+        background_color = "surface_container"
         background_opacity = 0.88
         background_radius = 12.0
         center_password_text = false
@@ -119,7 +119,7 @@ widget_order = [ "lockscreen-login-box@DP-3", "lockscreen-login-box@DP-2", "lock
     type = "login_box"
 
         [lockscreen_widgets.widget."lockscreen-login-box@HDMI-A-2".settings]
-        background_color = "surface_variant"
+        background_color = "surface_container"
         background_opacity = 0.88
         background_radius = 12.0
         center_password_text = false
@@ -165,7 +165,7 @@ polkit_agent = true
 
 [theme]
 builtin = "Tokyo-Night"
-custom_palette = "irides-F40"
+custom_palette = "irides-Lumon"
 mode = "dark"
 source = "custom"
 
@@ -177,19 +177,19 @@ source = "custom"
 transition_on_startup = true
 
     [wallpaper.default]
-    path = "/home/peter/Pictures/f40.png"
+    path = "/home/peter/Pictures/lumon-mdr.png"
 
     [wallpaper.last]
-    path = "/home/peter/Pictures/f40.png"
+    path = "/home/peter/Pictures/lumon-mdr.png"
 
     [wallpaper.monitors.DP-2]
-    path = "/home/peter/Pictures/f40.png"
+    path = "/home/peter/Pictures/lumon-mdr.png"
 
     [wallpaper.monitors.DP-3]
-    path = "/home/peter/Pictures/f40.png"
+    path = "/home/peter/Pictures/lumon-mdr.png"
 
     [wallpaper.monitors.HDMI-A-2]
-    path = "/home/peter/Pictures/f40.png"
+    path = "/home/peter/Pictures/lumon-mdr.png"
 
 [weather]
 unit = "imperial"
