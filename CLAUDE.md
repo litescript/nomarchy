@@ -545,14 +545,15 @@ that a plain suspend. If rigel's power key suspends instead of hibernating, chec
 
 ## Git
 
-Two remotes, both kept current:
+One remote:
 
 ```
-origin   git@github.com:litescript/nomarchy.git   (primary, public, upstream tracking)
-waylab   waylab:~/Repos/nomarchy.git              (local-network backup)
+origin   git@github.com:litescript/nomarchy.git   (public, upstream tracking)
 ```
 
-`git push` goes to GitHub only; waylab needs an explicit `git push waylab master`.
+There used to be a second, `waylab:~/Repos/nomarchy.git`, a local-network backup. It was
+retired on 2026-11-14 because nothing used it. Older notes that say "push origin + waylab"
+predate that.
 
 The GitHub repo is **public** — the tree includes `docs/migration/caesar-boot-backup/`
 with filesystem UUIDs and PARTUUIDs. Scan before adding anything new that came off the
