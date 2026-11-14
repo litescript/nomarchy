@@ -256,6 +256,13 @@ survey() {
       want "$pkg installed $inst, pinned $pin  -> umbriel-update --sync --apply"; ((behind++))
     fi
 
+    # The AUR recipe moves on its own schedule, and a build pulls it first (do_install).
+    # Said here so a recipe change is read before it is built, not discovered by makepkg.
+    if git -C "$dir" fetch -q origin 2>/dev/null; then
+      n=$(git -C "$dir" rev-list --count 'HEAD..@{u}' 2>/dev/null) || n=0
+      ((n > 0)) && say "    AUR recipe: $n commit(s) newer than $dir's, pulled at the next build -- $(git -C "$dir" log -1 --format=%s '@{u}')"
+    fi
+
     # How far upstream has moved past the pin -- information, not a fault: the pin moves
     # when a merge and a gated --apply say it may.
     n=$(git -C "$clone" rev-list --count "$pin..$tgt" 2>/dev/null)
@@ -678,10 +685,24 @@ do_install() {
       continue
     fi
 
+    # The recipe moves too. AUR 83a3921 (2026-10-30) swapped -Dtest_ipc for -Dharness after
+    # upstream dropped the option, and built from the stale checkout, the 2026-11-14 update
+    # failed before compiling. So pull it first, as nomarchy's aur_build does. A recipe that
+    # changed also gets a clean tree (makepkg -C): meson keeps the previous configure's
+    # options in src/<repo>/build, and the saved -Dtest_ipc failed the same way after the pull.
+    local before clean=()
+    before=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
+    git -C "$dir" checkout -q -- PKGBUILD 2>/dev/null
+    git -C "$dir" pull -q --ff-only || { bad "$pkg: cannot pull the AUR recipe in $dir (offline, or local commits?)"; exit 1; }
+    if [[ $(git -C "$dir" rev-parse HEAD) != "$before" ]]; then
+      say "$pkg: AUR recipe updated ($(git -C "$dir" log --format=%s "$before..HEAD" | paste -sd ';')) -- building from a clean tree"
+      clean=(-C)
+    fi
+
     stash_current "$pkg" "$dir"
     local pb; pb=$(pinned_pkgbuild "$pkg" "$tgt") || { bad "$pkg: cannot write a PKGBUILD pinned to $tgt"; exit 1; }
     say "building $pkg (${inst:-none} → $tgt, pinned) ..."
-    if ! ( cd "$dir" && makepkg -f --noconfirm -p "$pb" ); then
+    if ! ( cd "$dir" && makepkg -f --noconfirm "${clean[@]+"${clean[@]}"}" -p "$pb" ); then
       bad "$pkg: makepkg failed"
       say "    If it stopped on a missing dependency, install it and re-run:"
       say "    sudo pacman -S --needed <pkg>"
