@@ -19,6 +19,25 @@ start = [ "workspaces", "bar" ]
     opacity = 0.15000000596046448
     padding = 6.0
 
+[idle]
+behavior_order = [ "lock", "screen-off", "lock-and-suspend" ]
+
+    [idle.behavior.lock]
+    action = "lock"
+    enabled = true
+    timeout = 600.0
+
+    [idle.behavior.lock-and-suspend]
+    action = "lock_and_suspend"
+    enabled = false
+    timeout = 900.0
+
+    [idle.behavior.screen-off]
+    action = "screen_off"
+    enabled = true
+    locked_timeout = 120.0
+    timeout = 660.0
+
 [lockscreen]
 blur_intensity = 0.37999999150633812
 fingerprint = false
