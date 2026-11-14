@@ -11,6 +11,15 @@
 
 set -uo pipefail
 
+# Straight to the notification daemon over the session bus. busctl is systemd's, so every
+# host has it; notify-send is libnotify's, which rigel did not have -- the first run there
+# found the to-do and then exited 127 trying to report it. `--` because -1 (the daemon's
+# default timeout) would otherwise read as an option. Urgency: 1 normal, 2 critical.
+notify() {  # notify <urgency> <summary> <body>
+  busctl --user call -- org.freedesktop.Notifications /org/freedesktop/Notifications \
+    org.freedesktop.Notifications Notify 'susssasa{sv}i' nomarchy 0 '' "$2" "$3" 0 1 urgency y "$1" -1 >/dev/null
+}
+
 here=$(dirname "$(readlink -f "$0")")
 out=$("$here/nomarchy" status 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
 items=$(grep -E '^\s+(→|✗) ' <<<"$out" | sed -E 's/^\s+//')
@@ -18,8 +27,7 @@ summary=$(grep -E '^[0-9]+ ok, [0-9]+ to do, [0-9]+ conflicts' <<<"$out" | tail 
 printf '%s\n' "$items" "$summary"
 
 if [[ -z $summary ]]; then
-  notify-send -a nomarchy -u critical "$(uname -n): nomarchy status did not finish" \
-    "journalctl --user -u nomarchy-notify"
+  notify 2 "$(uname -n): nomarchy status did not finish" "journalctl --user -u nomarchy-notify"
   exit 1
 fi
 read -r todo conflicts < <(sed -E 's/^[0-9]+ ok, ([0-9]+) to do, ([0-9]+) conflicts.*/\1 \2/' <<<"$summary")
@@ -28,5 +36,4 @@ read -r todo conflicts < <(sed -E 's/^[0-9]+ ok, ([0-9]+) to do, ([0-9]+) confli
 n=$(grep -c . <<<"$items")
 body=$(head -6 <<<"$items")
 ((n > 6)) && body+=$'\n'"... and $((n - 6)) more"
-notify-send -a nomarchy -u "$( ((conflicts)) && echo critical || echo normal)" \
-  "$(uname -n): $todo to do, $conflicts conflicts -- nomarchy status" "$body"
+notify "$( ((conflicts)) && echo 2 || echo 1)" "$(uname -n): $todo to do, $conflicts conflicts -- nomarchy status" "$body"

@@ -31,9 +31,6 @@ wtype
 grim
 slurp
 imagemagick
-# notify-send, for nomarchy-notify (the drift check). On caesar it was only there as a
-# dependency of discord, and nothing guaranteed it on rigel.
-libnotify
 
 # Audio. pipewire-alsa is deliberately absent: its ALSA routing now ships inside
 # pipewire-audio (pacman -Qo /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf).
