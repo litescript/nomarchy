@@ -19,3 +19,6 @@ hosts/rigel/boot/arch-lts.conf			/boot/loader/entries/arch-lts.conf	0755
 hosts/rigel/hibernate-guard/hibernate-guard		/usr/local/bin/hibernate-guard		0755
 hosts/rigel/hibernate-guard/95-hibernate-guard.hook	/etc/pacman.d/hooks/95-hibernate-guard.hook
 hosts/rigel/hibernate-guard/hibernate-guard.service	/etc/systemd/system/hibernate-guard.service
+# sshd: keys only, root refused. rigel takes ssh from the LAN (decided 2026-11-14); the
+# firewall rule that admits it is ../ufw/apply-rules, run by the check in ./checks.
+hosts/rigel/ssh/10-nomarchy.conf		/etc/ssh/sshd_config.d/10-nomarchy.conf

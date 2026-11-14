@@ -1,0 +1,9 @@
+# User-level rigel state that is not a link or a unit. Same format as ./checks, but run by
+# `nomarchy link`, so `fix` must NOT use sudo.
+
+# caesar logs in to rigel with its id_ed25519_caesar_to_rigel. authorized_keys is an access
+# grant, never carried in this public repo (CLAUDE.md), so the probe asks for the key's
+# fingerprint and restoring it is by hand.
+check caesar may log in: its key is in authorized_keys
+  probe ssh-keygen -lf ~/.ssh/authorized_keys 2>/dev/null | grep -q 'SHA256:g4BOadyzCmNGlo6mQq/j/D17osoJBW5kScwdJX4k4fY'
+  manual append caesar's ~/.ssh/id_ed25519_caesar_to_rigel.pub to ~/.ssh/authorized_keys (0600) by hand -- an access grant, never in the repo (CLAUDE.md)

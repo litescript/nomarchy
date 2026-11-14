@@ -5,3 +5,7 @@
 # Once per boot: turns hibernation off when booted into a kernel a resume would not boot
 # (the LTS entry). See hosts/rigel/hibernate-guard/.
 enable hibernate-guard.service
+#
+# Inbound ssh from the LAN, so caesar can reach rigel whenever it is on. Enabled after the
+# copies, so sshd's first start already reads the key-only policy (../ssh/10-nomarchy.conf).
+enable sshd.service

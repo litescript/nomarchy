@@ -33,11 +33,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now tailscaled
 tailscale up        # interactive; Pete completes this in a browser
 
-# ── 5. Firewall ──────────────────────────────────────────────────────────────
-sudo systemctl enable --now ufw
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw enable
+# ── 5. Firewall: no longer a root step ───────────────────────────────────────
+# Since 2026-11-14 it is hosts/rigel/ufw/apply-rules, run by the check in ./checks, which
+# `nomarchy install host` applies: the same defaults as before, plus ssh from the LAN.
 
 # ── 6. NAS over SMB. Credentials NEVER enter this repo ───────────────────────
 # rigel reaches the same NAS as caesar (192.168.1.208), but over CIFS rather than caesar's

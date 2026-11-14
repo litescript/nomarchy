@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# rigel's firewall.
+#
+# Run as root:  sudo hosts/rigel/ufw/apply-rules
+#
+# Until 2026-11-14 this was root-step 5, typed by hand: deny in, allow out, nothing
+# admitted. ssh from the LAN is now admitted so caesar can reach rigel whenever it is on.
+# sshd is key-only (../ssh/10-nomarchy.conf), which is what holds off-site: on another
+# network that also uses 192.168.1.0/24, this rule admits its machines too.
+#
+# The defaults are the ones root-step 5 set, unchanged. The rule and its comment match
+# caesar's, so ufw skips it as existing when it is already there.
+
+set -euo pipefail
+
+(( EUID == 0 )) || { echo "${0##*/}: must run as root" >&2; exit 1; }
+
+ufw default deny incoming
+ufw default allow outgoing
+
+ufw allow from 192.168.1.0/24 to any port 22 proto tcp comment 'ssh from LAN'
+
+# Adding the ssh rule before enabling is deliberate: enabling first would drop inbound ssh
+# between the two steps.
+ufw --force enable
+systemctl enable ufw
+
+ufw status verbose
