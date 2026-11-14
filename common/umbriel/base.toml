@@ -618,13 +618,30 @@ blur_optimized = false
 # any of them back into the tiling layout.
 
 # global window rule, incl opacity
+#
+# Opacity follows focus, the old Hyprland look (looknfeel.lua ran 0.75 / 0.55 on general
+# windows, browsers 1.0 / 0.90). Firefox keeps today's 0.95 focused. Every matching rule
+# contributes and the later one wins per field, so each app's unfocused rule must follow its
+# focused one, and the games rule below, with no unfocused variant, keeps games opaque
+# either way. Since upstream 2952bbc (in db2133c) the change fades instead of snapping:
+# [animation.windows_opacity], on by default.
 [[window_rule]]
 match.app_id = ".*"
 opacity = 0.75
 
 [[window_rule]]
+match.app_id = ".*"
+match.is_focused = false
+opacity = 0.55
+
+[[window_rule]]
 match.app_id = "^firefox$"
 opacity = 0.95
+
+[[window_rule]]
+match.app_id = "^firefox$"
+match.is_focused = false
+opacity = 0.90
 
 # Games stay opaque. Proton sets WM_CLASS to steam_app_<id>, and umu (Lutris's
 # Proton runner) uses steam_app_default when no game id is given -- StarCraft
