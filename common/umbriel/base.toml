@@ -214,7 +214,7 @@ hide_when_typing = false                        # Keep visible while typing
 hide_timeout_ms = 0                             # Idle hide timeout, 0 disables; maximum is 3600000
 
 [input.focus]
-follows_mouse = true                            # Focus on motion after scene changes, client fullscreen exits, and closes
+follows_mouse = "sloppy"                        # "off", "sloppy", or "always"; true became "sloppy" at upstream fabf400
 # Refuse hover focus when revealing a window would scroll farther than this
 # many viewport widths. Omit the key for no limit.
 # follows_mouse_max_scroll = 0.5
@@ -273,12 +273,12 @@ follows_mouse = true                            # Focus on motion after scene ch
 
 [keybinds]
 # Screenshot behavior with printscreen key
-"Print" = "spawn:screenshot-region"
+"Print" = "spawn screenshot-region"
 
 # Universal clipboard. Terminal-aware; see common/scripts/universal-clipboard.
 # Requires the matching Insert bindings in the terminal's own config.
 # These call scripts by BARE NAME, not by path, so this file carries no home directory
-# and works for any user on any host. umbriel's spawn: resolves through PATH -- verified,
+# and works for any user on any host. umbriel's spawn resolves through PATH -- verified,
 # not assumed -- and common/bootstrap/links puts common/scripts on PATH by symlinking them
 # into ~/.local/bin.
 #
@@ -286,13 +286,13 @@ follows_mouse = true                            # Focus on motion after scene ch
 # does because ~/.bash_profile exports it before exec'ing start-umbriel from the tty1
 # login shell. A host that starts the compositor some other way -- a display manager, say
 # -- would not inherit it, and every one of these binds would go quiet. That exact failure
-# has happened here once already, with `spawn:shelf`.
+# has happened here once already, with `spawn shelf`.
 #
 # umbriel logs "spawned '<cmd>'" whether or not the command exists, so a name that cannot
 # be resolved fails silently. That was equally true of absolute paths.
-"Mod+C" = "spawn:universal-clipboard copy"
-"Mod+V" = "spawn:universal-clipboard paste"
-"Mod+X" = "spawn:universal-clipboard cut"
+"Mod+C" = "spawn universal-clipboard copy"
+"Mod+V" = "spawn universal-clipboard paste"
+"Mod+X" = "spawn universal-clipboard cut"
 
 # Applications and session.
 #
@@ -316,28 +316,28 @@ follows_mouse = true                            # Focus on motion after scene ch
 # Wayland may report plain `obsidian`; `obsidian$` matches either. Getting this
 # wrong is not costly — Obsidian's own single-instance lock raises the existing
 # window — but a match that works is better than a fallback that hides a typo.
-"Mod+Return" = { action = "spawn:kitty", repeat = false }
-"Mod+T" = "spawn:launch-or-focus ^btop$ kitty --app-id=btop btop"
-"Mod+D" = "spawn:launch-or-focus ^lazydocker$ kitty --app-id=lazydocker lazydocker"
-"Mod+O" = "spawn:launch-or-focus obsidian$ obsidian"
-"Mod+Shift+O" = "spawn:launch-or-focus ^dev\\.omarchy\\.OmNote$ omnote"
-"Mod+F" = "spawn:launch-or-focus ^dev\\.shelf\\.Shelf$ shelf"
-"Mod+Space" = "spawn:noctalia msg panel-toggle launcher"
-"Mod" = "spawn:noctalia msg panel-toggle launcher"
-"Mod+B" = "spawn:firefox"
-"Mod+Shift+B" = "spawn:firefox --private-window"
-"Mod+M" = "spawn:launch-or-focus ^Spotify$ spotify-limited"
-"Mod+N" = "spawn:kitty --app-id=nvim -e nvim"
+"Mod+Return" = { action = "spawn kitty", repeat = false }
+"Mod+T" = "spawn launch-or-focus ^btop$ kitty --app-id=btop btop"
+"Mod+D" = "spawn launch-or-focus ^lazydocker$ kitty --app-id=lazydocker lazydocker"
+"Mod+O" = "spawn launch-or-focus obsidian$ obsidian"
+"Mod+Shift+O" = "spawn launch-or-focus ^dev\\.omarchy\\.OmNote$ omnote"
+"Mod+F" = "spawn launch-or-focus ^dev\\.shelf\\.Shelf$ shelf"
+"Mod+Space" = "spawn noctalia msg panel-toggle launcher"
+"Mod" = "spawn noctalia msg panel-toggle launcher"
+"Mod+B" = "spawn firefox"
+"Mod+Shift+B" = "spawn firefox --private-window"
+"Mod+M" = "spawn launch-or-focus ^Spotify$ spotify-limited"
+"Mod+N" = "spawn kitty --app-id=nvim -e nvim"
 "Mod+W" = { action = "window-close", repeat = false }
 
 # Shell panels. Clipboard is its own panel id, not a launcher mode — `launcher
 # /clipboard` looks plausible and silently returns "No results found", because
 # /clipboard is a filesystem path completion, not a mode. Verified by opening
 # both and looking at them.
-"Mod+Shift+V" = "spawn:noctalia msg panel-toggle clipboard"
-"Mod+Ctrl+E" = "spawn:noctalia msg panel-open launcher /emo"
+"Mod+Shift+V" = "spawn noctalia msg panel-toggle clipboard"
+"Mod+Ctrl+E" = "spawn noctalia msg panel-open launcher /emo"
 # Irides theme switcher (its Noctalia plugin panel; ~/code/irides/noctalia-plugins).
-"Mod+Alt+T" = "spawn:noctalia msg panel-toggle litescript/irides:panel"
+"Mod+Alt+T" = "spawn noctalia msg panel-toggle litescript/irides:panel"
 
 # Focus navigation. In overview, Mod+Up/Down retain normal layout focus, so they
 # traverse stacks in the default horizontal layout. Bare Up/Down move between
@@ -372,9 +372,9 @@ follows_mouse = true                            # Focus on motion after scene ch
 # and Mod+WheelDown. Blanking the displays afterwards is a Noctalia idle
 # behavior (locked_timeout), not a bind — the idle manager owns the resume side,
 # so a bare `dpms-off` here would have nothing to wake the screens back up.
-"Mod+L" = "spawn:noctalia msg session lock"
+"Mod+L" = "spawn noctalia msg session lock"
 # Stay awake — the old SUPER+SHIFT+L "toggle idle lock".
-"Mod+Shift+L" = "spawn:noctalia msg caffeine-toggle"
+"Mod+Shift+L" = "spawn noctalia msg caffeine-toggle"
 #
 # common/scripts/lock-and-blank is now unbound and obsolete: the Noctalia idle
 # behavior screen-off has locked_timeout = 120, so Mod+L alone locks and the
@@ -394,32 +394,36 @@ follows_mouse = true                            # Focus on motion after scene ch
 # Renamed upstream in 2f2e4e3, "extent-based sizing vocabulary": width -> primary extent.
 "Mod+R" = "window-cycle-primary-extent"
 "Mod+Shift+R" = "window-cycle-primary-extent-back"
+"Mod+Minus" = "window-modify-primary-extent -0.02"
+"Mod+Equal" = "window-modify-primary-extent +0.02"
+"Mod+Ctrl+Minus" = "window-modify-secondary-extent -0.02"
+"Mod+Ctrl+Equal" = "window-modify-secondary-extent +0.02"
 "Mod+Comma" = "window-consume-left"
 "Mod+Period" = "window-consume-right"
 "Mod+WheelUp" = "window-focus-left"
 "Mod+WheelDown" = "window-focus-right"
 
 # Workspaces. Bare digits are positions on the output under the pointer.
-"Mod+1" = "workspace-switch:1"
-"Mod+2" = "workspace-switch:2"
-"Mod+3" = "workspace-switch:3"
-"Mod+4" = "workspace-switch:4"
-"Mod+5" = "workspace-switch:5"
-"Mod+6" = "workspace-switch:6"
-"Mod+7" = "workspace-switch:7"
-"Mod+8" = "workspace-switch:8"
-"Mod+9" = "workspace-switch:9"
-"Mod+Shift+1" = "window-move-to-workspace:1"
-"Mod+Shift+2" = "window-move-to-workspace:2"
-"Mod+Shift+3" = "window-move-to-workspace:3"
-"Mod+Shift+4" = "window-move-to-workspace:4"
-"Mod+Shift+5" = "window-move-to-workspace:5"
-"Mod+Shift+6" = "window-move-to-workspace:6"
-"Mod+Shift+7" = "window-move-to-workspace:7"
-"Mod+Shift+8" = "window-move-to-workspace:8"
-"Mod+Shift+9" = "window-move-to-workspace:9"
-# Quote an all-digit name to distinguish it from a position.
-# "Mod+Ctrl+2" = 'workspace-switch:"2"/DP-2'
+"Mod+1" = "workspace-switch 1"
+"Mod+2" = "workspace-switch 2"
+"Mod+3" = "workspace-switch 3"
+"Mod+4" = "workspace-switch 4"
+"Mod+5" = "workspace-switch 5"
+"Mod+6" = "workspace-switch 6"
+"Mod+7" = "workspace-switch 7"
+"Mod+8" = "workspace-switch 8"
+"Mod+9" = "workspace-switch 9"
+"Mod+Shift+1" = "window-move-to-workspace 1"
+"Mod+Shift+2" = "window-move-to-workspace 2"
+"Mod+Shift+3" = "window-move-to-workspace 3"
+"Mod+Shift+4" = "window-move-to-workspace 4"
+"Mod+Shift+5" = "window-move-to-workspace 5"
+"Mod+Shift+6" = "window-move-to-workspace 6"
+"Mod+Shift+7" = "window-move-to-workspace 7"
+"Mod+Shift+8" = "window-move-to-workspace 8"
+"Mod+Shift+9" = "window-move-to-workspace 9"
+# --name selects an all-digit name rather than a position.
+# "Mod+Ctrl+2" = "workspace-switch --name 2 --output DP-2"
 
 # Scratchpads
 # These bare actions use the implicit `default` scratchpad because no named
@@ -431,7 +435,7 @@ follows_mouse = true                            # Focus on motion after scene ch
 # unchanged.
 # Parented dialogs, including portal file choosers from another process, join a
 # visible parent window's scratchpad unless an explicit placement rule wins.
-# `window-focus:<window-id>` and `window-focus-warp:<window-id>` also summon a
+# `window-focus <window-id>` and `window-focus-warp <window-id>` also summon a
 # hidden scratchpad target to the output under the pointer. The first form
 # follows `input.cursor.follows_focus`; the `-warp` form always moves the cursor.
 # Documentation: https://docs.noctalia.dev/umbriel/scratchpads/
@@ -452,30 +456,30 @@ follows_mouse = true                            # Focus on motion after scene ch
 # Media, volume and brightness. None of these were bound before, so the keys on
 # the G213 did nothing at all. allow_when_locked mirrors the `locked` flag the
 # old box set, so volume and transport still work at the lock screen.
-"XF86AudioRaiseVolume" = { action = "spawn:noctalia msg volume-up", allow_when_locked = true }
-"XF86AudioLowerVolume" = { action = "spawn:noctalia msg volume-down", allow_when_locked = true }
-"XF86AudioMute" = { action = "spawn:noctalia msg volume-mute", allow_when_locked = true }
-"XF86AudioMicMute" = { action = "spawn:noctalia msg mic-mute", allow_when_locked = true }
-"XF86AudioPlay" = { action = "spawn:noctalia msg media toggle", allow_when_locked = true }
-"XF86AudioPause" = { action = "spawn:noctalia msg media toggle", allow_when_locked = true }
-"XF86AudioNext" = { action = "spawn:noctalia msg media next", allow_when_locked = true }
-"XF86AudioPrev" = { action = "spawn:noctalia msg media previous", allow_when_locked = true }
+"XF86AudioRaiseVolume" = { action = "spawn noctalia msg volume-up", allow_when_locked = true }
+"XF86AudioLowerVolume" = { action = "spawn noctalia msg volume-down", allow_when_locked = true }
+"XF86AudioMute" = { action = "spawn noctalia msg volume-mute", allow_when_locked = true }
+"XF86AudioMicMute" = { action = "spawn noctalia msg mic-mute", allow_when_locked = true }
+"XF86AudioPlay" = { action = "spawn noctalia msg media toggle", allow_when_locked = true }
+"XF86AudioPause" = { action = "spawn noctalia msg media toggle", allow_when_locked = true }
+"XF86AudioNext" = { action = "spawn noctalia msg media next", allow_when_locked = true }
+"XF86AudioPrev" = { action = "spawn noctalia msg media previous", allow_when_locked = true }
 # Old box's "switch media source".
-"Shift+XF86AudioPlay" = { action = "spawn:noctalia msg media next-player", allow_when_locked = true }
+"Shift+XF86AudioPlay" = { action = "spawn noctalia msg media next-player", allow_when_locked = true }
 # Likely inert on a desktop with external monitors; harmless if so. Check with
 # `noctalia msg brightness-list-backlight-devices`.
-"XF86MonBrightnessUp" = { action = "spawn:noctalia msg brightness-up", allow_when_locked = true }
-"XF86MonBrightnessDown" = { action = "spawn:noctalia msg brightness-down", allow_when_locked = true }
+"XF86MonBrightnessUp" = { action = "spawn noctalia msg brightness-up", allow_when_locked = true }
+"XF86MonBrightnessDown" = { action = "spawn noctalia msg brightness-down", allow_when_locked = true }
 
 # Named mode recipe: uncomment the definitions above, then replace the four
 # action values with named forms such as these. Every scratchpad action needs a
 # configured name once named mode is active.
-# "Mod+Shift+Space" = "window-move-to-scratchpad:terminal"
-# "Mod+Space" = "scratchpad-toggle:terminal"
-# "Mod+Ctrl+Space" = "window-restore-from-scratchpad:terminal"
-# "Mod+Tab" = "scratchpad-focus-next:terminal"
-# "Mod+Ctrl+Shift+M" = "window-toggle-scratchpad:music"
-# "Mod+Ctrl+M" = "scratchpad-toggle:music"
+# "Mod+Shift+Space" = "window-move-to-scratchpad terminal"
+# "Mod+Space" = "scratchpad-toggle terminal"
+# "Mod+Ctrl+Space" = "window-restore-from-scratchpad terminal"
+# "Mod+Tab" = "scratchpad-focus-next terminal"
+# "Mod+Ctrl+Shift+M" = "window-toggle-scratchpad music"
+# "Mod+Ctrl+M" = "scratchpad-toggle music"
 
 # Optional navigation and sizing recipes. These chords do not replace active
 # bindings above when uncommented.
@@ -491,21 +495,21 @@ follows_mouse = true                            # Focus on motion after scene ch
 # "Mod+Bracketleft" = "window-focus-previous"
 # "Mod+Shift+Bracketright" = "window-swap-next"
 # "Mod+Shift+Bracketleft" = "window-swap-previous"
-# "Mod+Minus" = "window-modify-primary-extent:-0.1"
-# "Mod+Equal" = "window-modify-primary-extent:0.1"
-# "Mod+Alt+Minus" = "window-modify-secondary-extent:-0.1"
-# "Mod+Alt+Equal" = "window-modify-secondary-extent:0.1"
-# "Mod+Ctrl+H" = "window-modify-width-left:0.1"
-# "Mod+Ctrl+L" = "window-modify-width-right:0.1"
-# "Mod+Ctrl+K" = "window-modify-height-up:0.1"
-# "Mod+Ctrl+J" = "window-modify-height-down:0.1"
+# "Mod+Minus" = "window-modify-primary-extent -0.1"
+# "Mod+Equal" = "window-modify-primary-extent +0.1"
+# "Mod+Alt+Minus" = "window-modify-secondary-extent -0.1"
+# "Mod+Alt+Equal" = "window-modify-secondary-extent +0.1"
+# "Mod+Ctrl+H" = "window-modify-width-left +0.1"
+# "Mod+Ctrl+L" = "window-modify-width-right +0.1"
+# "Mod+Ctrl+K" = "window-modify-height-up +0.1"
+# "Mod+Ctrl+J" = "window-modify-height-down +0.1"
 # "Mod+Alt+R" = "window-cycle-secondary-extent"
 # "Mod+Alt+Shift+R" = "window-cycle-secondary-extent-back"
 # "Mod+Grave" = "window-focus-last"
 # "Mod+BackSpace" = "window-consume-or-expel-left"
 # "Mod+C" = "column-center"
 # "Mod+Shift+C" = "window-center"
-# "Mod+Ctrl+T" = "workspace-set-layout:toggle"
+# "Mod+Ctrl+T" = "workspace-set-layout toggle"
 # "Mod+MouseMiddle" = "layout-scroll-drag"
 # "Mod+Alt+K" = "keyboard-layout-next"
 # "Mod+WheelUp" = { action = "workspace-previous", cooldown_ms = 150 }
@@ -525,26 +529,26 @@ follows_mouse = true                            # Focus on motion after scene ch
 # binds must not repeat. A table-form bind can run an action and then reset one
 # level, while a global reset provides an emergency exit from any layer.
 # Submaps: https://docs.noctalia.dev/umbriel/keybinds/#submaps
-# "Mod+S" = { action = "submap:resize", repeat = false }
-# "submap[resize],1" = { action = "window-set-primary-extent:0.5", submap = "reset" }
-# "submap[resize],N" = { action = "submap:nudge", repeat = false }
-# "submap[resize],Escape" = "submap:reset"
-# "submap[nudge],Left" = "window-modify-primary-extent:-0.1"
-# "submap[nudge],Right" = "window-modify-primary-extent:0.1"
-# "submap[nudge],Escape" = "submap:reset"
-# "Escape" = "submap:reset"
+# "Mod+S" = { action = "submap resize", repeat = false }
+# "submap[resize],1" = { action = "window-set-primary-extent 0.5", submap = "reset" }
+# "submap[resize],N" = { action = "submap nudge", repeat = false }
+# "submap[resize],Escape" = "submap reset"
+# "submap[nudge],Left" = "window-modify-primary-extent -0.1"
+# "submap[nudge],Right" = "window-modify-primary-extent +0.1"
+# "submap[nudge],Escape" = "submap reset"
+# "Escape" = "submap reset"
 
 # Media and brightness
 # Documentation: https://docs.noctalia.dev/umbriel/keybinds/#example-media-and-brightness-keys
-# "XF86AudioRaiseVolume" = "spawn:wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"
-# "XF86AudioLowerVolume" = "spawn:wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
-# "XF86AudioMute" = "spawn:wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
-# "XF86AudioPlay" = "spawn:playerctl play-pause"
-# "XF86AudioNext" = "spawn:playerctl next"
-# "XF86AudioPrev" = "spawn:playerctl previous"
+# "XF86AudioRaiseVolume" = "spawn wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"
+# "XF86AudioLowerVolume" = "spawn wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
+# "XF86AudioMute" = "spawn wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
+# "XF86AudioPlay" = "spawn playerctl play-pause"
+# "XF86AudioNext" = "spawn playerctl next"
+# "XF86AudioPrev" = "spawn playerctl previous"
 # Binds intended to work while locked use the table form.
-# "XF86MonBrightnessDown" = { action = "spawn:noctalia msg brightness-down 10", allow_when_locked = true }
-# "XF86MonBrightnessUp" = { action = "spawn:noctalia msg brightness-up 10", allow_when_locked = true }
+# "XF86MonBrightnessDown" = { action = "spawn noctalia msg brightness-down 10", allow_when_locked = true }
+# "XF86MonBrightnessUp" = { action = "spawn noctalia msg brightness-up 10", allow_when_locked = true }
 
 # ─────────────────────────────── Layout ─────────────────────────────────────
 # Configure the default tiling mode and shared sizing behavior. Workspace rules
@@ -574,6 +578,9 @@ bottom = 0
 # "edges" fills the usable area without struts, gaps, or borders. The
 # window-toggle-maximize action is unaffected.
 # client_maximize = "column"
+
+[layout.stacking]
+# drop_zones = false # Disable edge and corner drop zones when dragging in the stacking layout.
 
 [layout.scrolling]
 # The strip axis is perpendicular to the output's workspace_axis.
@@ -678,6 +685,23 @@ default_pinned = true
 # come from a static name list or a name-based [[workspace]] entry on a dynamic
 # output. The window rule itself never creates a workspace.
 
+# Scroll more slowly on the touchpad in one application.
+# [[window_rule]]
+# match.app_id = "^chromium$"
+# touchpad_scroll_factor = 0.5
+
+# Show title bars only when the window's workspace uses the stacking layout.
+# Keep [appearance.title_bar] mode = "off" for other layouts.
+# [[window_rule]]
+# match.layout = "stacking"
+# title_bar = "on"
+
+# Keep compositor shortcuts available while a virtual machine window is focused.
+# [[window_rule]]
+# match.app_id = "^virt-manager$"
+# allow_shortcuts_inhibit = false
+
+# Keep an application drawing while it is hidden on another workspace, for programs whose other work stalls without it.
 # [[window_rule]]
 # match.app_id = "^org[.]example[.]Chat$"
 # default_output = "DP-1"
@@ -689,6 +713,13 @@ default_pinned = true
 # `foot --app-id scratchpad-terminal`. The output and workspace remain
 # its restore destination.
 
+# Keep matching windows visible locally but absent from screenshots and recordings.
+# See docs/user/window-rules.md#capture-protection.
+# [[window_rule]]
+# match.app_id = "^private-app$"
+# block_capture = true
+
+# Keep one application's modal dialogs as ordinary windows.
 # [[window_rule]]
 # match.app_id = "^scratchpad-terminal$"
 # default_scratchpad = "terminal"
@@ -928,7 +959,7 @@ action = "overview-toggle"
 [hot_corners.bottom_right]
 enabled = false
 delay_ms = 500
-action = "spawn:notify-send 'Bottom right'"
+action = "spawn notify-send 'Bottom right'"
 
 # ─────────────────────── Security Context Rules ─────────────────────────────
 # Sandboxed clients receive a restricted Wayland global set. Grant extra

@@ -83,10 +83,10 @@ case "$verb" in
   FOCUS)
     # Plain window-focus, not window-focus-warp: this config sets
     # cursor.follows_focus = true, which already warps the pointer. That pairing
-    # matters because input.focus.follows_mouse is also true — focusing a window
+    # matters because input.focus.follows_mouse is also on ("sloppy") — focusing a window
     # without moving the pointer would hand focus straight back to whatever sits
     # under the cursor on the next twitch.
-    exec umbriel msg "window-focus:$id"
+    exec umbriel msg window-focus "$id"
     ;;
   SOLE)
     (( back )) && exec umbriel msg window-focus-last
@@ -106,7 +106,7 @@ case "$verb" in
     fi
     : > "$stamp"
 
-    # exec, so the app inherits XDG_ACTIVATION_TOKEN from the `spawn:` that ran
+    # exec, so the app inherits XDG_ACTIVATION_TOKEN from the `spawn` that ran
     # this script. Without the token the new window does not get focus on map.
     exec "$@"
     ;;

@@ -185,7 +185,7 @@ A new host is a deliberately written `hosts/<name>/`, never a copy of another ho
 Scripts in `common/scripts/` are called by **bare name**, from both the Umbriel binds and
 the systemd units (`%h/.local/bin/<name>`), so nothing in `common/` names a home directory
 or a checkout location. `common/bootstrap/links` makes that true by symlinking the scripts
-into `~/.local/bin`; umbriel's `spawn:` resolves through `PATH` (tested, not assumed). The
+into `~/.local/bin`; umbriel's `spawn` resolves through `PATH` (tested, not assumed). The
 coupling: `PATH` must reach the compositor, which it does via `~/.bash_profile` on the tty1
 login. A compositor started any other way would not inherit it, and every script bind would
 register, validate, and do nothing.
@@ -520,7 +520,7 @@ Hyprland did, which is why plain `wtype` suffices and no compositor-specific mac
 needed.
 
 **Umbriel has no key-injection action and no per-device input disable.** `umbriel msg`
-reaches outside the compositor only via `spawn:`. Device quirks belong in udev — see
+reaches outside the compositor only via `spawn`. Device quirks belong in udev — see
 `common/udev/` for the Stream Deck rule.
 
 **`umbriel msg spawn` does not preserve shell quoting.** Anything needing a shell must go

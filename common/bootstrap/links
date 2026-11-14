@@ -11,7 +11,7 @@ common/ssh/config		~/.ssh/config
 common/irides/blueprints	~/.config/irides/blueprints
 
 # common/scripts on PATH. The umbriel binds and the systemd units call these by BARE NAME
-# so that neither file carries a home directory -- umbriel's spawn: resolves through PATH,
+# so that neither file carries a home directory -- umbriel's spawn resolves through PATH,
 # and the units use %h/.local/bin. These links are what makes that true, so they are not
 # optional decoration: without them, nine keybinds go quiet.
 #

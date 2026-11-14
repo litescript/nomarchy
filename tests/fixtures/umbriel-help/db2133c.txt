@@ -1,0 +1,43 @@
+umbriel 0.1.0: a wayland compositor
+
+Usage: umbriel [-s <command>] [-c <config>]   run the compositor
+       umbriel <command> [args...]            run a command
+
+Compositor options:
+  -s <command>                   spawn <command> once the compositor starts
+  -c <config>                    use <config> instead of the default config path
+
+Control the running compositor:
+  msg <action> [args...]         send an action to the compositor
+  input-capture-revoke <id|all>  forget capture permission and stop sessions using it
+  output-create <name> [mode]    create a virtual output (optional mode, as 1920x1080@60)
+  output-destroy <name>          destroy a virtual output
+  config-replace <path>          load and watch a different config file
+  config set <key> <value>       override a config value until the compositor exits
+  config get <key>               print the active value of a config key
+  config unset <key|--all>       drop runtime overrides so the file or default applies again
+
+Inspect the running compositor:
+  input-capture-permissions      list remembered input capture grants
+  effects                        inspect effect presets, pools, and owner selections
+  windows                        list windows (app id and title)
+  focused-window                 print the focused window (app id and title)
+  workspaces                     list workspaces and their layouts
+  submap                         show the active keybind submap
+  layers                         list layer-shell surfaces
+  outputs                        list outputs and modes
+  color                          show color-management state
+  tearing                        show tearing-control state
+  keyboard-layouts               list keyboard layouts
+  subscribe <event>[,<event>…]   stream events as JSON lines
+                                 events: theme, overview, keyboard_layout, windows, workspaces, submap, screencast, layers, outputs
+
+Configuration, without a running compositor:
+  config validate [-c <config>]  check the config file; --json lists diagnostics
+  config schema [--json]         count or describe every config key
+
+Other:
+  help | -h | --help             show this help
+  -v | -V | --version            print version
+
+Run `umbriel msg --help` to list all available actions for `msg` and keybinds.

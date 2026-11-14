@@ -46,6 +46,7 @@ ac83d8e validate
 6bf03a0 config validate
 b9301a6 config validate
 d88d0bc config validate
+db2133c config validate
 ROWS
 
 printf '\033[1mfixtures: a layout that names neither spelling is refused\033[0m\n'
